@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 const HERO = /Every conversation/;
 const APP_URL = /\/app$/;
-const HOW_URL = /#how-it-works$/;
+const HOW_URL = /\/how-it-works$/;
 
 test("markets Slack without fetching app data and opens the explorer", async ({
   page,
@@ -54,5 +54,9 @@ test("keeps mobile content within the viewport and section navigation usable", a
     .getByRole("link", { exact: true, name: "See how it works ↗" })
     .click();
   await expect(page).toHaveURL(HOW_URL);
-  await expect(page.locator("#how-it-works")).toBeInViewport();
+  await expect(
+    page.getByRole("heading", {
+      name: "There’s a process inside the conversation.",
+    })
+  ).toBeVisible();
 });

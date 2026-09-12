@@ -73,7 +73,7 @@ The miner groups explicit cases, deduplicates event IDs, orders by timestamp/seq
 
 ## Deployment verification — 2026-09-12
 
-Deployed Worker version `3bda34ca-15e0-4b8f-86e9-f219287c8fd8` to the URL above using the account's existing free plan. No plan upgrade was made.
+Deployed Worker version `3bda34ca-15e0-4b8f-86e9-f219287c8fd8` to the original workers.dev URL using the account's existing free plan. No plan upgrade was made.
 
 - Production build and all four mining tests passed, including in GitHub Actions.
 - The smoke suite passed against both local Wrangler and the live deployment.
@@ -82,3 +82,10 @@ Deployed Worker version `3bda34ca-15e0-4b8f-86e9-f219287c8fd8` to the URL above 
 - Workers AI returned real model-generated answers locally and on the live endpoint. The live refund answer correctly identified the dominant path and James Wilson in Finance as the actor issuing refunds.
 
 Not yet validated: long-term traffic/load, a scheduled cleanup observed in production, live Notion ingestion, or real organization permissions. This is a working synthetic-data demo.
+
+
+## Custom domain
+
+The primary origin is `https://ariadneos.com`. Cloudflare Workers Custom Domains manage DNS and HTTPS for the apex and `www.ariadneos.com`. The Worker redirects `www` and HTTP requests to the HTTPS apex with status 308, preserving the path and query string. Routing is declared in `wrangler.jsonc`, so redeployments retain it.
+
+`run_worker_first: true` ensures canonical redirects also cover static assets. Consequently, static requests invoke the Worker and count toward its request limits. The original `https://ariadneos-demo.ariadneos-33d987.workers.dev` address remains available for diagnostics. Browser session cookies are host-scoped: visitors to the new domain start a fresh simulation session.

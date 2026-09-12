@@ -41,7 +41,7 @@ export default function Homepage() {
           Ariadne<span className="marketing-os">OS</span>
         </a>
         <nav aria-label="Main navigation">
-          <a className="marketing-section-link" href="#how-it-works">
+          <a className="marketing-section-link" href="/how-it-works">
             How it works
           </a>
           <a className="marketing-section-link" href="#why-slack">
@@ -73,7 +73,7 @@ export default function Homepage() {
               <a className="marketing-button" href="/app">
                 Explore the demo <ArrowRight size={18} />
               </a>
-              <a className="marketing-text-link" href="#how-it-works">
+              <a className="marketing-text-link" href="/how-it-works">
                 See how it works <span>↗</span>
               </a>
             </div>

@@ -9,8 +9,13 @@
 
 ## 1. Slack setup (human task — do this FIRST, it has external latency)
 
-1. Create a **new free workspace** at `slack.com/create` (no admin approval, ~3 min).
-2. `api.slack.com/apps` → **Create New App** → From scratch → name `Ariadne`.
+Runs in a **dedicated `ariadneos` workspace**, not anyone's company workspace. Two reasons: the demo
+video records the Slack window, and a real workspace puts private channels and colleagues in the
+sidebar; and a clean workspace means the channel history *is* the dataset, with no unrelated traffic
+for the observer to wade through.
+
+1. Workspace: **`ariadneos`** (already created).
+2. `api.slack.com/apps` → **Create New App** → From scratch → name `Ariadne` → pick the `ariadneos` workspace.
 3. **OAuth & Permissions → Bot Token Scopes:**
 
    | Scope | Why |
@@ -54,7 +59,54 @@ reactions_on(msg) -> dict   # read from the history payload — free, no extra c
 
 Rate discipline: **≥1.1 s between posts**, poll every **2 s**. One channel only.
 
-### 2.1 Author resolution
+### 2.1 Persona identity — six people out of one token
+
+Every simulated message must visibly come from a **different person**: distinct display name, distinct
+avatar, distinct colour. This is not cosmetic — if all six personas render as one author, the channel
+reads as a monologue, handoff edges become meaningless, and the whole premise ("multi-party
+conversation is the data source") collapses on camera.
+
+The mechanism is the `chat:write.customize` scope, which lets a single bot token override the author
+**per message**:
+
+```python
+post(text, username="Priya Raman", icon_url=PERSONA_AVATAR["per_priya"], ...)
+# chat.postMessage(channel=..., text=..., username=..., icon_url=...,
+#                  metadata={"event_type":"ariadne_sim",
+#                            "event_payload":{"session_id":…, "person_id":…}})
+```
+
+Avatars come from the KB `Person`. Use a stable generated set so all six are distinct and consistent
+across runs — `https://api.dicebear.com/9.x/notionists/png?seed={person_id}` (Slack fetches the URL
+server-side; it must be publicly reachable). Fall back to `icon_emoji` from `Person.emoji` if image
+fetching is flaky.
+
+**Alternatives considered and rejected:**
+
+| Approach | Identity quality | Cost | Verdict |
+|---|---|---|---|
+| **One bot + `chat:write.customize`** | distinct name + avatar per message, small `APP` badge | 10 min, one token | ✅ **chosen** |
+| Six separate Slack apps, one per persona | same visual result, six real bot profiles | ~30 min of clicking, six tokens in `.env` | ❌ same outcome, 3× the setup |
+| Six real user accounts + user tokens (`xoxp-`) | genuine humans, no `APP` badge | six invites, six OAuth installs | ❌ nowhere near affordable in the window |
+| Incoming webhooks per persona | name + avatar override, no scopes | one webhook URL per persona | ❌ no `metadata`, no threading, no reactions |
+| **Slack MCP (`mcp.slack.com`)** | **all messages post as the authenticating human** | zero | ❌ **cannot do personas at all** — see §2.1.1 |
+
+#### 2.1.1 Why not MCP
+
+The Slack MCP server is the right tool for *operating* a workspace conversationally and it is useful
+for setup and inspection. It is the wrong tool for this simulation, on three counts:
+
+1. **No identity override.** It posts as the authenticated user. Six personas become one author.
+2. **Not reachable from the product.** The backend is a container a judge runs with
+   `docker compose up`; it cannot complete an interactive OAuth flow against a remote MCP. The bot
+   token is a string in `.env` and works everywhere, including CI.
+3. **Wrong grain.** We need `conversations.history` polling with cursors, message `metadata`, and
+   reaction payloads — a narrow, high-frequency machine interface, not a conversational one.
+
+Use MCP for *setup and verification* (create the channel, eyeball that messages landed). Use the bot
+token for everything the product does.
+
+### 2.2 Author resolution
 
 | Message shape | Resolution |
 |---|---|

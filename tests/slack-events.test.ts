@@ -65,13 +65,24 @@ const rows = () =>
 beforeEach(() => {
   db = new DatabaseSync(":memory:");
   db.exec(readFileSync("migrations/0004_slack_message_events.sql", "utf8"));
+  db.exec(readFileSync("migrations/0005_pm_foundation.sql", "utf8"));
+  db.exec(
+    readFileSync("migrations/0006_channel_coordinator_runtime.sql", "utf8")
+  );
   run = vi.fn((sql: string, values: unknown[]) =>
     db.prepare(sql).run(...(values as (string | number | null)[]))
   );
   env = {
     DB: {
+      batch: async (
+        statements: {
+          run: () => Promise<unknown>;
+        }[]
+      ) => await Promise.all(statements.map((statement) => statement.run())),
       prepare: (sql: string) => ({
-        bind: (...values: unknown[]) => ({ run: async () => run(sql, values) }),
+        bind: (...values: unknown[]) => ({
+          run: async () => run(sql, values),
+        }),
       }),
     },
     SLACK_SIGNING_SECRET: secret,
@@ -92,6 +103,9 @@ describe("Slack Events HTTP receiver and storage", () => {
     expect((await request(event())).status).toBe(200);
     expect((await request(event())).status).toBe(200);
     expect(rows()).toHaveLength(1);
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM pm_processing").get()
+    ).toEqual({ count: 1 });
     expect(rows()[0]).toMatchObject({
       channel_id: "C1",
       event_id: "Ev1",

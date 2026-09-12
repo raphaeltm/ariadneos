@@ -1,7 +1,11 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import {
+  type ChannelCoordinatorEnv,
+  wakeChannelCoordinator,
+} from "./runtime/channel.ts";
 
-export interface SlackEventsEnv {
+export interface SlackEventsEnv extends ChannelCoordinatorEnv {
   DB: D1Database;
   SLACK_SIGNING_SECRET?: string;
 }
@@ -44,6 +48,51 @@ function object(value: unknown): value is Record<string, unknown> {
 }
 function nonempty(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+async function persistSlackMessageEvent(
+  env: SlackEventsEnv,
+  envelope: Record<string, unknown>,
+  event: Record<string, unknown>,
+  message: Record<string, unknown>,
+  timestamp: string
+) {
+  const teamId = envelope.team_id as string;
+  const eventId = envelope.event_id as string;
+  const channelId = event.channel as string;
+  const receivedAt = Date.now();
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO slack_message_events
+      (team_id, event_id, channel_id, message_ts, event_ts, subtype, user_id, text, payload, received_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(team_id, event_id) DO NOTHING`
+    ).bind(
+      teamId,
+      eventId,
+      channelId,
+      timestamp,
+      typeof event.event_ts === "string" ? event.event_ts : null,
+      typeof event.subtype === "string" ? event.subtype : null,
+      typeof message.user === "string" ? message.user : null,
+      typeof message.text === "string" ? message.text : null,
+      JSON.stringify(event),
+      receivedAt
+    ),
+    env.DB.prepare(
+      `INSERT INTO pm_processing
+      (checkpoint_id, workspace_id, channel, observation_id, status, updated_at)
+      VALUES (?, ?, ?, ?, 'pending', ?)
+      ON CONFLICT(checkpoint_id) DO NOTHING`
+    ).bind(
+      `slack:${teamId}:${eventId}`,
+      teamId,
+      channelId,
+      eventId,
+      new Date(receivedAt).toISOString()
+    ),
+  ]);
+  return { channelId, teamId };
 }
 
 // Mounted before browser Origin/session middleware: Slack authenticates with HMAC.
@@ -106,25 +155,27 @@ slackEvents.post("/", async (c) => {
   }
   // Append observed changes rather than overwriting messages: edits, deletions and
   // out-of-order deliveries retain their source evidence. Slack retries deduplicate.
-  await c.env.DB.prepare(
-    `INSERT INTO slack_message_events
-    (team_id, event_id, channel_id, message_ts, event_ts, subtype, user_id, text, payload, received_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(team_id, event_id) DO NOTHING`
-  )
-    .bind(
-      envelope.team_id,
-      envelope.event_id,
-      event.channel,
-      timestamp,
-      typeof event.event_ts === "string" ? event.event_ts : null,
-      typeof event.subtype === "string" ? event.subtype : null,
-      typeof message.user === "string" ? message.user : null,
-      typeof message.text === "string" ? message.text : null,
-      JSON.stringify(event),
-      Date.now()
-    )
-    .run();
+  const persisted = await persistSlackMessageEvent(
+    c.env,
+    envelope,
+    event,
+    message,
+    timestamp
+  );
+  if (
+    c.env.CHANNEL_COORDINATOR &&
+    (!c.env.SLACK_ALLOWED_TEAM_ID ||
+      c.env.SLACK_ALLOWED_TEAM_ID === persisted.teamId) &&
+    (!c.env.SLACK_ALLOWED_CHANNEL_ID ||
+      c.env.SLACK_ALLOWED_CHANNEL_ID === persisted.channelId)
+  ) {
+    c.executionCtx.waitUntil(
+      wakeChannelCoordinator(c.env, {
+        channel: persisted.channelId,
+        workspaceId: persisted.teamId,
+      })
+    );
+  }
   // Acknowledge only after durable storage; errors produce non-2xx so Slack retries.
   return c.json({ ok: true });
 });

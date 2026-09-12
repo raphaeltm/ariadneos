@@ -43,9 +43,11 @@ import {
 import {
   type ChannelCoordinatorEnv,
   type ChannelScope,
+  commitJournalEntry,
   configuredChannelScope,
   coordinatorFetch,
   currentJournalCursor,
+  type JournalWrite,
 } from "../runtime/channel.ts";
 
 type ProcessEnv = ChannelCoordinatorEnv & {
@@ -405,12 +407,27 @@ processRoutes.post("/steps/:id/status", async (c) => {
     .run();
   const updated = (await readStep(c.env.DB, context.scope, stepId)) ?? step;
   await commitCurationJournal(
+    c.env,
     c.env.DB,
     context.scope,
     updated,
     body.request_id
   );
-  return c.json({ step: updated });
+  const session = await readSession(
+    c.env.DB,
+    context.scope,
+    updated.session_id
+  );
+  const conformance = session?.workflow_id
+    ? await recalculateScopedConformance(c.env, c.env.DB, context.scope, {
+        projectId: session.project_id,
+        requestId: body.request_id,
+        sessionId: updated.session_id,
+        source: "curation",
+        workflowId: session.workflow_id,
+      })
+    : null;
+  return c.json({ conformance, step: updated });
 });
 
 processRoutes.post("/graph/rebuild", async (c) => {
@@ -444,8 +461,22 @@ processRoutes.post("/graph/rebuild", async (c) => {
   if ("response" in graph) {
     return graph.response;
   }
-  await commitGraphJournal(c.env.DB, context.scope, graph, body.request_id);
-  return c.json({ graph });
+  await commitGraphJournal(
+    c.env,
+    c.env.DB,
+    context.scope,
+    graph,
+    body.request_id
+  );
+  const conformance = scope.workflowId
+    ? await recalculateScopedConformance(c.env, c.env.DB, context.scope, {
+        projectId: scope.projectId,
+        requestId: body.request_id,
+        source: "graph",
+        workflowId: scope.workflowId,
+      })
+    : null;
+  return c.json({ conformance, graph });
 });
 
 processRoutes.get("/stream", async (c) => {
@@ -1284,61 +1315,195 @@ function toPolicyViolation(
   };
 }
 
+interface ConformanceRecalculationInput {
+  projectId: ProjectId;
+  requestId?: string;
+  sessionId?: ProcessSession["id"];
+  source: "curation" | "graph";
+  workflowId: WorkflowId;
+}
+
+interface ConformanceRecalculationResult {
+  session: SessionConformance | null;
+  sessions: SessionConformance[];
+  workflow: WorkflowConformance;
+}
+
+async function recalculateScopedConformance(
+  env: ProcessEnv,
+  db: D1Database,
+  scope: ChannelScope,
+  input: ConformanceRecalculationInput
+): Promise<ConformanceRecalculationResult | null> {
+  const data = workflowScopedData(
+    await readScopedData(db, scope, input.projectId),
+    input.workflowId
+  );
+  const sessions = buildSessionConformance(data, input.workflowId);
+  const workflow = buildWorkflowConformance(data, input.workflowId);
+  if (!workflow) {
+    return null;
+  }
+  const affectedSession = input.sessionId
+    ? (sessions.find((session) => session.session_id === input.sessionId) ??
+      null)
+    : null;
+  if (affectedSession) {
+    await persistSessionConformanceSummary(db, affectedSession);
+  }
+  await publishConformanceEvents(env, db, scope, input, {
+    session: affectedSession,
+    workflow,
+  });
+  return {
+    session: affectedSession,
+    sessions,
+    workflow,
+  };
+}
+
+function workflowScopedData(
+  data: ScopedData,
+  workflowId: WorkflowId
+): ScopedData {
+  const sessionIds = new Set(
+    data.sessions
+      .filter((session) => session.workflow_id === workflowId)
+      .map((session) => session.id)
+  );
+  return {
+    messages: data.messages.filter((message) =>
+      sessionIds.has(message.session_id)
+    ),
+    sessions: data.sessions.filter((session) => sessionIds.has(session.id)),
+    steps: data.steps.filter((step) => sessionIds.has(step.session_id)),
+  };
+}
+
+async function persistSessionConformanceSummary(
+  db: D1Database,
+  conformance: SessionConformance
+) {
+  await db
+    .prepare(
+      `UPDATE pm_session
+       SET fitness = ?, missing_json = ?, extra_json = ?, violations_json = ?
+       WHERE id = ?`
+    )
+    .bind(
+      conformance.fitness,
+      JSON.stringify(conformance.missing.map((item) => item.slug)),
+      JSON.stringify(conformance.extra.map((item) => item.slug)),
+      JSON.stringify(
+        conformance.violations.map((violation) => violation.policy_id)
+      ),
+      conformance.session_id
+    )
+    .run();
+}
+
+async function publishConformanceEvents(
+  env: ProcessEnv,
+  db: D1Database,
+  scope: ChannelScope,
+  input: ConformanceRecalculationInput,
+  conformance: {
+    session: SessionConformance | null;
+    workflow: WorkflowConformance;
+  }
+) {
+  const requestKey = input.requestId ?? crypto.randomUUID();
+  const entries: JournalWrite[] = [
+    ...(conformance.session
+      ? [
+          {
+            kind: "conformance",
+            opKey: `${input.source}:conformance:${requestKey}:session:${conformance.session.session_id}`,
+            payload: conformance.session,
+            projectId: input.projectId,
+            sessionId: conformance.session.session_id,
+          } satisfies JournalWrite,
+        ]
+      : []),
+    {
+      kind: "conformance",
+      opKey: `${input.source}:conformance:${requestKey}:workflow:${input.workflowId}`,
+      payload: conformance.workflow,
+      projectId: input.projectId,
+    },
+  ];
+  for (const entry of entries) {
+    // biome-ignore lint/performance/noAwaitInLoops: journal order matters for SSE clients.
+    await publishProcessJournal(env, db, scope, entry);
+  }
+}
+
 async function commitCurationJournal(
+  env: ProcessEnv,
   db: D1Database,
   scope: ChannelScope,
   step: Step,
   requestId: string | undefined
 ) {
-  await db
-    .prepare(
-      `INSERT INTO pm_journal
-       (workspace_id, channel, project_id, session_id, kind, ts, payload_json, operation_key)
-       SELECT ses.workspace_id, ses.channel, ses.project_id, ses.id, 'step', ?, ?, ?
-       FROM pm_session ses
-       WHERE ses.id = ?`
-    )
-    .bind(
-      new Date().toISOString(),
-      JSON.stringify(step),
-      `${scope.workspaceId}:${scope.channel}:curation:${requestId ?? crypto.randomUUID()}`,
-      step.session_id
-    )
-    .run();
+  const session = await readSession(db, scope, step.session_id);
+  if (!session) {
+    return;
+  }
+  await publishProcessJournal(env, db, scope, {
+    kind: "step",
+    opKey: `curation:${requestId ?? crypto.randomUUID()}`,
+    payload: step,
+    projectId: session.project_id,
+    sessionId: session.id,
+  });
 }
 
 async function commitGraphJournal(
+  env: ProcessEnv,
   db: D1Database,
   scope: ChannelScope,
   graph: GraphView,
   requestId: string | undefined
 ) {
-  await db
-    .prepare(
-      `INSERT INTO pm_journal
-       (workspace_id, channel, project_id, kind, ts, payload_json, operation_key)
-       VALUES (?, ?, ?, 'graph_delta', ?, ?, ?)
-       ON CONFLICT(operation_key) DO NOTHING`
-    )
-    .bind(
-      scope.workspaceId,
-      scope.channel,
-      graph.project_id,
-      new Date().toISOString(),
-      JSON.stringify({
-        base_revision: graph.revision,
-        edges_added: graph.edges,
-        edges_removed: [],
-        edges_updated: [],
-        nodes_added: graph.nodes,
-        nodes_removed: [],
-        nodes_updated: [],
-        revision: graph.revision,
-        view_key: graph.key,
-      }),
-      `${scope.workspaceId}:${scope.channel}:rebuild:${requestId ?? crypto.randomUUID()}`
-    )
-    .run();
+  await publishProcessJournal(env, db, scope, {
+    kind: "graph_delta",
+    opKey: `rebuild:${requestId ?? crypto.randomUUID()}`,
+    payload: {
+      base_revision: graph.revision,
+      edges_added: graph.edges,
+      edges_removed: [],
+      edges_updated: [],
+      nodes_added: graph.nodes,
+      nodes_removed: [],
+      nodes_updated: [],
+      revision: graph.revision,
+      view_key: graph.key,
+    },
+    projectId: graph.project_id,
+  });
+}
+
+async function publishProcessJournal(
+  env: ProcessEnv,
+  db: D1Database,
+  scope: ChannelScope,
+  entry: JournalWrite
+) {
+  const committed = await commitJournalEntry(db, scope, entry);
+  if (!(committed.inserted && committed.envelope)) {
+    return committed.envelope;
+  }
+  const params = new URLSearchParams();
+  params.set("project_id", entry.projectId);
+  params.set("journal_id", String(committed.envelope.id));
+  if (entry.sessionId) {
+    params.set("session_id", entry.sessionId);
+  }
+  await coordinatorFetch(env, scope, "/broadcast", {
+    method: "POST",
+    params,
+  });
+  return committed.envelope;
 }
 
 async function controlSimulation(

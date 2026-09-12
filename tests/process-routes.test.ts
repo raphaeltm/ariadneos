@@ -141,14 +141,55 @@ describe("process API routes", () => {
     });
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
+      conformance: {
+        session: { fitness: number | null; session_id: string };
+        workflow: { fitness: number | null; workflow_id: string };
+      };
       step: { status: string };
     };
     expect(payload.step.status).toBe("rejected");
+    expect(payload.conformance.session).toMatchObject({
+      fitness: 0,
+      session_id: "ses_helios_1",
+    });
+    expect(payload.conformance.workflow).toMatchObject({
+      fitness: 0,
+      workflow_id: "wf_p1_incident",
+    });
     expect(
       sqlite
         .prepare("SELECT COUNT(*) AS count FROM pm_journal WHERE kind = 'step'")
         .get()
     ).toEqual({ count: 1 });
+    expect(
+      sqlite
+        .prepare(
+          "SELECT COUNT(*) AS count FROM pm_journal WHERE kind = 'conformance'"
+        )
+        .get()
+    ).toEqual({ count: 2 });
+    expect(
+      sqlite
+        .prepare(
+          "SELECT fitness, missing_json FROM pm_session WHERE id = 'ses_helios_1'"
+        )
+        .get()
+    ).toEqual({
+      fitness: 0,
+      missing_json: JSON.stringify([
+        "detect_incident",
+        "triage_incident",
+        "open_incident_ticket",
+        "assign_owner",
+        "reproduce_issue",
+        "root_cause_analysis",
+        "security_review",
+        "deploy_fix",
+        "verify_resolution",
+        "notify_customer",
+        "write_postmortem",
+      ]),
+    });
   });
 
   it("forwards stream cursor and configured scope to the coordinator", async () => {

@@ -176,6 +176,12 @@ export const processRoutes = new Hono<{
 }>();
 
 processRoutes.use("*", async (c, next) => {
+  if (!c.get("userId")) {
+    const forwardedUserId = c.req.header("X-Ariadne-User-Id");
+    if (forwardedUserId) {
+      c.set("userId", forwardedUserId);
+    }
+  }
   const context = routeContext(c.env, c.req.query());
   if ("response" in context) {
     return context.response;

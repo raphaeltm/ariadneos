@@ -11,6 +11,7 @@ import {
   ShieldAlert,
   X,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useState } from "react";
 import type {
   InspectorCurationItem,
@@ -18,6 +19,7 @@ import type {
 } from "./inspector-data.ts";
 
 interface ProcessInspectorProps {
+  actions?: ReactNode;
   className?: string;
   details: InspectorDetails;
   onClearSelection?: () => void;
@@ -30,6 +32,7 @@ interface ProcessInspectorProps {
 }
 
 export function ProcessInspector({
+  actions,
   className = "",
   details,
   onClearSelection,
@@ -101,6 +104,7 @@ export function ProcessInspector({
           ))}
         </div>
       ) : null}
+      {actions}
       {selected && onInspectSources ? (
         <button
           className="inspector-action text-link"

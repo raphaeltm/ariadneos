@@ -104,7 +104,11 @@ Step {               // one atomic unit of work, an INSTANCE of an Activity
   "ts_start": "...", "ts_end": "...",
   "confidence": 0.86,
   "evidence": ["1757671234.000200", "1757671251.000300"],   // Slack message ts
-  "status": "proposed" | "confirmed" | "rejected"           // ✅/❌ curation
+
+  // two ORTHOGONAL axes — see spec 00 §4 and §10. Do not collapse them.
+  "state":  "requested" | "committed" | "in_progress" | "done"
+          | "failed" | "skipped" | "abandoned",   // work lifecycle
+  "status": "proposed" | "confirmed" | "rejected"  // human curation via ✅/❌
 }
 
 Message {            // evidence. The ground floor of provenance.
@@ -217,6 +221,15 @@ extra         = O \ D                          → gold nodes          ("undocum
 precision     = |D ∩ O| / |O|                  → how much of reality the doc covers
 order_breaks  = observed NEXT pairs whose (a,b) is 0 in the designed matrix
 violations    = policies whose constraint fails (see below)
+role_dev      = activities where roles_observed ⊄ {role_expected}
+                → "the CEO performed assign_owner, documented as PM, in 3 of 4 cases"
+```
+
+Three independent dimensions, per spec 00 §8.3 — **control flow** (did the right things happen in
+the right order), **policy** (were the rules followed), **role** (did the right people do it). Each
+answers a different question a manager would actually ask, and each is cheap set arithmetic.
+
+```
 ```
 
 **Policy checks** (four kinds, each ~5 lines of code):

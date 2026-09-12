@@ -168,7 +168,9 @@ activities:                       # index order defines the matrix axes
   - {slug: assign_owner,         label: "Assign incident owner",  role: pm}
   - {slug: reproduce_issue,      label: "Reproduce the issue",    role: eng}
   - {slug: root_cause_analysis,  label: "Root cause analysis",    role: eng}
-  - {slug: security_review,      label: "Security review",        role: eng}
+  # `synonyms` feed the graph-RAG lexicon (spec 07 §4) — how people really say it in the channel
+  - {slug: security_review,      label: "Security review",        role: eng,
+     synonyms: ["security review", "pre-deploy checklist", "the checklist", "sec review"]}
   - {slug: deploy_fix,           label: "Deploy the fix",         role: eng}
   - {slug: verify_resolution,    label: "Verify resolution",      role: support}
   - {slug: notify_customer,      label: "Notify the customer",    role: pm}
@@ -228,17 +230,14 @@ the discovered layer lighting up on top of it.
 
 ## 6. Graph-RAG (P0)
 
-`backend/app/rag.py::answer(question) -> {answer, citations[], subgraph}`
+Full design in **spec 07**. What the KB owes it:
 
-```
-1. link      LLM → {people[], projects[], activities[], artifacts[]} mentioned in the question
-             normalised string match against KB names/slugs; fuzzy fallback (difflib, cutoff .8)
-2. expand    BFS 2 hops from seeds over GOVERNS, WORKS_ON, CONTAINS, FOLLOWS, INSTANCE_OF
-             cap 40 nodes, prefer higher support
-3. evidence  for each Activity in the subgraph → top 3 Messages by step confidence
-4. answer    one LLM call over the serialised subgraph
-             MUST cite permalinks; any sentence with an unresolvable citation is dropped
-```
+1. **Every entity contributes surface forms to the lexicon** — `Person.name` plus first name,
+   `Project.name`, `Artifact.name` plus its id pattern (`INC-4412`, `inc 4412`, `4412`),
+   `Activity.slug` and `label`, `Policy.id`, `Workflow.name`.
+2. **Activities carry authored `synonyms`** — how people *actually* refer to the activity in the
+   channel. No string-distance metric gets you from *"the checklist"* to `security_review`; a human
+   writes that down once, in the workflow YAML (§4).
 
 Answers are posted back into Slack in the `@Ariadne` path (spec 04 §7) and rendered in the UI
 inspector. No embeddings, no vector store — the graph is the index.

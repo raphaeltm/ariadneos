@@ -60,7 +60,10 @@ Structured output schema (enforced via `response_format: json_schema`, `strict: 
     "handoff_to_person_id": "per_priya",
     "evidence":        ["1757671251.000300"],    // ≥1 Slack ts from THIS window
     "confidence":      0.86,
-    "negated":         false                     // true = discussed but did NOT happen
+    "modality":        "reported"                // reported|committed|requested|negated
+                                                 // spec 00 §3 — decides IF a step is created
+                                                 // and at which lifecycle state. "discussed"
+                                                 // is never returned; it means emit nothing.
 }]}
 ```
 
@@ -68,9 +71,11 @@ Prompt rules, in this order of emphasis:
 
 1. **Only emit a step for work that actually occurred or was committed to.** Proposals, questions and
    opinions are not steps.
-2. **`negated: true`** when a step is explicitly *skipped* ("we're skipping the checklist"). Negated
-   steps are stored but excluded from the graph — and they are **gold for the drift alert**, because
-   they are a direct admission of deviation with a citation.
+2. **Return the `modality`** (spec 00 §3). It, not the prose, decides what happens next:
+   `reported` → step at `done` · `committed` / `requested` → step opened, awaiting reconciliation ·
+   `negated` → step at `skipped`, stored but excluded from the graph. Negated acts are **gold for the
+   drift alert** — a direct, quotable admission that the documented process was bypassed.
+   When in doubt the act is `discussed`, and `discussed` means emit nothing.
 3. Prefer a `designed` slug from the provided list when the meaning matches.
 4. `evidence` must contain real `ts` values from the window. No ts → the step is discarded by code.
 5. Two-shot: one example producing 2 steps, one producing `{"steps": []}` (idle chatter).
@@ -130,7 +135,11 @@ roll-up. Output shape:
   "extra":[{"slug":"escalate_to_ceo","occurrences":4},{"slug":"improvise_hotfix","occurrences":2}],
   "order_breaks":[{"from":"root_cause_analysis","to":"deploy_fix","expected_between":"security_review"}],
   "violations":[{"policy_id":"pol_sec_review","text":"A security review must complete before any production deploy.",
-                 "evidence":["1757671251.000300"],"quote":"skipping the checklist to save time"}] }
+                 "evidence":["1757671251.000300"],"quote":"skipping the checklist to save time"}],
+  "role_deviations":[{"slug":"assign_owner","expected":"pm","observed":"ceo",
+                      "sessions":3,"of":4,"evidence":["1757671001.000100"]}],
+  "unreconciled":[{"slug":"write_postmortem","state":"committed","actor":"per_lea",
+                   "quote":"i'll write it up monday"}] }
 ```
 
 The `quote` + `evidence` pair is what makes the Slack alert land: it names the policy **and** shows

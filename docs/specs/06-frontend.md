@@ -1,10 +1,14 @@
 # Spec 06 — Frontend
 
+**Implementation authority:** [Cloudflare contract](00-cloudflare-architecture.md) and
+[scope](../SCOPE.md). Runtime, priorities and resolved edge cases there supersede older examples.
+
+
 > Three panes, one canvas, zero explanation needed. A judge should understand what they are looking
 > at in eight seconds, without narration.
 
-**Owner:** Track B (starts at minute 0, against fixtures) · **Time budget:** 150 min
-**Stack:** Vite + React + TS · React Flow + dagre · Tailwind v4 (`@tailwindcss/vite`) · native `EventSource`
+**Owners:** client/store, canvas, evidence UI issues; build against shared fixtures
+**Stack:** Vite + React + TS · React Flow + dagre · existing CSS/tokens (no Tailwind migration) · native `EventSource`
 
 ---
 
@@ -83,9 +87,9 @@ Each node shows: label, a role chip, and a mono `support ×3` badge. Edge **stro
 ## 3. Components
 
 ```
-src/
-├── App.tsx                    layout shell, SSE connection, keyboard shortcuts
-├── store.ts                   zustand: graph, messages, sessions, selection, mode, minSupport
+src/  (illustrative component names; follow merged repository naming conventions)
+├── app shell at /app          reuse current entrypoint after PRs #2/#7; SSE, shortcuts
+├── store.ts                   typed existing React store: graph, messages, sessions, selection, mode, minSupport
 ├── sse.ts                     EventSource → store.apply(event)
 ├── api.ts                     typed fetch wrappers
 ├── components/
@@ -113,15 +117,16 @@ src/
 ## 4. Data flow
 
 ```
-GET /api/graph/overlay ──► store.graph        (once, on mount + on project switch)
-GET /api/messages      ──► store.messages
-EventSource /api/stream ─► store.apply(evt)   (everything after that)
+GET /api/snapshot ──► scoped graph, messages, sessions, steps, conformance, cursor
+EventSource /api/stream?after=cursor ─► apply committed journal events in order
 ```
 
-`store.apply` is a switch on `kind` (spec 05 §3). **Never refetch on an SSE event** — apply the
-delta. The one exception: `conformance` replaces wholesale (it is small).
+`store.apply` is a switch on `kind` (spec 05 §3). Apply additions, updates and removals idempotently; ordinary events do not trigger refetch.
+Conformance replaces wholesale. On initial load, scope switch, or explicit `reset`/expired cursor,
+fetch a fresh snapshot and reconnect. Dispose the old stream and ignore stale scope responses.
+Backpressure, disconnect, page visibility and retry cleanup follow spec 05.
 
-Layout is recomputed only when the node **set** changes, debounced 250 ms. Node position is cached
+Layout is recomputed when the node **set**, DAG topology, visible filter or canvas mode changes, debounced 250 ms. Node position is cached
 by id so existing nodes do not jump when a new one arrives.
 
 ---
@@ -145,15 +150,15 @@ by id so existing nodes do not jump when a new one arrives.
 
 | Minutes | Deliverable | Depends on |
 |---|---|---|
-| 0–25 | Vite + Tailwind + shell layout + tokens | nothing |
+| 0–25 | Reuse Vite/CSS + app shell + tokens | nothing |
 | 25–60 | Canvas renders `fixtures/graph.overlay.json` with all node states + dagre | fixtures only |
 | 60–85 | SlackRail from `fixtures/messages.json`, persona avatars, Ariadne cards | fixtures only |
 | 85–110 | Inspector + evidence list + provenance beam | fixtures only |
-| 110–130 | SSE wiring against the live API | API ready ~14:00 |
+| 110–130 | SSE wiring against the live API | API contract issue merged |
 | 130–150 | Support slider, conformance bar, motion polish, dark-room check | |
 
-**Track B never waits.** Fixtures are frozen and committed by 12:45; the API is a swap of the data
-source at minute 110.
+**Track B never waits.** Typed fixtures land in the contracts issue; switch to live data after the API/SSE dependencies merge.
+The original minute budgets are illustrative, not an active deadline.
 
 ---
 
@@ -164,3 +169,6 @@ source at minute 110.
 - [ ] Clicking a gold node shows real Slack quotes and a working permalink
 - [ ] The conformance number changes on screen when a new session closes
 - [ ] Nothing in the UI requires the presenter to explain what a colour means — the legend does it
+
+P1 controls (curation, Ariadne suggestion/drift/answer cards) are hidden until their backend exists.
+P0 still includes simulator pause/resume. All UI data access uses the authorized scope from spec 00.

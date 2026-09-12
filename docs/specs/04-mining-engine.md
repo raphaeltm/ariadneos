@@ -1,29 +1,29 @@
 # Spec 04 — Mining Engine & Observer Agent
 
+**Implementation authority:** [Cloudflare contract](00-cloudflare-architecture.md) and
+[scope](../SCOPE.md). Runtime, priorities and resolved edge cases there supersede older examples.
+
+
 > Slack messages in → structured event log → discovered process graph → conformance → the agent acts.
 > The LLM does the part only an LLM can do. Arithmetic does everything that must be reliable.
 
-**Owner:** Track A · **Time budget:** 75 min · **Modules:** `backend/app/mining/*`, `backend/app/observer.py`
+**Owners:** extraction, graph, conformance and observer issues · **Modules:** `server/mining/`, `shared/mining/`, `server/observer.ts`
 
 ---
 
 ## 1. The loop
 
-```
-┌─ every 2.0 s ──────────────────────────────────────────────────────────────┐
-│ 1  poll(cursor)                    new Slack messages                      │
-│ 2  attribute + persist             → Message rows        → SSE: message    │
-│ 3  route to session                metadata → thread_ts → idle gap         │
-│ 4  buffer                          fire when ≥4 new OR ≥6 s idle           │
-│ 5  extract(window)                 LLM, structured output → Step[]         │
-│ 6  canonicalise(step)              → Activity            → SSE: step       │
-│ 7  rebuild()                       full recompute (<50 ms) → SSE: graph_delta│
-│ 8  conform(session)                fitness/missing/extra  → SSE: conformance│
-│ 9  observer.react()                suggest / warn / answer / pause         │
-└────────────────────────────────────────────────────────────────────────────┘
+```text
+Signed Slack event → persist/dedupe → channel coordinator
+  → normalize and route session → journal: message
+  → schedule window deadline → validated extraction → canonicalize → journal: step
+  → deterministic rebuild/diff → journal: graph_delta + conformance
+  → P1 observer creates outgoing intent → rate-limited Slack post
 ```
 
-Latency target: **message → node on canvas ≤ 4 s.**
+The coordinator processes persisted pending work and durable alarms. No module-level background
+poll loop. Latency target is ~4 seconds during active flow; sparse windows wait six seconds plus
+model latency. Record actual timings. See spec 00 for retry/restart semantics.
 
 ---
 
@@ -41,7 +41,7 @@ Latency target: **message → node on canvas ≤ 4 s.**
 
 ## 3. Extraction (the one hard LLM call)
 
-`mining/extract.py::extract(window, prior_steps, kb_context) -> Step[]`
+`server/mining/extract.ts::extract(window, priorSteps, kbContext)` returns validated steps
 
 `kb_context` is compact: the 6 people (`id`, name, role), the project's artifacts (`id`, name), and
 the **designed activity slugs for this project** — so the model reaches for the documented
@@ -93,7 +93,7 @@ Guards: slug regex `^[a-z][a-z0-9_]{2,40}$`; edit distance ≤2 to an existing s
 
 ## 5. Graph construction (deterministic — no LLM)
 
-```python
+```text
 def directly_follows(steps) -> Edges:
     for session in group_by_session(steps):
         for a, b in pairwise(sorted(session, key=seq)):
@@ -138,7 +138,7 @@ the message that broke it.
 
 ---
 
-## 7. The observer acts (`observer.py`)
+## 7. The observer acts (`server/observer.ts`, P1)
 
 ### 7.1 Process-start recognition → suggest → **pause**
 
@@ -180,7 +180,9 @@ document can answer: *"what do we actually do when a P1 hits an enterprise accou
 
 ### 7.4 Reaction curation
 
-Read from the poll payload, zero extra API calls. On an Ariadne step-proposal message:
+Consume signed reaction events for existing messages, idempotently. An oldest-ts history cursor
+will not observe later reactions on old messages. Resolve the target proposal or suggestion from
+a persisted Slack-ts → step/session mapping. On an Ariadne step-proposal message:
 ✅ → `step.status = confirmed` (enters the graph) · ❌ → `rejected` (removed, activity support
 decremented) · ✋ → pause. Every reaction emits `graph_delta`, so the canvas moves when a human
 reacts in Slack. **Do this on camera.**
@@ -208,7 +210,7 @@ constant, and it makes the channel visibly *watched* — the thread motif, liter
 
 - [ ] A performed transcript yields ≥8 steps with ≥90% having a resolvable `actor_person_id`
 - [ ] `expected_deviations` in the transcript are all present in `conformance.extra` or `violations`
-- [ ] Node appears on the canvas ≤4 s after its Slack message
+- [ ] Measure active-flow message-to-node latency against ~4 s target; report sparse-window latency separately
 - [ ] Running helios v2 after v1 raises `support` on shared activities and creates ≥2 gold nodes
-- [ ] The drift alert fires in Slack with a real quote and a working permalink
-- [ ] ❌ on a proposed step removes the node from the canvas within 3 s
+- [ ] P1: The drift alert fires in Slack with a real quote and a working permalink
+- [ ] P1: ❌ on a proposed step removes the node from the canvas within 3 s

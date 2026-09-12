@@ -38,6 +38,7 @@ Connect the merged process-mining foundations into the Worker route layer withou
 - Final `PATH="/workspaces/ariadneos/.local-tools/ruff-0.16.7:$PATH" npm run check:repo` passed: work-item tests, Ruff, full app check, dependency audit, isolated Worker/D1/API smoke and 5 Chromium browser tests. The temporary `.local-tools` directory was removed afterward.
 - `PATH="/workspaces/ariadneos/.local-tools/ruff-0.16.7:$PATH" python3 scripts/check_quality.py` passed before removing the temporary Ruff install; same suite as `check:repo`, including browser smoke.
 - `python3 scripts/check_work_items.py --base origin/main` passed.
+- Initial CI `Work item context` failed because the PR body listed the work item as a backticked path rather than a Markdown link. Updated PR #64 body to link `[docs/work-items/2026-09-12-api-routes-bindings-auth.md](docs/work-items/2026-09-12-api-routes-bindings-auth.md)` and pushed this work-item note to trigger a fresh pull request event.
 
 ## Risks and rollback
 - Risk: issue #18 persistence is still unmerged, so `/api/sim/run` is mounted but returns a structured 503 instead of starting a durable run. Rebase when #18 lands and replace this placeholder with its persistence/run helper.

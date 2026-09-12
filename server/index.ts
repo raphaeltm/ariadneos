@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { slackEvents, type SlackEventsEnv } from "./slack-events";
 import { authConfigured, createAuth, type AuthEnv } from "./auth";
 import { bodyLimit } from "hono/body-limit";
 import {
@@ -9,12 +10,13 @@ import {
   type ActivityEvent,
 } from "../shared/process";
 import { simulate } from "../shared/simulation";
-type Env = AuthEnv & {
-  AI: Ai;
-  ASSETS: Fetcher;
-  APP_ENV: string;
-  RELEASE_SHA: string;
-};
+type Env = AuthEnv &
+  SlackEventsEnv & {
+    AI: Ai;
+    ASSETS: Fetcher;
+    APP_ENV: string;
+    RELEASE_SHA: string;
+  };
 const app = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
 app.use("*", async (c, next) => {
   const url = new URL(c.req.url);
@@ -30,6 +32,7 @@ app.use("*", async (c, next) => {
   }
   await next();
 });
+app.route("/api/slack/events", slackEvents);
 app.use(
   "/api/*",
   bodyLimit({

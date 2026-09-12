@@ -81,7 +81,7 @@ jobs:
         run: |
           node --input-type=module <<'JS'
           import { spawnSync } from 'node:child_process';
-          const names = ['BETTER_AUTH_SECRET', 'SLACK_CLIENT_ID', 'SLACK_CLIENT_SECRET'];
+          const names = ['BETTER_AUTH_SECRET', 'SLACK_CLIENT_ID', 'SLACK_CLIENT_SECRET', 'SLACK_SIGNING_SECRET'];
           const secrets = Object.fromEntries(names.filter(name => process.env[name]).map(name => [name, process.env[name]]));
           if (Object.keys(secrets).length) {
             const result = spawnSync('npx', ['--no-install', 'wrangler', 'secret', 'bulk', '--env', process.env.DEPLOY_ENV], { input: JSON.stringify(secrets), encoding: 'utf8', stdio: ['pipe', 'inherit', 'inherit'] });
@@ -95,6 +95,7 @@ jobs:
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
           SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
           SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
       - name: Deploy staging
         run: npx --no-install wrangler deploy --env staging --var "APP_ENV:staging" --var "RELEASE_SHA:$GITHUB_SHA"
         env:
@@ -136,7 +137,7 @@ jobs:
         run: |
           node --input-type=module <<'JS'
           import { spawnSync } from 'node:child_process';
-          const names = ['BETTER_AUTH_SECRET', 'SLACK_CLIENT_ID', 'SLACK_CLIENT_SECRET'];
+          const names = ['BETTER_AUTH_SECRET', 'SLACK_CLIENT_ID', 'SLACK_CLIENT_SECRET', 'SLACK_SIGNING_SECRET'];
           const secrets = Object.fromEntries(names.filter(name => process.env[name]).map(name => [name, process.env[name]]));
           if (Object.keys(secrets).length) {
             const result = spawnSync('npx', ['--no-install', 'wrangler', 'secret', 'bulk', '--env', process.env.DEPLOY_ENV], { input: JSON.stringify(secrets), encoding: 'utf8', stdio: ['pipe', 'inherit', 'inherit'] });
@@ -150,6 +151,7 @@ jobs:
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
           SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
           SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
       - name: Deploy production
         run: npx --no-install wrangler deploy --env production --var "APP_ENV:production" --var "RELEASE_SHA:$GITHUB_SHA"
         env:

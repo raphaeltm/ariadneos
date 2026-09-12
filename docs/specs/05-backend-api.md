@@ -14,12 +14,12 @@ the next migration number; PR #5 already proposes auth and Slack observation tab
 |---|---|
 | `pm_person`, `pm_project`, `pm_artifact`, `pm_policy` | Authored KB IDs and fields from spec 02; JSON text for arrays; optional artifact value/unit |
 | `pm_workflow` | Workflow ID, project, entry/exits, ordered activity slugs, matrix, policy IDs |
-| `pm_activity` | Canonical ID/slug, label, description; designed workflow membership is separate |
+| `pm_activity` | Canonical ID/slug, label, description, authored synonyms; designed workflow membership is separate |
 | `pm_workflow_activity` | Workflow + activity key, expected role, rank; never overwrite another workflow's membership |
 | `pm_designed_edge` | Workflow + from + to key, expected probability; authored independently of observations |
 | `pm_session` | Process session ID, workspace/channel, project/workflow, status/source, scenario/variant, timestamps, suggested flag |
 | `pm_message` | Composite workspace/channel/ts key, session, author, text/permalink/thread, persona/observer identity, revision, deleted flag |
-| `pm_step` | ID, session/sequence, canonical activity, actor/artifact/handoff, type/intent, confidence/status/negated, timestamps, optional effort_days |
+| `pm_step` | ID, session/sequence, canonical activity, actor/artifact/handoff, type/intent/modality, lifecycle state, confidence/status/negated, timestamps, optional effort_days |
 | `pm_step_evidence` | Step + workspace/channel/ts key, message revision; real scoped references with indexes for invalidation |
 | `pm_journal` | Monotonic integer ID, scope, kind, timestamp, JSON payload, stable operation key |
 | `pm_outbox` | Stable operation ID, scope, kind, payload, pending/sent/uncertain/failed, Slack ts, attempt count and next due time |
@@ -31,7 +31,7 @@ workflow membership and evidence references. Unique keys make retries safe. Migr
 fresh and existing demo/auth databases; never drop/reseed production data.
 
 D1 batches commit domain updates plus journal records together. Aggregates are pure functions of
-scoped accepted steps and authored KB; caches may be rebuilt. Do not persist independently mutable
+scoped done + confirmed steps and authored KB; caches may be rebuilt. Do not persist independently mutable
 support counters. Seed bundled KB JSON explicitly after migrations, idempotently.
 
 ## 2. HTTP API
@@ -44,7 +44,7 @@ revision without channel content. Validate enums, limits and request bodies; err
 | Method | Path | Result / behavior |
 |---|---|---|
 | GET | `/api/health` | Preserve `ok, environment, revision`; add KB/Slack readiness without calling Slack on every health request |
-| GET | `/api/kb` | Authorized people/projects/artifacts/policies/workflows and allowed scenario catalog |
+| GET | `/api/kb` | Authorized people/projects/artifacts/policies/workflows, role repertoires/artifact lifecycle definitions and allowed scenario catalog |
 | GET | `/api/snapshot?project_id=&workflow_id=` | Consistent initial graph, messages, sessions, steps, conformance and journal cursor |
 | GET | `/api/graph/designed?workflow_id=` | Designed graph, available before a run |
 | GET | `/api/graph/discovered?project_id=&min_support=1` | Scoped aggregate mined graph |

@@ -172,3 +172,7 @@ The original minute budgets are illustrative, not an active deadline.
 
 P1 controls (curation, Ariadne suggestion/drift/answer cards) are hidden until their backend exists.
 P0 still includes simulator pause/resume. All UI data access uses the authorized scope from spec 00.
+
+Lifecycle state and curation status are separate UI fields (00-work-model.md). Requested/committed/
+failed/abandoned work can appear in cards, but only done+confirmed work appears in observed support.
+Show evidence-linked role deviations without treating role capability as an access-control rule.

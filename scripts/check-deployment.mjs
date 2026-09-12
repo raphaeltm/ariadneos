@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 
 // Read-only checks: production verification never creates simulation data or calls AI.
+const HTML_TYPE = /text\/html/;
+const ROOT_ELEMENT = /id="root"/;
 const APP_TITLE = /AriadneOS/;
 const SCRIPT_SOURCE = /src="([^"]+\.js)"/;
 const JAVASCRIPT = /javascript/;
@@ -36,6 +38,18 @@ async function check() {
   assert.equal(htmlResponse.status, 200, "App must load");
   const html = await htmlResponse.text();
   assert.match(html, APP_TITLE);
+  for (const path of ["/app", "/app/"]) {
+    const appResponse = await fetch(new URL(path, base), {
+      signal: AbortSignal.timeout(15_000),
+    });
+    assert.equal(
+      appResponse.status,
+      200,
+      `${path} must support direct navigation`
+    );
+    assert.match(appResponse.headers.get("content-type") ?? "", HTML_TYPE);
+    assert.match(await appResponse.text(), ROOT_ELEMENT);
+  }
   const script = html.match(SCRIPT_SOURCE);
   assert.ok(script, "App HTML must reference a JavaScript bundle");
   const asset = await fetch(new URL(script[1], base), {

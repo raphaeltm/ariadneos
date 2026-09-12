@@ -27,11 +27,15 @@ independent, reviewable agent assignments with concrete acceptance criteria and 
 
 ## Changes
 - Added docs/specs/00-cloudflare-architecture.md and rewrote scope/backend requirements; aligned
-  all six domain specs while retaining domain examples and the six-person simulator design.
+  all domain specs while retaining domain examples and the six-person simulator design.
 - Added docs/implementation-plan.md with 15 implementation issues (#14–#28), tracking issue #29,
   parallel lanes and shared-file ownership. Issues are created but no agents have been dispatched.
 - Every issue directs its agent to open a PR, watch required CI through staging, verify its deployed
   revision, repair failures and merge when green; full live acceptance belongs to integration gates.
+
+- Incorporated Roman's concurrent 31906b5 work-model/graph-RAG specs, preserving modality/lifecycle,
+  role conformance, authored synonyms and six retrieval intents; mapped additions into existing issues.
+  Resolved the KB merge conflict and corrected the lifecycle example to reconcile the same activity.
 
 ## Validation
 - Read all specs, source/API, migrations, deployment workflow, open PRs and SAM task context.

@@ -1,7 +1,7 @@
 # Cloudflare implementation contract
 
 Status: implementation plan, adapted on 2026-09-12 at the user's explicit direction.
-Read this before specs 01–06. This document and the revised scope replace the original
+Read this alongside [the work model](00-work-model.md), then specs 01–07. This document and the revised scope replace the original
 Python/Docker/polling-only assumptions; domain behavior remains Roman's design.
 These are requirements for follow-up implementation, not a claim that features are deployed.
 
@@ -16,7 +16,7 @@ These are requirements for follow-up implementation, not a claim that features a
 | Slack input | Existing signed Events API work in PR #5; Web API history for bounded reconciliation | Handles messages, thread replies and reactions without permanent two-second polling |
 | Slack output | Native fetch to Web API with one configured bot token | Preserve six customized persona authors; MCP is not a runtime dependency |
 | Models | Small typed fetch adapter to OpenRouter for spec extraction/generation/RAG | Keep sponsor/provider intent; no large orchestration SDK. Existing Workers AI demo continues to work |
-| Retrieval | D1 indexed entity lookup + bounded graph traversal | No embeddings needed for the specified graph-RAG |
+| Retrieval | D1 indexed entity/synonym lookup + intent-specific bounded graph traversal | No embeddings needed for the specified graph-RAG |
 | Vectorize | Deferred until semantic retrieval demonstrates a gap | Avoid ingestion/indexing, extra secrets and an additional consistency problem |
 | Queues / Workflows / R2 / containers | Not required for this wave | Add only with a measured need, not as foundation work |
 | UI | Existing React Flow/dagre and CSS; use existing state patterns | No second Vite project, mandatory Zustand or Tailwind migration |
@@ -75,13 +75,20 @@ agents consume these exports; they do not independently redefine JSON payloads o
 - Message identity is workspace + channel + Slack timestamp, all strings. Evidence must resolve
   inside that scope and session. Keep original observations and a current message projection.
   Edited/deleted evidence invalidates affected extraction and triggers a rebuild; no dangling quotes.
-- Rebuild input is accepted, non-negated steps. Confidence >= 0.4 becomes `confirmed` after
+- Step `state` (requested/committed/in_progress/done/failed/skipped/abandoned) and curation
+  `status` (proposed/confirmed/rejected) are independent. Persist work-act modality and reconcile
+  a request/promise with its eventual report within the case. Rebuild input is confirmed,
+  non-negated steps whose lifecycle state is `done`. Confidence >= 0.4 becomes curation `confirmed` after
   validation/canonicalization unless explicitly rejected by a human. Lower confidence remains
-  `proposed` until human confirmation. Never fabricate evidence or substitute fixture steps in live mode.
+  `proposed` until human confirmation. Human confirmation does not silently turn a promise into
+  completed work. Only evidence advances lifecycle. Never fabricate evidence or substitute fixture steps in live mode.
 - Proposed steps appear as temporary cards, not aggregate support. Rejecting the last occurrence
   removes an undocumented node; documented membership survives as a ghost.
 - Precedence for edge kind: rework, approval, decision, handoff, sequence. Null actors alone do not
   prove a handoff. Mark DFS back-edges deterministically and exclude them from layout/happy-path.
+- Work-model role repertoires are priors, not permission gates. Keep role deviations and artifact
+  lifecycle jumps as separately evidenced findings; apply deterministic confidence adjustments once.
+  An artifact jump is possible missing observation, not proof that real-world work was skipped.
 - Policy ordering uses session step sequence, not a cross-session topological ordering. Missing
   mandatory work on an open case is pending unless an explicit skip or downstream action proves
   a breach; close evaluates final omissions. Missing/unknown threshold values are unknown, not passed.
@@ -98,7 +105,9 @@ agents consume these exports; they do not independently redefine JSON payloads o
 
 ## 4. Compatibility and delivery
 
-Existing PRs own separate work: #2 quality tooling, #5 Slack login/raw events, #7 marketing/routing.
+Existing PRs own separate work: #2 quality tooling and #7 marketing/routing are merged;
+#5 owns Slack login/raw events. Roman added work-model and graph-RAG detail in 31906b5; these
+requirements belong to the existing contracts, KB, extraction, conformance and RAG issues.
 Rebase on their merged work where needed. Do not remove their behavior, replace auth tables,
 rewrite the homepage, or bypass checks to meet the original smoke-only instruction.
 

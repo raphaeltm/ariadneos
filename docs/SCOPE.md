@@ -8,7 +8,8 @@ and [the assignment plan](implementation-plan.md) before taking an issue.
 
 Ariadne observes work in Slack, extracts atomic steps with message citations, and compares the
 process people actually follow with the designed workflow. Org, Process and Execution planes
-connect authored policies to observed behavior. LLMs extract structured events; deterministic
+connect authored policies to observed behavior. Work acts carry modality; requests/promises reconcile with completion reports, and only done +
+confirmed steps contribute observed support. LLMs extract structured events; deterministic
 code computes the graph, support, rework and conformance. Every observed activity has real evidence.
 
 ## P0 — complete this path first

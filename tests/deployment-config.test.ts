@@ -25,6 +25,7 @@ const configured = {
   CLOUDFLARE_ACCOUNT_ID: "test-account",
   CLOUDFLARE_API_TOKEN: "test-cloudflare-token",
   DEPLOY_ENV: "staging",
+  OPENROUTER_API_KEY: "test-openrouter-key",
   SLACK_CLIENT_ID: "test-client",
   SLACK_CLIENT_SECRET: "private-client-value",
   SLACK_SIGNING_SECRET: "private-signing-value",
@@ -37,20 +38,41 @@ describe("deployment configuration", () => {
         SLACK_CLIENT_SECRET: configured.SLACK_CLIENT_SECRET,
       })
     ).toThrow(
-      "Missing GitHub staging environment secrets: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, BETTER_AUTH_SECRET, SLACK_CLIENT_ID, SLACK_SIGNING_SECRET."
+      "Missing GitHub staging environment secrets: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, BETTER_AUTH_SECRET, SLACK_CLIENT_ID, SLACK_SIGNING_SECRET, OPENROUTER_API_KEY."
     );
   });
-  it.each(["staging", "production"])(
-    "syncs only Worker auth secrets for %s",
-    (target) => {
-      expect(deploymentSecrets({ ...configured, DEPLOY_ENV: target })).toEqual({
-        BETTER_AUTH_SECRET: configured.BETTER_AUTH_SECRET,
-        SLACK_CLIENT_ID: configured.SLACK_CLIENT_ID,
-        SLACK_CLIENT_SECRET: configured.SLACK_CLIENT_SECRET,
-        SLACK_SIGNING_SECRET: configured.SLACK_SIGNING_SECRET,
-      });
-    }
-  );
+  it("syncs auth and OpenRouter secrets for staging", () => {
+    expect(deploymentSecrets(configured)).toEqual({
+      BETTER_AUTH_SECRET: configured.BETTER_AUTH_SECRET,
+      OPENROUTER_API_KEY: configured.OPENROUTER_API_KEY,
+      SLACK_CLIENT_ID: configured.SLACK_CLIENT_ID,
+      SLACK_CLIENT_SECRET: configured.SLACK_CLIENT_SECRET,
+      SLACK_SIGNING_SECRET: configured.SLACK_SIGNING_SECRET,
+    });
+  });
+  it("does not require OpenRouter for production while the agent is disabled", () => {
+    const { OPENROUTER_API_KEY: _openrouter, ...withoutOpenRouter } =
+      configured;
+    expect(
+      deploymentSecrets({ ...withoutOpenRouter, DEPLOY_ENV: "production" })
+    ).toEqual({
+      BETTER_AUTH_SECRET: configured.BETTER_AUTH_SECRET,
+      SLACK_CLIENT_ID: configured.SLACK_CLIENT_ID,
+      SLACK_CLIENT_SECRET: configured.SLACK_CLIENT_SECRET,
+      SLACK_SIGNING_SECRET: configured.SLACK_SIGNING_SECRET,
+    });
+  });
+  it("syncs OpenRouter for production when supplied", () => {
+    expect(
+      deploymentSecrets({ ...configured, DEPLOY_ENV: "production" })
+    ).toEqual({
+      BETTER_AUTH_SECRET: configured.BETTER_AUTH_SECRET,
+      OPENROUTER_API_KEY: configured.OPENROUTER_API_KEY,
+      SLACK_CLIENT_ID: configured.SLACK_CLIENT_ID,
+      SLACK_CLIENT_SECRET: configured.SLACK_CLIENT_SECRET,
+      SLACK_SIGNING_SECRET: configured.SLACK_SIGNING_SECRET,
+    });
+  });
   it("rejects invalid target and weak signing secret", () => {
     expect(() =>
       deploymentSecrets({ ...configured, DEPLOY_ENV: "typo" })

@@ -8,6 +8,8 @@ import {
   workflows,
 } from "../shared/process.ts";
 import { simulate } from "../shared/simulation.ts";
+import type { AgentModelEnv } from "./agent/models.ts";
+import { agentRuntimeStatus, runAgentSmoke } from "./agent/runtime.ts";
 import {
   type AgentMemoryScope,
   type AgentMessageWindowItem,
@@ -27,7 +29,11 @@ import {
 } from "./runtime/channel.ts";
 import { type SlackEventsEnv, slackEvents } from "./slack-events.ts";
 
-interface Env extends AuthEnv, SlackEventsEnv, ChannelCoordinatorEnv {
+interface Env
+  extends AgentModelEnv,
+    AuthEnv,
+    SlackEventsEnv,
+    ChannelCoordinatorEnv {
   AI: Ai;
   APP_ENV: string;
   ASSETS: Fetcher;
@@ -116,6 +122,33 @@ app.all("/api/auth/*", async (c) => {
     return c.json({ error: "Slack login is not configured yet." }, 503);
   }
   return await createAuth(c.env).handler(c.req.raw);
+});
+app.get("/api/agent/status", (c) => c.json(agentRuntimeStatus(c.env)));
+app.post("/api/agent/smoke", async (c) => {
+  const status = agentRuntimeStatus(c.env);
+  if (
+    status.config.enabled &&
+    status.config.hasOpenRouterKey &&
+    !(await quota(
+      c.env.DB,
+      "agent-openrouter",
+      status.config.budgets.dailyOpenRouterCalls
+    ))
+  ) {
+    return c.json(
+      {
+        error: "The shared daily OpenRouter agent smoke budget is reached.",
+        status: "budget_exhausted",
+      },
+      429
+    );
+  }
+  const result = await runAgentSmoke(c.env);
+  const response = { ...result, runtime: status };
+  if (result.ok) {
+    return c.json(response);
+  }
+  return c.json(response, result.status === "missing_key" ? 503 : 502);
 });
 app.use("/api/*", async (c, next) => {
   if (!authConfigured(c.env)) {

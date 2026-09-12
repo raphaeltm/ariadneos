@@ -54,8 +54,19 @@
     "crons": ["17 3 * * *"]
   },
   "vars": {
+    "AGENT_DAILY_OPENROUTER_LIMIT": "5",
+    "AGENT_ENABLED": "false",
+    "AGENT_TIMEOUT_MS": "12000",
     "APP_ENV": "production",
     "BETTER_AUTH_URL": "https://ariadneos.com",
+    "MODEL_ANSWER": "anthropic/claude-sonnet-4",
+    "MODEL_ANSWER_MAX_TOKENS": "96",
+    "MODEL_CLASSIFY": "openai/gpt-4.1-mini",
+    "MODEL_CLASSIFY_MAX_TOKENS": "128",
+    "MODEL_EXTRACT": "openai/gpt-4.1-mini",
+    "MODEL_EXTRACT_MAX_TOKENS": "256",
+    "OPENROUTER_APP_TITLE": "AriadneOS",
+    "OPENROUTER_SITE_URL": "https://ariadneos.com",
     "RELEASE_SHA": "local",
     "SLACK_ALLOWED_TEAM_ID": "",
     "SLACK_ALLOWED_CHANNEL_ID": ""
@@ -90,8 +101,19 @@
         ]
       },
       "vars": {
+        "AGENT_DAILY_OPENROUTER_LIMIT": "5",
+        "AGENT_ENABLED": "true",
+        "AGENT_TIMEOUT_MS": "12000",
         "APP_ENV": "staging",
         "BETTER_AUTH_URL": "https://staging.ariadneos.com",
+        "MODEL_ANSWER": "anthropic/claude-sonnet-4",
+        "MODEL_ANSWER_MAX_TOKENS": "96",
+        "MODEL_CLASSIFY": "openai/gpt-4.1-mini",
+        "MODEL_CLASSIFY_MAX_TOKENS": "128",
+        "MODEL_EXTRACT": "openai/gpt-4.1-mini",
+        "MODEL_EXTRACT_MAX_TOKENS": "256",
+        "OPENROUTER_APP_TITLE": "AriadneOS Staging",
+        "OPENROUTER_SITE_URL": "https://staging.ariadneos.com",
         "RELEASE_SHA": "local",
         "SLACK_ALLOWED_TEAM_ID": "",
         "SLACK_ALLOWED_CHANNEL_ID": ""
@@ -133,8 +155,19 @@
         ]
       },
       "vars": {
+        "AGENT_DAILY_OPENROUTER_LIMIT": "5",
+        "AGENT_ENABLED": "false",
+        "AGENT_TIMEOUT_MS": "12000",
         "APP_ENV": "production",
         "BETTER_AUTH_URL": "https://ariadneos.com",
+        "MODEL_ANSWER": "anthropic/claude-sonnet-4",
+        "MODEL_ANSWER_MAX_TOKENS": "96",
+        "MODEL_CLASSIFY": "openai/gpt-4.1-mini",
+        "MODEL_CLASSIFY_MAX_TOKENS": "128",
+        "MODEL_EXTRACT": "openai/gpt-4.1-mini",
+        "MODEL_EXTRACT_MAX_TOKENS": "256",
+        "OPENROUTER_APP_TITLE": "AriadneOS",
+        "OPENROUTER_SITE_URL": "https://ariadneos.com",
         "RELEASE_SHA": "local",
         "SLACK_ALLOWED_TEAM_ID": "",
         "SLACK_ALLOWED_CHANNEL_ID": ""

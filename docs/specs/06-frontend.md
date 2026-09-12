@@ -1,4 +1,9 @@
-# Spec 06 — Frontend
+# Spec 06 — Frontend  ⚠️ SUPERSEDED BY SPEC 08
+
+> **Do not build from this document.** It assumes a Python/FastAPI backend and a greenfield Vite app.
+> The shipped stack is Cloudflare Workers + Hono + D1 + `@xyflow/react`, and the frontend contract
+> lives in **spec 08**, written against the real `shared/process.ts`.
+> Kept for the visual language in §2 and the interaction table in §5, which spec 08 still uses.
 
 **Implementation authority:** [Cloudflare contract](00-cloudflare-architecture.md) and
 [scope](../SCOPE.md). Runtime, priorities and resolved edge cases there supersede older examples.

@@ -10,7 +10,7 @@ The longer-term idea is **process mining as context engineering for agents**. Ra
 
 ## Working preview
 
-**[Open the live demo](https://ariadneos-demo.ariadneos-33d987.workers.dev)**
+**[Open the live demo](https://ariadneos.com)**
 
 A basic implementation is now included: interactive process maps, variants, event evidence, persistent simulations, JSON agent context, and Workers AI explanations. It uses a synthetic organization; Notion is not connected yet.
 

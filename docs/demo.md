@@ -1,6 +1,6 @@
 # Running the AriadneOS demo
 
-Live URL: **https://ariadneos-demo.ariadneos-33d987.workers.dev**
+Live URL: **https://ariadneos.com**
 
 This preview implements the observation → discovery → explanation loop using a synthetic organization. It has three workflows (vendor onboarding, refunds, and access requests), 72 baseline cases, and 316 stored events. The graph, variants, counts, cycle times, and evidence links are computed from those events.
 

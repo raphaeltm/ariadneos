@@ -11,6 +11,20 @@ import {
 import { simulate } from "../shared/simulation";
 type Env = { DB: D1Database; AI: Ai; ASSETS: Fetcher };
 const app = new Hono<{ Bindings: Env }>();
+app.use("*", async (c, next) => {
+  const url = new URL(c.req.url);
+  if (
+    (url.hostname === "ariadneos.com" ||
+      url.hostname === "www.ariadneos.com") &&
+    (url.protocol !== "https:" || url.hostname !== "ariadneos.com")
+  ) {
+    url.protocol = "https:";
+    url.hostname = "ariadneos.com";
+    url.port = "";
+    return c.redirect(url.toString(), 308);
+  }
+  await next();
+});
 app.use(
   "/api/*",
   bodyLimit({
@@ -275,7 +289,7 @@ export default {
         "DELETE FROM events WHERE session_id != 'baseline' AND session_id IN (SELECT id FROM sessions WHERE created_at < ?)",
       ).bind(Date.now() - 86400000),
       env.DB.prepare("DELETE FROM sessions WHERE created_at < ?").bind(
-        Date.now() - 3 * 86400000,
+        Date.now() - 86400000,
       ),
       env.DB.prepare(
         "DELETE FROM usage WHERE substr(bucket,instr(bucket,':')+1) < ?",

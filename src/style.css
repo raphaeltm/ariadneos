@@ -1829,3 +1829,57 @@ footer .online-dot {
     transition: none !important;
   }
 }
+
+.login-page {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #f7f7f2;
+}
+.login-card {
+  width: min(100%, 440px);
+  padding: 36px;
+  border: 1px solid #deded4;
+  border-radius: 20px;
+  background: white;
+}
+.login-card h1 {
+  margin-top: 36px;
+  font-size: 30px;
+}
+.login-card p {
+  line-height: 1.6;
+}
+.slack-login {
+  width: 100%;
+  padding: 14px;
+  margin: 16px 0;
+  border-radius: 8px;
+  background: #4a154b;
+  color: white;
+  font-weight: 600;
+}
+.slack-login:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+.login-detail {
+  font-size: 13px;
+  color: #62645b;
+}
+.account-menu {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+}
+.account-menu span {
+  overflow-wrap: anywhere;
+}
+.account-menu button {
+  padding: 8px;
+  border: 1px solid #deded4;
+  border-radius: 6px;
+}

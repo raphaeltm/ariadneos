@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { getCookie, setCookie } from "hono/cookie";
+import { authConfigured, createAuth, type AuthEnv } from "./auth";
 import { bodyLimit } from "hono/body-limit";
 import {
   isWorkflow,
@@ -9,8 +9,8 @@ import {
   type ActivityEvent,
 } from "../shared/process";
 import { simulate } from "../shared/simulation";
-type Env = { DB: D1Database; AI: Ai; ASSETS: Fetcher };
-const app = new Hono<{ Bindings: Env }>();
+type Env = AuthEnv & { AI: Ai; ASSETS: Fetcher };
+const app = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
 app.use("*", async (c, next) => {
   const url = new URL(c.req.url);
   if (
@@ -46,9 +46,6 @@ app.onError((err, c) => {
   console.error("API failure", err.message);
   return c.json({ error: "Something went wrong. Please try again." }, 500);
 });
-function sessionId(cookie: string | undefined) {
-  return cookie && /^[a-f0-9-]{36}$/.test(cookie) ? cookie : "";
-}
 async function eventsFor(db: D1Database, workflow: string, session: string) {
   const rows = await db
     .prepare(
@@ -72,10 +69,26 @@ app.get("/api/health", async (c) => {
   await c.env.DB.prepare("SELECT 1").first();
   return c.json({ ok: true, storage: "D1", source: "simulation" });
 });
+app.all("/api/auth/*", async (c) => {
+  if (!authConfigured(c.env))
+    return c.json({ error: "Slack login is not configured yet." }, 503);
+  return createAuth(c.env).handler(c.req.raw);
+});
+app.use("/api/*", async (c, next) => {
+  if (!authConfigured(c.env))
+    return c.json({ error: "Slack login is not configured yet." }, 503);
+  const session = await createAuth(c.env).api.getSession({
+    headers: c.req.raw.headers,
+  });
+  if (!session)
+    return c.json({ error: "Sign in with Slack to continue." }, 401);
+  c.set("userId", session.user.id);
+  await next();
+});
 app.get("/api/model", async (c) => {
   const workflow = c.req.query("workflow") ?? "vendor";
   if (!isWorkflow(workflow)) return c.json({ error: "Unknown workflow." }, 400);
-  const sid = sessionId(getCookie(c, "ariadne_session"));
+  const sid = c.get("userId");
   const events = await eventsFor(c.env.DB, workflow, sid);
   const session = sid
     ? await c.env.DB.prepare("SELECT runs FROM sessions WHERE id=?")
@@ -94,13 +107,7 @@ app.get("/api/model", async (c) => {
 app.get("/api/context", async (c) => {
   const workflow = c.req.query("workflow") ?? "vendor";
   if (!isWorkflow(workflow)) return c.json({ error: "Unknown workflow." }, 400);
-  const model = mine(
-    await eventsFor(
-      c.env.DB,
-      workflow,
-      sessionId(getCookie(c, "ariadne_session")),
-    ),
-  );
+  const model = mine(await eventsFor(c.env.DB, workflow, c.get("userId")));
   return c.json({
     workflow,
     source: "simulation",
@@ -129,15 +136,16 @@ app.post("/api/simulate", async (c) => {
       },
       429,
     );
-  let sid = sessionId(getCookie(c, "ariadne_session"));
+  const sid = c.get("userId");
   const found = sid
     ? await c.env.DB.prepare("SELECT id FROM sessions WHERE id=?")
         .bind(sid)
         .first()
     : null;
   if (!found) {
-    sid = crypto.randomUUID();
-    await c.env.DB.prepare("INSERT INTO sessions(id,created_at) VALUES (?,?)")
+    await c.env.DB.prepare(
+      "INSERT OR IGNORE INTO sessions(id,created_at) VALUES (?,?)",
+    )
       .bind(sid, Date.now())
       .run();
   }
@@ -148,7 +156,7 @@ app.post("/api/simulate", async (c) => {
     .first<{ runs: number }>();
   if (!reservation)
     return c.json(
-      { error: "You have run all five simulations for this browser session." },
+      { error: "You have run all five simulations for this account today." },
       429,
     );
   const prefix = crypto.randomUUID();
@@ -173,13 +181,6 @@ app.post("/api/simulate", async (c) => {
       .run();
     throw error;
   }
-  setCookie(c, "ariadne_session", sid, {
-    httpOnly: true,
-    secure: new URL(c.req.url).protocol === "https:",
-    sameSite: "Strict",
-    path: "/",
-    maxAge: 86400,
-  });
   return c.json({
     addedEvents: events.length,
     addedCases: 6,
@@ -207,11 +208,7 @@ app.post("/api/ask", async (c) => {
       400,
     );
   const model = mine(
-    await eventsFor(
-      c.env.DB,
-      body.workflow!,
-      sessionId(getCookie(c, "ariadne_session")),
-    ),
+    await eventsFor(c.env.DB, body.workflow!, c.get("userId")),
   );
   const summary = {
     workflow: body.workflow,

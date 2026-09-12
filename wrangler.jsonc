@@ -4,6 +4,9 @@
   "main": "server/index.ts",
   "compatibility_date": "2026-09-12",
   "workers_dev": true,
+  "dev": { "host": "localhost" },
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": { "BETTER_AUTH_URL": "https://ariadneos.com" },
   "routes": [
     { "pattern": "ariadneos.com", "custom_domain": true },
     { "pattern": "www.ariadneos.com", "custom_domain": true },

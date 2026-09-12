@@ -27,6 +27,7 @@ import {
   type ActivityEvent,
 } from "../shared/process";
 import ProcessGraph from "./ProcessGraph";
+import { AccountMenu } from "./AuthGate";
 type Selection = { kind: "node" | "edge"; id: string };
 type Answer = {
   answer: string;
@@ -283,13 +284,7 @@ export default function App() {
             About this demo
             <ArrowUpRight size={14} />
           </button>
-          <div className="profile">
-            <span className="avatar">AS</span>
-            <div>
-              Acme Studio<small>Exploration workspace</small>
-            </div>
-            <span className="online-dot" />
-          </div>
+          <AccountMenu />
         </div>
       </aside>
       <div className="main-shell">

@@ -658,6 +658,7 @@ h1 {
   height: 487px;
 }
 .activity-node {
+  position: relative;
   width: 200px;
   padding: 13px 14px 15px;
   color: #425c36;
@@ -665,6 +666,10 @@ h1 {
   border: 1px solid #d3dec7;
   border-radius: 8px;
   box-shadow: 0 3px 7px #34442e07;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    opacity 160ms ease;
 }
 .node-heading {
   display: flex;
@@ -698,6 +703,79 @@ h1 {
   border-color: #9da76e;
   box-shadow: 0 0 0 3px #b3bf9130;
 }
+.activity-node.curated.confirm {
+  border-color: #8dad65;
+  box-shadow: 0 0 0 3px #90b96a22;
+}
+.activity-node.curated.merge,
+.activity-node.curated.split {
+  border-color: #c58a45;
+  box-shadow: 0 0 0 3px #d4943e24;
+}
+.curation-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 6px;
+  margin-top: 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 8px;
+  color: #6f825a;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: #eef5e5;
+  border: 1px solid #dbe8ca;
+  border-radius: 4px;
+}
+.curation-badge.failed {
+  color: #9b5447;
+  background: #fbefea;
+  border-color: #f1cfc5;
+}
+.curation-badge.local,
+.curation-badge.pending {
+  color: #8a682e;
+  background: #fff7df;
+  border-color: #ead49b;
+}
+.curation-toolbar {
+  position: absolute;
+  top: -38px;
+  left: 50%;
+  z-index: 20;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 5px;
+  background: #fffffc;
+  border: 1px solid #dfe7d4;
+  border-radius: 6px;
+  box-shadow: 0 10px 30px #1e2d1830;
+  transform: translateX(-50%);
+}
+.curation-toolbar.compact {
+  position: static;
+  transform: none;
+}
+.curation-toolbar button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: #6d8059;
+  background: #f8fbf2;
+  border: 1px solid #e3ead9;
+  border-radius: 5px;
+}
+.curation-toolbar button:hover:not(:disabled) {
+  color: #4e623f;
+  background: #edf5e3;
+}
+.curation-toolbar button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
 .react-flow__handle {
   width: 5px;
   min-width: 5px;
@@ -729,6 +807,60 @@ h1 {
 }
 .react-flow__edge {
   cursor: pointer;
+}
+.edge-curation-label {
+  position: absolute;
+  z-index: 15;
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  padding: 3px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #66736b;
+  pointer-events: none;
+  background: #f9faf6;
+  border: 1px solid #e4eadc;
+  border-radius: 5px;
+  box-shadow: 0 2px 8px #20341812;
+}
+.edge-curation-label.selected {
+  color: #7a542c;
+  border-color: #d7b785;
+  box-shadow: 0 0 0 3px #cf91451f;
+}
+.edge-curation-label .curation-toolbar {
+  padding: 3px;
+  margin-left: 2px;
+  pointer-events: all;
+  border-color: #eadfcf;
+  box-shadow: none;
+}
+.edge-curation-label .curation-toolbar button {
+  width: 21px;
+  height: 21px;
+}
+.curation-status {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 19px;
+  font-size: 9px;
+  color: #7d8b69;
+  background: #fffaf0;
+  border-top: 1px solid #eee2c4;
+}
+.curation-status button {
+  padding: 6px 9px;
+  font-size: 9px;
+  color: #6f572b;
+  background: #fffdf8;
+  border: 1px solid #e2c987;
+  border-radius: 5px;
+}
+.curation-status button:hover {
+  background: #fff4d6;
 }
 .graph-legend {
   display: flex;

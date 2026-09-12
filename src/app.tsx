@@ -17,10 +17,19 @@ import {
   Waypoints,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import {
+  type Dispatch,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   type ActivityEvent,
   duration,
+  type ProcessModel,
   type Snapshot,
   type WorkflowId,
   workflows,
@@ -30,6 +39,17 @@ import AppShell, {
 } from "./components/app-shell/app-shell.tsx";
 import { buildLegacyInspectorDetails } from "./components/inspector/inspector-data.ts";
 import { ProcessInspector } from "./components/inspector/process-inspector.tsx";
+import {
+  applyCurationEdits,
+  type CurationAction,
+  type CurationDraft,
+  createCurationDraft,
+  curationSummary,
+  persistCurationDraft,
+  persistCurationUndo,
+  undoLastCurationDraft,
+  updateCurationDraft,
+} from "./curation.ts";
 import ProcessGraph from "./process-graph.tsx";
 
 interface Selection {
@@ -71,6 +91,11 @@ const time = (date: string) =>
     minute: "2-digit",
     month: "short",
   });
+const explorerTabs = [
+  ["map", "Process map", Waypoints],
+  ["variants", "Variants", GitBranch],
+  ["events", "Event log", Activity],
+] as const;
 export default function App() {
   const [workflow, setWorkflow] = useState<WorkflowId>("vendor");
   const [data, setData] = useState<Snapshot | null>(null);
@@ -89,6 +114,7 @@ export default function App() {
   const [answer, setAnswer] = useState<Answer>();
   const [asking, setAsking] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [curationEdits, setCurationEdits] = useState<CurationDraft[]>([]);
   const currentWorkflow = useRef(workflow);
   currentWorkflow.current = workflow;
   // biome-ignore lint/correctness/useExhaustiveDependencies: Refresh intentionally invalidates this request after a simulation.
@@ -101,6 +127,7 @@ export default function App() {
     setCaseId(undefined);
     setAnswer(undefined);
     setSearch("");
+    setCurationEdits([]);
     api<Snapshot>(`/api/model?workflow=${workflow}`)
       .then((d) => {
         if (active) {
@@ -132,6 +159,7 @@ export default function App() {
       setNotice(
         `Observed ${result.addedEvents} new events across ${result.addedCases} cases. Process model updated.`
       );
+      setCurationEdits([]);
       setRefresh((x) => x + 1);
     } catch (e) {
       setError((e as Error).message);
@@ -182,8 +210,17 @@ export default function App() {
     URL.revokeObjectURL(url);
   }
   const model = data?.model;
+  const curationProjection = useMemo(
+    () => (model ? applyCurationEdits(model, curationEdits) : undefined),
+    [curationEdits, model]
+  );
+  const visibleModel = curationProjection?.model ?? model;
+  const curationStats = useMemo(
+    () => curationSummary(curationEdits),
+    [curationEdits]
+  );
   const { selectedNode, selectedEdge, evidenceIds } = selectionEvidence(
-    model,
+    visibleModel,
     selection
   );
   const events = filterEvents(
@@ -194,11 +231,25 @@ export default function App() {
     selection?.kind === "edge",
     search
   );
+  const { handleCurationAction, handleUndoCuration } = useGraphCuration({
+    curationEdits,
+    setCurationEdits,
+    setNotice,
+    visibleModel,
+    workflow,
+  });
+  useCurationShortcuts({
+    handleCurationAction,
+    handleUndoCuration,
+    selection,
+    visibleModel,
+  });
   function chooseWorkflow(id: WorkflowId) {
     setWorkflow(id);
     setTab("map");
     setShellView("graph");
     setNotice("");
+    setCurationEdits([]);
   }
   function navigateShell(view: AppShellView) {
     setShellView(view);
@@ -309,240 +360,40 @@ export default function App() {
           ready={Boolean(model && data)}
         />
         {!loading && model !== undefined && data !== null && (
-          <>
-            <div className="stats-row">
-              <Stat
-                icon={<Activity size={17} />}
-                label="Observed events"
-                sub="Every action, accounted for"
-                value={model.stats.events.toLocaleString()}
-              />
-              <Stat
-                icon={<Layers3 size={17} />}
-                label="Process cases"
-                sub="Individual workflow journeys"
-                value={String(model.stats.cases)}
-              />
-              <Stat
-                icon={<GitBranch size={17} />}
-                label="Discovered variants"
-                sub="Different paths through the work"
-                value={String(model.stats.variants).padStart(2, "0")}
-              />
-              <Stat
-                icon={<Clock3 size={17} />}
-                label="Median cycle time"
-                sub="First observation to last"
-                value={duration(model.stats.medianMinutes)}
-              />
-            </div>
-            {tab === "settings" ? (
-              <SettingsPanel
-                data={data}
-                onAbout={() => setInfo(true)}
-                onReload={() => setRefresh((x) => x + 1)}
-                workflow={workflow}
-                workspace={workspace}
-              />
-            ) : (
-              <section className="explorer">
-                <div className="explorer-header">
-                  <div className="process-title">
-                    <span className="process-icon">
-                      <GitBranch size={20} />
-                    </span>
-                    <div>
-                      <h2>{data.workflow.name}</h2>
-                      <p>{data.workflow.description}</p>
-                    </div>
-                  </div>
-                  <span className="source-chip">
-                    <span className="online-dot" />
-                    Synthetic observations
-                  </span>
-                </div>
-                <div className="explorer-toolbar">
-                  <div className="tabs">
-                    {(
-                      [
-                        ["map", "Process map", Waypoints],
-                        ["variants", "Variants", GitBranch],
-                        ["events", "Event log", Activity],
-                      ] as const
-                    ).map(([id, label, Icon]) => (
-                      <button
-                        className={tab === id ? "selected" : ""}
-                        key={String(id)}
-                        onClick={() => setTab(String(id))}
-                        type="button"
-                      >
-                        <Icon size={15} />
-                        <span>{String(label)}</span>
-                        {id === "variants" && (
-                          <span className="tab-count">
-                            {model.stats.variants}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                  <span className="observation-range">
-                    {model.stats.cases} completed cases <span>·</span>{" "}
-                    {Math.round(model.stats.dominantShare * 100)}% follow the
-                    main path
-                  </span>
-                </div>
-                <div className="explorer-body">
-                  <div className="main-panel">
-                    {tab === "map" && (
-                      <>
-                        <div className="graph-hint">
-                          <span className="tiny-dot" />
-                          Discovered from observed activity
-                          <span>
-                            Click a step or connection to see its evidence
-                          </span>
-                        </div>
-                        <div className="graph-canvas">
-                          <ProcessGraph
-                            model={model}
-                            onSelect={(s) => {
-                              setSelection(s);
-                              setCaseId(undefined);
-                              setShellView("inspector");
-                            }}
-                            selected={selection?.id}
-                          />
-                        </div>
-                        <div className="graph-legend">
-                          <span>
-                            <i className="legend-line" />
-                            Common transition
-                          </span>
-                          <span>
-                            <i className="legend-line dashed" />
-                            Less frequent path
-                          </span>
-                          <span className="legend-right">
-                            Count · transition probability
-                          </span>
-                        </div>
-                      </>
-                    )}
-                    {tab === "variants" && (
-                      <VariantsPanel
-                        model={model}
-                        setCaseId={setCaseId}
-                        setSelection={setSelection}
-                        setTab={setTab}
-                      />
-                    )}
-                    {tab === "events" && (
-                      <div className="events-panel">
-                        <div className="event-controls">
-                          <label>
-                            <Search size={16} />
-                            <input
-                              onChange={(e) => setSearch(e.target.value)}
-                              placeholder="Search events, actors, cases…"
-                              value={search}
-                            />
-                          </label>
-                          {Boolean(selection || caseId) && (
-                            <button
-                              onClick={() => {
-                                setSelection(undefined);
-                                setCaseId(undefined);
-                              }}
-                              type="button"
-                            >
-                              <X size={13} />
-                              Clear filters
-                            </button>
-                          )}
-                        </div>
-                        <div className="event-summary">
-                          {caseId ? `Case ${caseId} · ` : ""}
-                          {events.length} matching observations
-                        </div>
-                        <EventList
-                          events={events}
-                          onCase={(id) => {
-                            setSelection(undefined);
-                            setCaseId(id);
-                          }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                  <Inspector
-                    events={events}
-                    model={model}
-                    selectedEdge={selectedEdge}
-                    selectedNode={selectedNode}
-                    selection={selection}
-                    setCaseId={setCaseId}
-                    setSelection={setSelection}
-                    setTab={setTab}
-                    workflow={workflow}
-                  />
-                </div>
-              </section>
-            )}
-            {tab !== "settings" && (
-              <div className="bottom-grid">
-                <section className="recent-card">
-                  <div className="card-heading">
-                    <h2>
-                      <Activity size={17} />
-                      Recent observations
-                    </h2>
-                    <button
-                      onClick={() => {
-                        setSelection(undefined);
-                        setCaseId(undefined);
-                        setTab("events");
-                      }}
-                      type="button"
-                    >
-                      View all <ArrowUpRight size={14} />
-                    </button>
-                  </div>
-                  <EventList
-                    compact
-                    events={[...data.events]
-                      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-                      .slice(0, 4)}
-                    onCase={(id) => {
-                      setSelection(undefined);
-                      setCaseId(id);
-                      setTab("events");
-                    }}
-                  />
-                </section>
-                <AssistantPanel
-                  answer={answer}
-                  ask={ask}
-                  asking={asking}
-                  question={question}
-                  setCaseId={setCaseId}
-                  setQuestion={setQuestion}
-                  setSelection={setSelection}
-                  setTab={setTab}
-                />
-              </div>
-            )}
-            <footer>
-              <span>
-                <span className="online-dot" />
-                Observed. Connected. Understood.
-              </span>
-              <span>
-                AriadneOS preview <span>·</span> {data.remainingRuns} simulation
-                runs left
-              </span>
-            </footer>
-          </>
+          <LoadedWorkspace
+            answer={answer}
+            ask={ask}
+            asking={asking}
+            caseId={caseId}
+            curationProjection={curationProjection}
+            curationStats={curationStats}
+            data={data}
+            displayModel={visibleModel ?? model}
+            events={events}
+            handleCurationAction={handleCurationAction}
+            handleUndoCuration={handleUndoCuration}
+            model={model}
+            onAbout={() => setInfo(true)}
+            onGraphSelect={(selected) => {
+              setSelection(selected);
+              setCaseId(undefined);
+              setShellView("inspector");
+            }}
+            onReload={() => setRefresh((x) => x + 1)}
+            question={question}
+            search={search}
+            selectedEdge={selectedEdge}
+            selectedNode={selectedNode}
+            selection={selection}
+            setCaseId={setCaseId}
+            setQuestion={setQuestion}
+            setSearch={setSearch}
+            setSelection={setSelection}
+            setTab={setTab}
+            tab={tab}
+            workflow={workflow}
+            workspace={workspace}
+          />
         )}
       </main>
       {info ? <AboutDialog onClose={() => setInfo(false)} /> : null}
@@ -605,6 +456,545 @@ function SidebarRunCard({
       </button>
     </div>
   );
+}
+
+interface CurationTarget {
+  id: string;
+  kind: "edge" | "node";
+}
+
+interface LoadedWorkspaceProps {
+  answer: Answer | undefined;
+  ask: (text?: string) => Promise<void>;
+  asking: boolean;
+  caseId: string | undefined;
+  curationProjection: ReturnType<typeof applyCurationEdits> | undefined;
+  curationStats: ReturnType<typeof curationSummary>;
+  data: Snapshot;
+  displayModel: ProcessModel;
+  events: ActivityEvent[];
+  handleCurationAction: (
+    action: CurationAction,
+    target: CurationTarget
+  ) => void;
+  handleUndoCuration: () => void;
+  model: ProcessModel;
+  onAbout: () => void;
+  onGraphSelect: (selection: Selection) => void;
+  onReload: () => void;
+  question: string;
+  search: string;
+  selectedEdge: Snapshot["model"]["edges"][number] | undefined;
+  selectedNode: Snapshot["model"]["nodes"][number] | undefined;
+  selection: Selection | undefined;
+  setCaseId: (value: string | undefined) => void;
+  setQuestion: (value: string) => void;
+  setSearch: (value: string) => void;
+  setSelection: (value: Selection | undefined) => void;
+  setTab: (value: string) => void;
+  tab: string;
+  workflow: WorkflowId;
+  workspace: string;
+}
+
+function LoadedWorkspace(props: LoadedWorkspaceProps) {
+  return (
+    <>
+      <WorkspaceStats model={props.model} />
+      {props.tab === "settings" ? (
+        <SettingsPanel
+          data={props.data}
+          onAbout={props.onAbout}
+          onReload={props.onReload}
+          workflow={props.workflow}
+          workspace={props.workspace}
+        />
+      ) : (
+        <ProcessExplorer {...props} />
+      )}
+      {props.tab !== "settings" && <RecentAndAssistant {...props} />}
+      <WorkspaceFooter remainingRuns={props.data.remainingRuns} />
+    </>
+  );
+}
+
+function WorkspaceStats({ model }: { model: ProcessModel }) {
+  return (
+    <div className="stats-row">
+      <Stat
+        icon={<Activity size={17} />}
+        label="Observed events"
+        sub="Every action, accounted for"
+        value={model.stats.events.toLocaleString()}
+      />
+      <Stat
+        icon={<Layers3 size={17} />}
+        label="Process cases"
+        sub="Individual workflow journeys"
+        value={String(model.stats.cases)}
+      />
+      <Stat
+        icon={<GitBranch size={17} />}
+        label="Discovered variants"
+        sub="Different paths through the work"
+        value={String(model.stats.variants).padStart(2, "0")}
+      />
+      <Stat
+        icon={<Clock3 size={17} />}
+        label="Median cycle time"
+        sub="First observation to last"
+        value={duration(model.stats.medianMinutes)}
+      />
+    </div>
+  );
+}
+
+function ProcessExplorer(props: LoadedWorkspaceProps) {
+  return (
+    <section className="explorer">
+      <div className="explorer-header">
+        <div className="process-title">
+          <span className="process-icon">
+            <GitBranch size={20} />
+          </span>
+          <div>
+            <h2>{props.data.workflow.name}</h2>
+            <p>{props.data.workflow.description}</p>
+          </div>
+        </div>
+        <span className="source-chip">
+          <span className="online-dot" />
+          Synthetic observations
+        </span>
+      </div>
+      <ExplorerToolbar
+        model={props.model}
+        setTab={props.setTab}
+        tab={props.tab}
+      />
+      <div className="explorer-body">
+        <div className="main-panel">
+          <MapPanel {...props} />
+          {props.tab === "variants" && (
+            <VariantsPanel
+              model={props.model}
+              setCaseId={props.setCaseId}
+              setSelection={props.setSelection}
+              setTab={props.setTab}
+            />
+          )}
+          <EventsTabPanel {...props} />
+        </div>
+        <Inspector
+          events={props.events}
+          model={props.displayModel}
+          selectedEdge={props.selectedEdge}
+          selectedNode={props.selectedNode}
+          selection={props.selection}
+          setCaseId={props.setCaseId}
+          setSelection={props.setSelection}
+          setTab={props.setTab}
+          workflow={props.workflow}
+        />
+      </div>
+    </section>
+  );
+}
+
+function ExplorerToolbar({
+  model,
+  setTab,
+  tab,
+}: {
+  model: ProcessModel;
+  setTab: (value: string) => void;
+  tab: string;
+}) {
+  return (
+    <div className="explorer-toolbar">
+      <div className="tabs">
+        {explorerTabs.map(([id, label, Icon]) => (
+          <button
+            className={tab === id ? "selected" : ""}
+            key={id}
+            onClick={() => setTab(id)}
+            type="button"
+          >
+            <Icon size={15} />
+            <span>{label}</span>
+            {id === "variants" && (
+              <span className="tab-count">{model.stats.variants}</span>
+            )}
+          </button>
+        ))}
+      </div>
+      <span className="observation-range">
+        {model.stats.cases} completed cases <span>·</span>{" "}
+        {Math.round(model.stats.dominantShare * 100)}% follow the main path
+      </span>
+    </div>
+  );
+}
+
+function MapPanel(props: LoadedWorkspaceProps) {
+  if (props.tab !== "map") {
+    return null;
+  }
+  return (
+    <>
+      <div className="graph-hint">
+        <span className="tiny-dot" />
+        Discovered from observed activity
+        <span>
+          {props.curationStats.active
+            ? graphCurationHint(props.curationStats)
+            : "Click a step or connection to see its evidence"}
+        </span>
+      </div>
+      <div className="graph-canvas">
+        <ProcessGraph
+          curation={props.curationProjection}
+          model={props.displayModel}
+          onCurate={props.handleCurationAction}
+          onSelect={props.onGraphSelect}
+          selected={props.selection?.id}
+        />
+      </div>
+      <CurationStatusBar
+        onUndo={props.handleUndoCuration}
+        stats={props.curationStats}
+      />
+      <div className="graph-legend">
+        <span>
+          <i className="legend-line" />
+          Common transition
+        </span>
+        <span>
+          <i className="legend-line dashed" />
+          Less frequent path
+        </span>
+        <span className="legend-right">Count · transition probability</span>
+      </div>
+    </>
+  );
+}
+
+function EventsTabPanel({
+  caseId,
+  events,
+  search,
+  selection,
+  setCaseId,
+  setSearch,
+  setSelection,
+  tab,
+}: LoadedWorkspaceProps) {
+  if (tab !== "events") {
+    return null;
+  }
+  return (
+    <div className="events-panel">
+      <div className="event-controls">
+        <label>
+          <Search size={16} />
+          <input
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search events, actors, cases…"
+            value={search}
+          />
+        </label>
+        {Boolean(selection || caseId) && (
+          <button
+            onClick={() => {
+              setSelection(undefined);
+              setCaseId(undefined);
+            }}
+            type="button"
+          >
+            <X size={13} />
+            Clear filters
+          </button>
+        )}
+      </div>
+      <div className="event-summary">
+        {caseId ? `Case ${caseId} · ` : ""}
+        {events.length} matching observations
+      </div>
+      <EventList
+        events={events}
+        onCase={(id) => {
+          setSelection(undefined);
+          setCaseId(id);
+        }}
+      />
+    </div>
+  );
+}
+
+function RecentAndAssistant({
+  answer,
+  ask,
+  asking,
+  data,
+  question,
+  setCaseId,
+  setQuestion,
+  setSelection,
+  setTab,
+}: LoadedWorkspaceProps) {
+  return (
+    <div className="bottom-grid">
+      <RecentObservations
+        data={data}
+        setCaseId={setCaseId}
+        setSelection={setSelection}
+        setTab={setTab}
+      />
+      <AssistantPanel
+        answer={answer}
+        ask={ask}
+        asking={asking}
+        question={question}
+        setCaseId={setCaseId}
+        setQuestion={setQuestion}
+        setSelection={setSelection}
+        setTab={setTab}
+      />
+    </div>
+  );
+}
+
+function RecentObservations({
+  data,
+  setCaseId,
+  setSelection,
+  setTab,
+}: {
+  data: Snapshot;
+  setCaseId: (value: string | undefined) => void;
+  setSelection: (value: Selection | undefined) => void;
+  setTab: (value: string) => void;
+}) {
+  return (
+    <section className="recent-card">
+      <div className="card-heading">
+        <h2>
+          <Activity size={17} />
+          Recent observations
+        </h2>
+        <button
+          onClick={() => {
+            setSelection(undefined);
+            setCaseId(undefined);
+            setTab("events");
+          }}
+          type="button"
+        >
+          View all <ArrowUpRight size={14} />
+        </button>
+      </div>
+      <EventList
+        compact
+        events={[...data.events]
+          .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+          .slice(0, 4)}
+        onCase={(id) => {
+          setSelection(undefined);
+          setCaseId(id);
+          setTab("events");
+        }}
+      />
+    </section>
+  );
+}
+
+function WorkspaceFooter({ remainingRuns }: { remainingRuns: number }) {
+  return (
+    <footer>
+      <span>
+        <span className="online-dot" />
+        Observed. Connected. Understood.
+      </span>
+      <span>
+        AriadneOS preview <span>·</span> {remainingRuns} simulation runs left
+      </span>
+    </footer>
+  );
+}
+
+function CurationStatusBar({
+  onUndo,
+  stats,
+}: {
+  onUndo: () => void;
+  stats: ReturnType<typeof curationSummary>;
+}) {
+  if (stats.active === 0) {
+    return null;
+  }
+  return (
+    <div className="curation-status" role="status">
+      <span>
+        {stats.saved} saved · {stats.local} local · {stats.failed} failed
+      </span>
+      <button onClick={onUndo} type="button">
+        Undo last edit
+      </button>
+    </div>
+  );
+}
+
+function useGraphCuration({
+  curationEdits,
+  setCurationEdits,
+  setNotice,
+  visibleModel,
+  workflow,
+}: {
+  curationEdits: CurationDraft[];
+  setCurationEdits: Dispatch<SetStateAction<CurationDraft[]>>;
+  setNotice: (value: string) => void;
+  visibleModel: ProcessModel | undefined;
+  workflow: WorkflowId;
+}) {
+  const handleCurationAction = useCallback(
+    (action: CurationAction, target: CurationTarget) => {
+      if (!visibleModel) {
+        return;
+      }
+      const draft = buildCurationDraft(action, target, visibleModel, setNotice);
+      if (!draft) {
+        return;
+      }
+      setCurationEdits((edits) => [...edits, draft]);
+      setNotice(`${sentenceCase(action)} applied optimistically.`);
+      saveCurationDraft(draft, workflow, setCurationEdits, setNotice);
+    },
+    [setCurationEdits, setNotice, visibleModel, workflow]
+  );
+  const handleUndoCuration = useCallback(() => {
+    const lastEdit = findLastActiveCurationEdit(curationEdits);
+    if (!lastEdit) {
+      return;
+    }
+    setCurationEdits((edits) => undoLastCurationDraft(edits));
+    setNotice("Last curation edit undone.");
+    if (lastEdit.persistence === "saved") {
+      saveCurationUndo(workflow, setNotice);
+    }
+  }, [curationEdits, setCurationEdits, setNotice, workflow]);
+  return { handleCurationAction, handleUndoCuration };
+}
+
+function buildCurationDraft(
+  action: CurationAction,
+  target: CurationTarget,
+  visibleModel: ProcessModel,
+  setNotice: (value: string) => void
+): CurationDraft | undefined {
+  try {
+    return createCurationDraft({
+      action,
+      model: visibleModel,
+      targetId: target.id,
+      targetKind: target.kind,
+    });
+  } catch (caught) {
+    setNotice((caught as Error).message);
+    return undefined;
+  }
+}
+
+function saveCurationDraft(
+  draft: CurationDraft,
+  workflow: WorkflowId,
+  setCurationEdits: Dispatch<SetStateAction<CurationDraft[]>>,
+  setNotice: (value: string) => void
+) {
+  persistCurationDraft(draft, workflow)
+    .then((result) => {
+      setCurationEdits((edits) =>
+        updateCurationDraft(edits, draft.id, {
+          persistence: result.persisted ? "saved" : "local",
+        })
+      );
+      if (!result.persisted) {
+        setNotice(
+          `${sentenceCase(draft.action)} is local until model edits are available.`
+        );
+      }
+    })
+    .catch((caught) => {
+      setCurationEdits((edits) =>
+        updateCurationDraft(edits, draft.id, { persistence: "failed" })
+      );
+      setNotice((caught as Error).message);
+    });
+}
+
+function saveCurationUndo(
+  workflow: WorkflowId,
+  setNotice: (value: string) => void
+) {
+  persistCurationUndo(workflow).catch((caught) => {
+    setNotice((caught as Error).message);
+  });
+}
+
+function useCurationShortcuts({
+  handleCurationAction,
+  handleUndoCuration,
+  selection,
+  visibleModel,
+}: {
+  handleCurationAction: (
+    action: CurationAction,
+    target: CurationTarget
+  ) => void;
+  handleUndoCuration: () => void;
+  selection: Selection | undefined;
+  visibleModel: ProcessModel | undefined;
+}) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (shouldIgnoreShortcut(event)) {
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        handleUndoCuration();
+        return;
+      }
+      const action = shortcutAction(event.key);
+      if (!(action && selection && visibleModel)) {
+        return;
+      }
+      event.preventDefault();
+      handleCurationAction(action, {
+        id: selection.id,
+        kind: selection.kind,
+      });
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [handleCurationAction, handleUndoCuration, selection, visibleModel]);
+}
+
+function shortcutAction(key: string): CurationAction | undefined {
+  const normalized = key.toLowerCase();
+  if (normalized === "c") {
+    return "confirm";
+  }
+  if (normalized === "m") {
+    return "merge";
+  }
+  if (normalized === "s") {
+    return "split";
+  }
+  if (normalized === "x") {
+    return "reject";
+  }
+  return undefined;
 }
 
 function Stat({
@@ -1091,4 +1481,37 @@ function WorkspaceStatus({
       </button>
     </div>
   );
+}
+
+function sentenceCase(value: string) {
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+}
+
+function graphCurationHint(stats: ReturnType<typeof curationSummary>) {
+  return `${stats.active} curation edits · ${stats.pending} pending`;
+}
+
+function shouldIgnoreShortcut(event: KeyboardEvent) {
+  const { target } = event;
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  return (
+    target.isContentEditable ||
+    target.tagName === "INPUT" ||
+    target.tagName === "SELECT" ||
+    target.tagName === "TEXTAREA"
+  );
+}
+
+function findLastActiveCurationEdit(
+  edits: CurationDraft[]
+): CurationDraft | undefined {
+  for (let index = edits.length - 1; index >= 0; index -= 1) {
+    const edit = edits[index];
+    if (edit && !edit.undone) {
+      return edit;
+    }
+  }
+  return undefined;
 }

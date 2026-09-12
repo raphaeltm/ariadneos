@@ -231,6 +231,43 @@ describe("ChannelCoordinator", () => {
     expect(replayed.map((event) => event.id)).toEqual([2]);
   });
 
+  it("broadcasts an existing journal row to connected streams", async () => {
+    d1.prepare(
+      `INSERT INTO pm_journal
+       (workspace_id, channel, project_id, kind, ts, payload_json, operation_key)
+       VALUES (?, ?, 'proj_helios', 'conformance', ?, ?, ?)`
+    ).run(
+      "T1",
+      "C1",
+      new Date(1).toISOString(),
+      JSON.stringify({ fitness: 0.75, workflow_id: "wf_p1_incident" }),
+      "T1:C1:conformance:1"
+    );
+    const coordinator = new ChannelCoordinatorCore(
+      new FakeState(storage) as unknown as DurableObjectState,
+      env,
+      scope
+    );
+    const stream = await coordinator.stream(
+      { ...scope, projectId: "proj_helios" },
+      1
+    );
+    const streamed = textFrom(stream, 1);
+    const response = await coordinator.fetch(
+      new Request(
+        "https://channel.test/broadcast?project_id=proj_helios&journal_id=1",
+        { method: "POST" }
+      )
+    );
+    expect(response.status).toBe(200);
+    const [event] = envelopes(await streamed);
+    expect(event).toMatchObject({
+      id: 1,
+      kind: "conformance",
+      payload: { fitness: 0.75, workflow_id: "wf_p1_incident" },
+    });
+  });
+
   it("emits reset when a cursor is outside the bounded replay window", async () => {
     const coordinator = new ChannelCoordinatorCore(
       new FakeState(storage) as unknown as DurableObjectState,

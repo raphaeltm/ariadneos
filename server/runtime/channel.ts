@@ -295,6 +295,22 @@ export async function replayJournal(
   };
 }
 
+export async function readJournalEnvelope(
+  db: D1Database,
+  scope: ChannelScope,
+  id: number
+) {
+  const row = await db
+    .prepare(
+      `SELECT id, workspace_id, channel, project_id, session_id, kind, ts, payload_json
+       FROM pm_journal
+       WHERE workspace_id = ? AND channel = ? AND id = ?`
+    )
+    .bind(scope.workspaceId, scope.channel, id)
+    .first<JournalRow>();
+  return row ? toEnvelope(row) : null;
+}
+
 export async function commitJournalEntry(
   db: D1Database,
   scope: ChannelScope,

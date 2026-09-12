@@ -14,6 +14,7 @@ import {
   currentJournalCursor,
   type DeadlineKind,
   parseNonNegativeInteger,
+  readJournalEnvelope,
   replayJournal,
   resetFrame,
   sseFrame,
@@ -123,6 +124,33 @@ export class ChannelCoordinatorCore {
         this.writeDeadline("recovery", Date.now());
         await this.rescheduleAlarm();
       });
+      return Response.json({ ok: true });
+    }
+    if (request.method === "POST" && url.pathname === "/broadcast") {
+      const scoped = this.requestScope(url);
+      const journalId = parseNonNegativeInteger(
+        url.searchParams.get("journal_id")
+      );
+      if (journalId === null) {
+        return Response.json(
+          { error: "journal_id must be a non-negative integer." },
+          { status: 400 }
+        );
+      }
+      const envelope = await readJournalEnvelope(
+        this.env.DB,
+        scoped,
+        journalId
+      );
+      if (!envelope) {
+        return Response.json(
+          { error: "Journal entry was not found." },
+          { status: 404 }
+        );
+      }
+      await Promise.allSettled(
+        [...this.subscribers].map((subscriber) => subscriber.send(envelope))
+      );
       return Response.json({ ok: true });
     }
     if (request.method === "POST" && url.pathname === "/schedule") {

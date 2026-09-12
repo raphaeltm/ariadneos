@@ -4,6 +4,7 @@ Status: in-review
 Owner: Codex agent for SAM task 01M2AXAVBN6G701NTR0VS9V1N6
 Source: GitHub issue #26 / SAM task "Build step/edge inspector with evidence, curation and conformance detail"
 Branch: sam/implement-github-issue-26-s9v1n6
+PR: https://github.com/raphaeltm/ariadneos/pull/68
 
 ## Intent
 Add an inspector panel for selected process steps and edges that explains what was selected, shows evidence with source provenance, exposes curation actions for observations, and summarizes conformance findings. Keep the work focused on the inspector UI surface while integrating with the current canvas selection path and the typed client contracts from issue #23 where they are available.

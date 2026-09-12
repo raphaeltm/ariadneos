@@ -28,6 +28,8 @@ import {
 import AppShell, {
   type AppShellView,
 } from "./components/app-shell/app-shell.tsx";
+import { buildLegacyInspectorDetails } from "./components/inspector/inspector-data.ts";
+import { ProcessInspector } from "./components/inspector/process-inspector.tsx";
 import ProcessGraph from "./process-graph.tsx";
 
 interface Selection {
@@ -759,150 +761,29 @@ function Inspector({
   setCaseId,
   setTab,
 }: InspectorProps) {
+  const details = buildLegacyInspectorDetails({
+    events,
+    model,
+    selectedEdge,
+    selectedNode,
+    selection,
+  });
   return (
-    <aside className="inspector">
-      {selection ? (
-        <>
-          <div className="inspector-label">
-            OBSERVATION EVIDENCE
-            <button
-              aria-label="Clear selection"
-              onClick={() => setSelection(undefined)}
-              type="button"
-            >
-              <X size={16} />
-            </button>
-          </div>
-          <span className="insight-icon">
-            <Waypoints size={21} />
-          </span>
-          <h3>
-            {selectedNode?.label ??
-              `${selectedEdge?.source} → ${selectedEdge?.target}`}
-          </h3>
-          <p>
-            {selectedNode
-              ? `${selectedNode.count} observations, across ${selectedNode.actors.length} actors.`
-              : `This transition appears ${selectedEdge?.count} times in ${selectedEdge?.cases} distinct cases.`}
-          </p>
-          {selectedEdge !== undefined && (
-            <div className="evidence-metrics">
-              <div>
-                <strong>{Math.round(selectedEdge.probability * 100)}%</strong>
-                <span>of next transitions</span>
-              </div>
-              <div>
-                <strong>{duration(selectedEdge.medianMinutes)}</strong>
-                <span>median elapsed time</span>
-              </div>
-            </div>
-          )}
-          {selectedNode !== undefined && (
-            <div className="actor-pills">
-              {selectedNode.actors.map((a) => (
-                <span key={a}>
-                  <i>{initials(a)}</i>
-                  {a}
-                </span>
-              ))}
-            </div>
-          )}
-          <button
-            className="text-link"
-            onClick={() => {
-              setCaseId(undefined);
-              setTab("events");
-            }}
-            type="button"
-          >
-            Inspect {events.length} source events <ArrowRight size={14} />
-          </button>
-          <div className="evidence-preview">
-            {events.slice(0, 3).map((e) => (
-              <div key={e.id}>
-                <span className="avatar tiny">{initials(e.actor)}</span>
-                <div>
-                  <strong>{e.actor}</strong>
-                  <p>{e.action}</p>
-                  <button
-                    onClick={() => {
-                      setSelection(undefined);
-                      setCaseId(e.caseId);
-                      setTab("events");
-                    }}
-                    type="button"
-                  >
-                    {e.caseId}
-                    <ArrowUpRight size={11} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="inspector-label">
-            <Sparkles size={14} />
-            PROCESS AT A GLANCE
-          </div>
-          <span className="insight-icon">
-            <GitBranch size={22} />
-          </span>
-          <h3>
-            One process.
-            <br />A few different journeys.
-          </h3>
-          <p>
-            <strong>{Math.round(model.stats.dominantShare * 100)}%</strong> of
-            cases follow the most common path. The rest reveal how your team
-            handles exceptions.
-          </p>
-          <div className="main-path">
-            {model.variants[0]?.path.map((step, i) => (
-              <div key={model.variants[0]?.path.slice(0, i + 1).join(" → ")}>
-                <span className="path-marker">
-                  {i === (model.variants[0]?.path.length ?? 0) - 1 ? (
-                    <Check size={10} />
-                  ) : (
-                    i + 1
-                  )}
-                </span>
-                {step}
-              </div>
-            ))}
-          </div>
-          <button
-            className="text-link"
-            onClick={() => setTab("variants")}
-            type="button"
-          >
-            Explore all {model.stats.variants} variants <ArrowRight size={14} />
-          </button>
-        </>
-      )}
-      <div className="context-callout">
-        <span>
-          <Layers3 size={15} />A traceable process
-        </span>
-        <p>
-          Every connection comes from real event records in this simulation.
-          Nothing in this map was drawn by hand.
-        </p>
-        <button
-          onClick={() =>
-            window.open(
-              `/api/context?workflow=${workflow}`,
-              "_blank",
-              "noopener,noreferrer"
-            )
-          }
-          type="button"
-        >
-          View agent context <ArrowUpRight size={13} />
-        </button>
-      </div>
-    </aside>
+    <ProcessInspector
+      details={details}
+      onClearSelection={() => setSelection(undefined)}
+      onInspectSources={() => {
+        setCaseId(undefined);
+        setTab(selection ? "events" : "variants");
+      }}
+      onOpenContext={() =>
+        window.open(
+          `/api/context?workflow=${workflow}`,
+          "_blank",
+          "noopener,noreferrer"
+        )
+      }
+    />
   );
 }
 

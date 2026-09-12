@@ -4,6 +4,7 @@ Status: in-review
 Owner: Codex for SAM task 01M2B1X4QYZTFB2KQB69EVQQKT, requested by repository owner
 Source: User requested a beautiful, approachable explanation with diagrams, linked from the homepage. Parent session 12304ca6-01db-4aa6-ba82-f70f7d486fc0 coordinated the spec wave and requested a separate final UI integration task.
 Branch: sam/use-sam-mcp-tools-evqqkt
+PR: https://github.com/raphaeltm/ariadneos/pull/82
 
 ## Intent
 Explain how Slack conversations become evidence-backed process maps for technically curious visitors, without a deep implementation breakdown.
@@ -42,4 +43,4 @@ Explain how Slack conversations become evidence-backed process maps for technica
 - App integration is evolving concurrently; this explanatory page does not establish deployment readiness. Revert this PR to remove the page and links; no database changes.
 
 ## Next steps
-- Open PR and inspect remote CI. Human reviewer: assess the explanation and visual design, then decide whether to merge. Merge/production deployment are not authorized by this page request. No deployment was performed or verified by this task.
+- PR #82 is open; initial remote Secret scan and Work item context checks passed. Quality, CodeQL, and deployment validation were still running at this handoff. Human reviewer: assess the explanation and visual design, then decide whether to merge. Merge/production deployment are not authorized by this page request. No deployment was performed or verified by this task.

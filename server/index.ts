@@ -10,10 +10,10 @@ import {
 import { simulate } from "../shared/simulation.ts";
 import { type AuthEnv, authConfigured, createAuth } from "./auth.ts";
 import { ChannelCoordinator as ChannelCoordinatorClass } from "./channel-coordinator.ts";
+import { processRoutes } from "./routes/process.ts";
 import {
   type ChannelCoordinatorEnv,
   configuredChannelScope,
-  coordinatorFetch,
   wakeChannelCoordinator,
 } from "./runtime/channel.ts";
 import { type SlackEventsEnv, slackEvents } from "./slack-events.ts";
@@ -158,39 +158,6 @@ app.get("/api/context", async (c) => {
     workflow,
     ...model,
   });
-});
-app.get("/api/snapshot", async (c) => {
-  const scope = configuredChannelScope(c.env);
-  if (!scope) {
-    return c.json({ error: "Channel coordination is not configured." }, 503);
-  }
-  const params = new URLSearchParams(c.req.url.split("?")[1] ?? "");
-  const response = await coordinatorFetch(c.env, scope, "/snapshot", {
-    params,
-  });
-  if (!response) {
-    return c.json({ error: "Channel coordinator is not bound." }, 503);
-  }
-  return response;
-});
-app.get("/api/stream", async (c) => {
-  const scope = configuredChannelScope(c.env);
-  if (!scope) {
-    return c.json({ error: "Channel coordination is not configured." }, 503);
-  }
-  const params = new URLSearchParams(c.req.url.split("?")[1] ?? "");
-  const response = await coordinatorFetch(c.env, scope, "/stream", {
-    headers: {
-      ...(c.req.header("Last-Event-ID")
-        ? { "Last-Event-ID": c.req.header("Last-Event-ID") ?? "" }
-        : {}),
-    },
-    params,
-  });
-  if (!response) {
-    return c.json({ error: "Channel coordinator is not bound." }, 503);
-  }
-  return response;
 });
 app.post("/api/simulate", async (c) => {
   let body: { workflow?: string };
@@ -356,6 +323,7 @@ app.post("/api/ask", async (c) => {
     });
   }
 });
+app.route("/api", processRoutes);
 app.all("/api/*", (c) => c.json({ error: "Not found." }, 404));
 app.get("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 

@@ -4,6 +4,7 @@ Status: in-review
 Owner: Codex agent for issue #28, SAM task 01M2AXM2ZDS1260JZZJ63M66GE
 Source: GitHub issue #28 and user request to implement an end-to-end demo simulator, synthetic Helios/Atlas transcript generator, readiness gate, and integration harness against current main while skipping staging verification for speed.
 Branch: sam/implement-github-issue-28-3m66ge
+PR: https://github.com/raphaeltm/ariadneos/pull/71
 
 ## Intent
 Provide a focused demo simulator and readiness gate that exercise the current Slack-shaped process-mining pipeline from realistic unstructured observations through extraction, deterministic graph mining, conformance scoring, and UI-consumable snapshot data. Keep the work scoped to simulator, readiness, transcript generation, and integration harness modules, preserving the existing TypeScript/Hono Worker, D1, React/Vite, Better Auth, Slack-only scope, and current demo routes.
@@ -44,4 +45,4 @@ Provide a focused demo simulator and readiness gate that exercise the current Sl
 - Rollback is to revert the simulator/readiness modules, tests, scripts, and this work item.
 
 ## Next steps
-- Open the PR with `Closes #28`, monitor CI, and merge once required checks are green. Staging verification is skipped per the time-critical user instruction.
+- Monitor CI for PR #71 and merge once required checks are green. Staging verification is skipped per the time-critical user instruction.

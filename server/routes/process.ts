@@ -26,12 +26,20 @@ import {
   scoreConformance,
 } from "../../shared/mining/conformance.ts";
 import {
+  type AggregateGraph,
   type BuildGraphInput,
   buildAggregateGraph,
   type DesignedWorkflowInput,
   type MiningSessionInput,
   type MiningStepInput,
 } from "../../shared/mining/graph.ts";
+import {
+  applyDesignedGraphEdits,
+  type DesignedGraphEditAction,
+  type DesignedGraphEditPayload,
+  rewriteStepForDesignedEdits,
+} from "../../shared/model-edits.ts";
+import { persistGraphRevision } from "../graph-persistence.ts";
 import {
   type AuthoredKb,
   activityId,
@@ -40,6 +48,15 @@ import {
   type PolicyDefinition,
   type ProjectDefinition,
 } from "../kb.ts";
+import {
+  appendGraphEdit,
+  readActiveDesignedGraphEdits,
+  readGraphEditByRequestId,
+  readGraphEditHead,
+  readGraphEditHistory,
+  type StoredGraphEdit,
+  undoLatestGraphEdit,
+} from "../model-edits.ts";
 import {
   type ChannelCoordinatorEnv,
   type ChannelScope,
@@ -133,9 +150,23 @@ const DEFAULT_PROJECT_ID = "proj_helios";
 const DEFAULT_MIN_SUPPORT = 1;
 const MAX_PAGE_LIMIT = 100;
 const ID_PATTERN = /^[a-z][a-z0-9_:-]*$/;
+const SLUG_PATTERN = /^[a-z][a-z0-9_]*$/;
 const NON_NEGATIVE_INTEGER_PATTERN = /^\d+$/;
 const ACTIVITY_ID_PREFIX_PATTERN = /^act_/;
 const CURATION_STATUSES = new Set<CurationStatus>(["confirmed", "rejected"]);
+const GRAPH_EDIT_ACTIONS = new Set([
+  "add_edge",
+  "add_node",
+  "merge",
+  "merge_nodes",
+  "promote",
+  "remove_edge",
+  "remove_node",
+  "rename",
+  "rename_node",
+  "require",
+  "retire",
+]);
 
 export const processRoutes = new Hono<{
   Bindings: ProcessEnv;
@@ -160,6 +191,179 @@ processRoutes.get("/kb", (c) => {
   });
 });
 
+processRoutes.get("/model/edits", async (c) => {
+  const context = getProcessContext(c);
+  const scope = resolveScope(
+    {
+      project_id: c.req.query("project_id"),
+      workflow_id: c.req.query("workflow_id") ?? c.req.query("workflow"),
+    },
+    loadKb(),
+    { requireWorkflow: true }
+  );
+  if ("response" in scope) {
+    return scope.response;
+  }
+  if (!scope.workflowId) {
+    return apiError("unknown_workflow", "Unknown workflow_id.", 400);
+  }
+  const { workflowId } = scope;
+  const edits = await readGraphEditHistory(c.env.DB, context.scope, workflowId);
+  return c.json({
+    edits: edits.map(toEditResponse),
+    revision: await readGraphEditHead(c.env.DB, context.scope, workflowId),
+    workflow_id: workflowId,
+  });
+});
+
+processRoutes.post("/model/edit", async (c) => {
+  const context = getProcessContext(c);
+  const body = await readJson<{
+    action?: string;
+    base_revision?: number;
+    payload?: unknown;
+    project_id?: string;
+    request_id?: string;
+    workflow?: string;
+    workflow_id?: string;
+  }>(c.req.raw);
+  if ("response" in body) {
+    return body.response;
+  }
+  const metadata = validateEditRequestMetadata(body);
+  if (metadata) {
+    return metadata;
+  }
+  const scope = resolveScope(
+    {
+      project_id: body.project_id,
+      workflow_id: body.workflow_id ?? body.workflow,
+    },
+    loadKb(),
+    { requireWorkflow: true }
+  );
+  if ("response" in scope) {
+    return scope.response;
+  }
+  if (!scope.workflowId) {
+    return apiError("unknown_workflow", "Unknown workflow_id.", 400);
+  }
+  const { workflowId } = scope;
+  const duplicate = await readGraphEditByRequestId(
+    c.env.DB,
+    context.scope,
+    workflowId,
+    body.request_id
+  );
+  if (duplicate) {
+    return modelEditResponse(
+      c,
+      context.scope,
+      { ...scope, workflowId },
+      duplicate
+    );
+  }
+  const current = await readEffectiveWorkflow(
+    c.env.DB,
+    context.scope,
+    workflowId
+  );
+  if (!current) {
+    return apiError("unknown_workflow", "Unknown workflow_id.", 400);
+  }
+  const data = await readScopedData(c.env.DB, context.scope, scope.projectId);
+  const aggregate = buildAggregateForGraph({
+    data,
+    effectiveWorkflow: current.workflow,
+    mergedSlugs: current.mergedSlugs,
+    projectId: scope.projectId,
+    workflowId,
+  });
+  const edit = validateGraphEdit({
+    action: body.action,
+    aggregate,
+    payload: body.payload,
+    workflow: current.workflow,
+  });
+  if ("response" in edit) {
+    return edit.response;
+  }
+  const result = await appendGraphEdit(c.env.DB, {
+    action: edit.action,
+    actorId: c.get("userId"),
+    baseRevision: body.base_revision,
+    payload: edit.payload,
+    projectId: scope.projectId,
+    requestId: body.request_id,
+    scope: context.scope,
+    workflowId,
+  });
+  if (result.status === "conflict") {
+    return editConflict(result.currentRevision);
+  }
+  if (result.status !== "created" && result.status !== "duplicate") {
+    return apiError("edit_not_applied", "Graph edit was not applied.", 409);
+  }
+  return modelEditResponse(
+    c,
+    context.scope,
+    { ...scope, workflowId },
+    result.edit
+  );
+});
+
+processRoutes.post("/model/edit/undo", async (c) => {
+  const context = getProcessContext(c);
+  const body = await readJson<{
+    base_revision?: number;
+    project_id?: string;
+    request_id?: string;
+    workflow?: string;
+    workflow_id?: string;
+  }>(c.req.raw);
+  if ("response" in body) {
+    return body.response;
+  }
+  const metadata = validateEditRequestMetadata(body);
+  if (metadata) {
+    return metadata;
+  }
+  const scope = resolveScope(
+    {
+      project_id: body.project_id,
+      workflow_id: body.workflow_id ?? body.workflow,
+    },
+    loadKb(),
+    { requireWorkflow: true }
+  );
+  if ("response" in scope) {
+    return scope.response;
+  }
+  if (!scope.workflowId) {
+    return apiError("unknown_workflow", "Unknown workflow_id.", 400);
+  }
+  const { workflowId } = scope;
+  const result = await undoLatestGraphEdit(c.env.DB, {
+    actorId: c.get("userId"),
+    baseRevision: body.base_revision,
+    requestId: body.request_id,
+    scope: context.scope,
+    workflowId,
+  });
+  if (result.status === "conflict") {
+    return editConflict(result.currentRevision);
+  }
+  if (result.status === "empty") {
+    return apiError("nothing_to_undo", "No active graph edit exists.", 409);
+  }
+  return modelEditResponse(
+    c,
+    context.scope,
+    { ...scope, workflowId },
+    result.edit
+  );
+});
+
 processRoutes.get("/snapshot", async (c) => {
   const context = getProcessContext(c);
   const scope = resolveScope(c.req.query(), loadKb());
@@ -167,9 +371,14 @@ processRoutes.get("/snapshot", async (c) => {
     return scope.response;
   }
   const data = await readScopedData(c.env.DB, context.scope, scope.projectId);
+  const effective = scope.workflowId
+    ? await readEffectiveWorkflow(c.env.DB, context.scope, scope.workflowId)
+    : null;
   const graph = buildGraphView({
     data,
+    effectiveWorkflow: effective?.workflow,
     kind: requestedView(c.req.query("view")),
+    mergedSlugs: effective?.mergedSlugs,
     minSupport: readLimit(c.req.query("min_support"), {
       defaultValue: DEFAULT_MIN_SUPPORT,
       maximum: 50,
@@ -187,7 +396,12 @@ processRoutes.get("/snapshot", async (c) => {
     pipeline_events: unknown[];
   } = {
     agent_posts: [],
-    conformance: buildSessionConformance(data, scope.workflowId),
+    conformance: buildSessionConformance(
+      data,
+      scope.workflowId,
+      effective?.workflow,
+      effective?.mergedSlugs
+    ),
     cursor: await currentJournalCursor(c.env.DB, context.scope),
     graph,
     kb: toKnowledgeBase(loadKb()),
@@ -199,21 +413,33 @@ processRoutes.get("/snapshot", async (c) => {
   return c.json(snapshot);
 });
 
-processRoutes.get("/graph/designed", (c) => {
+processRoutes.get("/graph/designed", async (c) => {
+  const context = getProcessContext(c);
   const scope = resolveScope(c.req.query(), loadKb(), {
     requireWorkflow: true,
   });
   if ("response" in scope) {
     return scope.response;
   }
+  if (!scope.workflowId) {
+    return apiError("unknown_workflow", "Unknown workflow_id.", 400);
+  }
+  const { workflowId } = scope;
+  const effective = await readEffectiveWorkflow(
+    c.env.DB,
+    context.scope,
+    workflowId
+  );
   const data = emptyScopedData();
   return c.json(
     buildGraphView({
       data,
+      effectiveWorkflow: effective?.workflow,
       kind: "designed",
+      mergedSlugs: effective?.mergedSlugs,
       minSupport: DEFAULT_MIN_SUPPORT,
       projectId: scope.projectId,
-      workflowId: scope.workflowId,
+      workflowId,
     })
   );
 });
@@ -251,6 +477,10 @@ processRoutes.get("/graph/overlay", async (c) => {
   if ("response" in scope) {
     return scope.response;
   }
+  if (!scope.workflowId) {
+    return apiError("unknown_workflow", "Unknown workflow_id.", 400);
+  }
+  const { workflowId } = scope;
   const minSupport = readLimit(c.req.query("min_support"), {
     defaultValue: DEFAULT_MIN_SUPPORT,
     maximum: 50,
@@ -260,12 +490,19 @@ processRoutes.get("/graph/overlay", async (c) => {
     return minSupport.response;
   }
   const data = await readScopedData(c.env.DB, context.scope, scope.projectId);
+  const effective = await readEffectiveWorkflow(
+    c.env.DB,
+    context.scope,
+    workflowId
+  );
   const graph = buildGraphView({
     data,
+    effectiveWorkflow: effective?.workflow,
     kind: "overlay",
+    mergedSlugs: effective?.mergedSlugs,
     minSupport,
     projectId: scope.projectId,
-    workflowId: scope.workflowId,
+    workflowId,
   });
   return "response" in graph ? graph.response : c.json(graph);
 });
@@ -298,10 +535,15 @@ processRoutes.get("/sessions/:id", async (c) => {
       sessionId,
     }
   );
+  const effective = session.workflow_id
+    ? await readEffectiveWorkflow(c.env.DB, context.scope, session.workflow_id)
+    : null;
   return c.json({
     conformance: buildSessionConformance(
       data,
-      session.workflow_id ?? undefined
+      session.workflow_id ?? undefined,
+      effective?.workflow,
+      effective?.mergedSlugs
     ),
     session,
     steps: data.steps,
@@ -326,9 +568,14 @@ processRoutes.get("/sessions/:id/graph", async (c) => {
       sessionId,
     }
   );
+  const effective = session.workflow_id
+    ? await readEffectiveWorkflow(c.env.DB, context.scope, session.workflow_id)
+    : null;
   const graph = buildGraphView({
     data,
+    effectiveWorkflow: effective?.workflow,
     kind: "instance",
+    mergedSlugs: effective?.mergedSlugs,
     minSupport: DEFAULT_MIN_SUPPORT,
     projectId: session.project_id,
     sessionId,
@@ -434,9 +681,14 @@ processRoutes.post("/graph/rebuild", async (c) => {
     return scope.response;
   }
   const data = await readScopedData(c.env.DB, context.scope, scope.projectId);
+  const effective = scope.workflowId
+    ? await readEffectiveWorkflow(c.env.DB, context.scope, scope.workflowId)
+    : null;
   const graph = buildGraphView({
     data,
+    effectiveWorkflow: effective?.workflow,
     kind: scope.workflowId ? "overlay" : "discovered",
+    mergedSlugs: effective?.mergedSlugs,
     minSupport: DEFAULT_MIN_SUPPORT,
     projectId: scope.projectId,
     workflowId: scope.workflowId,
@@ -502,6 +754,464 @@ function apiError(code: string, message: string, status: number) {
   return Response.json({ error: { code, message } } satisfies ApiError, {
     status,
   });
+}
+
+function editConflict(currentRevision: number) {
+  return Response.json(
+    {
+      current_revision: currentRevision,
+      error: {
+        code: "edit_conflict",
+        message: "The graph edit is based on a stale revision.",
+      },
+    },
+    { status: 409 }
+  );
+}
+
+function validateEditRequestMetadata(body: {
+  base_revision?: number;
+  request_id?: string;
+}) {
+  if (
+    body.base_revision !== undefined &&
+    (!Number.isInteger(body.base_revision) || body.base_revision < 0)
+  ) {
+    return apiError(
+      "invalid_base_revision",
+      "base_revision must be a non-negative integer.",
+      400
+    );
+  }
+  if (
+    body.request_id !== undefined &&
+    (typeof body.request_id !== "string" ||
+      body.request_id.trim().length === 0 ||
+      body.request_id.length > 120)
+  ) {
+    return apiError(
+      "invalid_request_id",
+      "request_id must be a non-empty string up to 120 characters.",
+      400
+    );
+  }
+  return null;
+}
+
+async function modelEditResponse(
+  c: Context<{ Bindings: ProcessEnv; Variables: Variables }>,
+  channelScope: ChannelScope,
+  scope: { projectId: ProjectId; workflowId?: WorkflowId },
+  edit: StoredGraphEdit
+) {
+  if (!scope.workflowId) {
+    return apiError("unknown_workflow", "Unknown workflow_id.", 400);
+  }
+  const data = await readScopedData(c.env.DB, channelScope, scope.projectId);
+  const effective = await readEffectiveWorkflow(
+    c.env.DB,
+    channelScope,
+    scope.workflowId
+  );
+  if (!effective) {
+    return apiError("unknown_workflow", "Unknown workflow_id.", 400);
+  }
+  const aggregate = buildAggregateForGraph({
+    data,
+    effectiveWorkflow: effective.workflow,
+    kind: "overlay",
+    mergedSlugs: effective.mergedSlugs,
+    projectId: scope.projectId,
+    workflowId: scope.workflowId,
+  });
+  const persisted = await persistGraphRevision(c.env.DB, {
+    graph: aggregate,
+    operationKey: `graph-edit:${edit.id}`,
+    scope: {
+      channel: channelScope.channel,
+      kind: "overlay",
+      minSupport: DEFAULT_MIN_SUPPORT,
+      projectId: scope.projectId,
+      workflowId: scope.workflowId,
+      workspaceId: channelScope.workspaceId,
+    },
+  });
+  const graph = buildGraphView({
+    data,
+    effectiveWorkflow: effective.workflow,
+    kind: "overlay",
+    mergedSlugs: effective.mergedSlugs,
+    minSupport: DEFAULT_MIN_SUPPORT,
+    projectId: scope.projectId,
+    workflowId: scope.workflowId,
+  });
+  if ("response" in graph) {
+    return graph.response;
+  }
+  const designed = buildGraphView({
+    data: emptyScopedData(),
+    effectiveWorkflow: effective.workflow,
+    kind: "designed",
+    mergedSlugs: effective.mergedSlugs,
+    minSupport: DEFAULT_MIN_SUPPORT,
+    projectId: scope.projectId,
+    workflowId: scope.workflowId,
+  });
+  if ("response" in designed) {
+    return designed.response;
+  }
+  return c.json({
+    conformance: graph.conformance,
+    designed: { ...designed, revision: persisted.revision },
+    edit: toEditResponse(edit),
+    graph: { ...graph, revision: persisted.revision },
+    graph_revision: persisted.revision,
+    revision: edit.revision,
+  });
+}
+
+async function readEffectiveWorkflow(
+  db: D1Database,
+  scope: ChannelScope,
+  workflowId: WorkflowId
+) {
+  const base = designedWorkflowInput(workflowId, loadKb());
+  if (!base) {
+    return null;
+  }
+  const edits = await readActiveDesignedGraphEdits(db, scope, workflowId);
+  return applyDesignedGraphEdits(
+    base,
+    edits.map((edit) => ({
+      action: edit.action as DesignedGraphEditAction,
+      id: edit.id,
+      payload: edit.payload as DesignedGraphEditPayload,
+      revision: edit.revision,
+      undone: edit.undone,
+    }))
+  );
+}
+
+function validateGraphEdit(input: {
+  action?: string;
+  aggregate: AggregateGraph;
+  payload: unknown;
+  workflow: DesignedWorkflowInput;
+}):
+  | { action: DesignedGraphEditAction; payload: Record<string, unknown> }
+  | { response: Response } {
+  const action = normalizeEditAction(input.action);
+  if (!action) {
+    return {
+      response: apiError(
+        "invalid_action",
+        "Graph edit action is not supported.",
+        400
+      ),
+    };
+  }
+  const payload = payloadObject(input.payload);
+  if (!payload) {
+    return {
+      response: apiError(
+        "invalid_payload",
+        "Graph edit payload must be an object.",
+        400
+      ),
+    };
+  }
+  const activities = new Map(
+    input.workflow.activities.map((activity) => [activity.slug, activity])
+  );
+  const edges = new Set(
+    (input.workflow.edges ?? []).map(
+      (edge) =>
+        `${edge.sourceActivitySlug ?? slugFromActivityId(edge.sourceActivityId)}\0${
+          edge.targetActivitySlug ?? slugFromActivityId(edge.targetActivityId)
+        }`
+    )
+  );
+
+  switch (action) {
+    case "add_node":
+      return validateAddNodeEdit(input, payload, activities);
+    case "merge_nodes":
+      return validateMergeNodeEdit(payload, activities);
+    case "remove_node":
+      return validateRemoveNodeEdit(input, payload, activities);
+    case "rename_node":
+      return validateRenameNodeEdit(payload, activities);
+    case "add_edge":
+    case "remove_edge":
+      return validateEdgeEdit(action, payload, activities, edges);
+    default:
+      return {
+        response: apiError(
+          "invalid_action",
+          "Graph edit action is not supported.",
+          400
+        ),
+      };
+  }
+}
+
+function validateAddNodeEdit(
+  input: { action?: string; aggregate: AggregateGraph },
+  payload: Record<string, unknown>,
+  activities: Map<string, DesignedWorkflowInput["activities"][number]>
+) {
+  const slug = stringPayload(payload, "slug");
+  if (!validSlug(slug)) {
+    return {
+      response: apiError("invalid_slug", "Node slug is invalid.", 400),
+    };
+  }
+  if (activities.has(slug)) {
+    return {
+      response: apiError("node_exists", "Designed node already exists.", 409),
+    };
+  }
+  if (input.action === "promote") {
+    const discovered = input.aggregate.nodes.find((node) => node.slug === slug);
+    if (discovered?.plane !== "discovered") {
+      return {
+        response: apiError(
+          "illegal_promote",
+          "Only discovered-only nodes can be promoted.",
+          400
+        ),
+      };
+    }
+    return {
+      action: "add_node" as const,
+      payload: {
+        label: stringPayload(payload, "label") || discovered.label,
+        role_expected: stringPayload(payload, "role_expected"),
+        slug,
+      },
+    };
+  }
+  return {
+    action: "add_node" as const,
+    payload: {
+      label: stringPayload(payload, "label") || humanizeSlug(slug),
+      rank: numberPayload(payload, "rank"),
+      role_expected: stringPayload(payload, "role_expected"),
+      slug,
+    },
+  };
+}
+
+function validateRemoveNodeEdit(
+  input: { action?: string; aggregate: AggregateGraph },
+  payload: Record<string, unknown>,
+  activities: Map<string, DesignedWorkflowInput["activities"][number]>
+) {
+  const slug = stringPayload(payload, "slug");
+  const activity = activities.get(slug);
+  if (!activity) {
+    return {
+      response: apiError("unknown_node", "Designed node was not found.", 404),
+    };
+  }
+  if (input.action === "retire") {
+    const node = input.aggregate.nodes.find((item) => item.slug === slug);
+    if (node?.plane !== "designed") {
+      return {
+        response: apiError(
+          "illegal_retire",
+          "Only designed-only nodes can be retired.",
+          400
+        ),
+      };
+    }
+  }
+  const acknowledged = stringArrayPayload(payload, "acknowledged_policy_ids");
+  const missingPolicies = (activity.policyIds ?? []).filter(
+    (policyId) => !acknowledged.includes(policyId)
+  );
+  if (missingPolicies.length > 0) {
+    return {
+      response: Response.json(
+        {
+          error: {
+            code: "policy_acknowledgement_required",
+            message:
+              "Retiring this node removes governed policy coverage; acknowledge the policy ids.",
+          },
+          policy_ids: missingPolicies,
+        },
+        { status: 400 }
+      ),
+    };
+  }
+  return {
+    action: "remove_node" as const,
+    payload: { acknowledged_policy_ids: acknowledged, slug },
+  };
+}
+
+function validateRenameNodeEdit(
+  payload: Record<string, unknown>,
+  activities: Map<string, DesignedWorkflowInput["activities"][number]>
+) {
+  const slug = stringPayload(payload, "slug");
+  const label = stringPayload(payload, "label");
+  if (!activities.has(slug)) {
+    return {
+      response: apiError("unknown_node", "Designed node was not found.", 404),
+    };
+  }
+  if (!(label && label.length <= 120)) {
+    return {
+      response: apiError(
+        "invalid_label",
+        "Node label must be 1 to 120 characters.",
+        400
+      ),
+    };
+  }
+  return { action: "rename_node" as const, payload: { label, slug } };
+}
+
+function validateMergeNodeEdit(
+  payload: Record<string, unknown>,
+  activities: Map<string, DesignedWorkflowInput["activities"][number]>
+) {
+  const source = stringPayload(payload, "source_slug");
+  const target = stringPayload(payload, "target_slug");
+  if (
+    !(activities.has(source) && activities.has(target)) ||
+    source === target
+  ) {
+    return {
+      response: apiError(
+        "invalid_merge",
+        "Merge requires two distinct designed nodes.",
+        400
+      ),
+    };
+  }
+  return {
+    action: "merge_nodes" as const,
+    payload: {
+      label: stringPayload(payload, "label"),
+      source_slug: source,
+      target_slug: target,
+    },
+  };
+}
+
+function validateEdgeEdit(
+  action: "add_edge" | "remove_edge",
+  payload: Record<string, unknown>,
+  activities: Map<string, DesignedWorkflowInput["activities"][number]>,
+  edges: Set<string>
+) {
+  const from = stringPayload(payload, "from_slug");
+  const to = stringPayload(payload, "to_slug");
+  if (!(activities.has(from) && activities.has(to)) || from === to) {
+    return {
+      response: apiError(
+        "invalid_edge",
+        "Edge edits require two distinct designed nodes.",
+        400
+      ),
+    };
+  }
+  const edgeKey = `${from}\0${to}`;
+  if (action === "add_edge") {
+    if (edges.has(edgeKey)) {
+      return {
+        response: apiError("edge_exists", "Designed edge already exists.", 409),
+      };
+    }
+    return {
+      action,
+      payload: {
+        from_slug: from,
+        probability: numberPayload(payload, "probability") ?? 1,
+        to_slug: to,
+      },
+    };
+  }
+  if (!edges.has(edgeKey)) {
+    return {
+      response: apiError("unknown_edge", "Designed edge was not found.", 404),
+    };
+  }
+  return { action, payload: { from_slug: from, to_slug: to } };
+}
+
+function normalizeEditAction(
+  action: string | undefined
+): DesignedGraphEditAction | null {
+  if (!(action && GRAPH_EDIT_ACTIONS.has(action))) {
+    return null;
+  }
+  switch (action) {
+    case "merge":
+      return "merge_nodes";
+    case "promote":
+      return "add_node";
+    case "rename":
+      return "rename_node";
+    case "require":
+      return "add_edge";
+    case "retire":
+      return "remove_node";
+    default:
+      return action as DesignedGraphEditAction;
+  }
+}
+
+function payloadObject(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function stringPayload(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function numberPayload(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function stringArrayPayload(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function validSlug(slug: string) {
+  return SLUG_PATTERN.test(slug) && slug.length <= 80;
+}
+
+function slugFromActivityId(id: string | undefined) {
+  return id?.startsWith("act_") ? id.slice(4) : (id ?? "");
+}
+
+function toEditResponse(edit: StoredGraphEdit) {
+  return {
+    action: edit.action,
+    actor: edit.actorId,
+    base_revision: edit.baseRevision,
+    created_at: edit.createdAt,
+    id: edit.id,
+    payload: edit.payload,
+    request_id: edit.requestId,
+    revision: edit.revision,
+    target_edit_id: edit.targetEditId,
+    undone: edit.undone,
+    workflow: edit.workflowId,
+  };
 }
 
 function routeContext(
@@ -935,7 +1645,9 @@ function parseJsonArray(value: string) {
 
 function buildGraphView(input: {
   data: ScopedData;
+  effectiveWorkflow?: DesignedWorkflowInput;
   kind: GraphView["kind"];
+  mergedSlugs?: Record<string, string>;
   minSupport: number | { response: Response };
   projectId: ProjectId;
   sessionId?: string;
@@ -954,22 +1666,7 @@ function buildGraphView(input: {
       ),
     };
   }
-  const kb = loadKb();
-  const workflows =
-    input.kind === "discovered" || !input.workflowId
-      ? []
-      : [designedWorkflowInput(input.workflowId, kb)].filter(
-          (item): item is DesignedWorkflowInput => Boolean(item)
-        );
-  const graph = buildAggregateGraph({
-    scope: {
-      projectId: input.projectId,
-      ...(input.workflowId ? { workflowId: input.workflowId } : {}),
-    },
-    sessions: input.data.sessions.map(toMiningSession),
-    steps: input.data.steps.map(toMiningStep),
-    workflows,
-  } satisfies BuildGraphInput);
+  const graph = buildAggregateForGraph(input);
   const nodes = graph.nodes
     .filter(
       (node) =>
@@ -991,7 +1688,12 @@ function buildGraphView(input: {
     .map(toGraphEdge);
   const revision = revisionNumber(graph.revision);
   return {
-    conformance: buildWorkflowConformance(input.data, input.workflowId),
+    conformance: buildWorkflowConformance(
+      input.data,
+      input.workflowId,
+      input.effectiveWorkflow,
+      input.mergedSlugs
+    ),
     edges,
     generated_at: new Date().toISOString(),
     happy_path: graph.happyPath.map(
@@ -1014,6 +1716,40 @@ function buildGraphView(input: {
       : {}),
     ...(input.workflowId ? { workflow_id: input.workflowId } : {}),
   };
+}
+
+function buildAggregateForGraph(input: {
+  data: ScopedData;
+  effectiveWorkflow?: DesignedWorkflowInput;
+  kind?: GraphView["kind"];
+  mergedSlugs?: Record<string, string>;
+  projectId: ProjectId;
+  sessionId?: string;
+  workflowId?: WorkflowId;
+}): AggregateGraph {
+  const kb = loadKb();
+  const workflows =
+    input.kind === "discovered" || !input.workflowId
+      ? []
+      : [
+          input.effectiveWorkflow ??
+            designedWorkflowInput(input.workflowId, kb),
+        ].filter((item): item is DesignedWorkflowInput => Boolean(item));
+  return buildAggregateGraph({
+    scope: {
+      projectId: input.projectId,
+      ...(input.workflowId ? { workflowId: input.workflowId } : {}),
+    },
+    sessions: input.data.sessions.map(toMiningSession),
+    steps: input.data.steps
+      .map(toMiningStep)
+      .map((step) =>
+        input.mergedSlugs
+          ? rewriteStepForDesignedEdits(step, input.mergedSlugs)
+          : step
+      ),
+    workflows,
+  } satisfies BuildGraphInput);
 }
 
 function toMiningSession(session: ProcessSession): MiningSessionInput {
@@ -1047,6 +1783,13 @@ function toMiningStep(step: Step): MiningStepInput {
   };
 }
 
+function mergedSlugForStep(step: Step, mergedSlugs: Record<string, string>) {
+  const slug = step.activity_id
+    ? step.activity_id.replace(ACTIVITY_ID_PREFIX_PATTERN, "")
+    : step.intent;
+  return mergedSlugs[slug] ?? slug;
+}
+
 function designedWorkflowInput(
   workflowId: WorkflowId,
   kb: AuthoredKb
@@ -1060,6 +1803,13 @@ function designedWorkflowInput(
     activities: designed.activities.map((activity) => ({
       id: activity.activityId,
       label: activity.label,
+      policyIds: kb.policies
+        .filter(
+          (policy) =>
+            policy.project_id === workflow.project_id &&
+            policy.activity_slug === activity.slug
+        )
+        .map((policy) => policy.id),
       rank: activity.rank,
       roleExpected: activity.roleExpected,
       slug: activity.slug,
@@ -1125,47 +1875,60 @@ function toGraphEdge(
 
 function buildSessionConformance(
   data: ScopedData,
-  workflowId: WorkflowId | undefined
+  workflowId: WorkflowId | undefined,
+  effectiveWorkflow?: DesignedWorkflowInput,
+  mergedSlugs?: Record<string, string>
 ): SessionConformance[] {
   if (!workflowId) {
     return [];
   }
-  const workflow = workflowId
-    ? designedWorkflowInput(workflowId, loadKb())
-    : undefined;
+  const workflow =
+    effectiveWorkflow ?? designedWorkflowInput(workflowId, loadKb());
   if (!workflow) {
     return [];
   }
-  return runConformance(data, workflowId).sessions.map((session) => ({
-    extra: session.controlFlow.extra.map((slug) => ({ occurrences: 1, slug })),
-    fitness: session.controlFlow.fitness,
-    missing: session.controlFlow.missing.map((slug) => ({
-      of: 1,
-      seen_in_sessions: 0,
-      slug,
-    })),
-    order_breaks: session.controlFlow.orderBreaks.map((item) => ({
-      expected_between: item.expectedBetween.join(", ") || null,
-      from: item.from,
-      to: item.to,
-    })),
-    precision: session.controlFlow.precision,
-    role_deviations: [],
-    session_id: session.sessionId as ProcessSession["id"],
-    unreconciled: [],
-    violations: session.violations.map(toPolicyViolation),
-    workflow_id: workflowId,
-  }));
+  return runConformance(data, workflowId, workflow, mergedSlugs).sessions.map(
+    (session) => ({
+      extra: session.controlFlow.extra.map((slug) => ({
+        occurrences: 1,
+        slug,
+      })),
+      fitness: session.controlFlow.fitness,
+      missing: session.controlFlow.missing.map((slug) => ({
+        of: 1,
+        seen_in_sessions: 0,
+        slug,
+      })),
+      order_breaks: session.controlFlow.orderBreaks.map((item) => ({
+        expected_between: item.expectedBetween.join(", ") || null,
+        from: item.from,
+        to: item.to,
+      })),
+      precision: session.controlFlow.precision,
+      role_deviations: [],
+      session_id: session.sessionId as ProcessSession["id"],
+      unreconciled: [],
+      violations: session.violations.map(toPolicyViolation),
+      workflow_id: workflowId,
+    })
+  );
 }
 
 function buildWorkflowConformance(
   data: ScopedData,
-  workflowId: WorkflowId | undefined
+  workflowId: WorkflowId | undefined,
+  effectiveWorkflow?: DesignedWorkflowInput,
+  mergedSlugs?: Record<string, string>
 ): WorkflowConformance | null {
   if (!workflowId) {
     return null;
   }
-  const result = runConformance(data, workflowId);
+  const result = runConformance(
+    data,
+    workflowId,
+    effectiveWorkflow,
+    mergedSlugs
+  );
   return {
     closed_sessions: result.rollup.closedSessions,
     extra: Object.entries(result.rollup.extraCounts).map(
@@ -1189,10 +1952,16 @@ function buildWorkflowConformance(
   };
 }
 
-function runConformance(data: ScopedData, workflowId: WorkflowId) {
+function runConformance(
+  data: ScopedData,
+  workflowId: WorkflowId,
+  effectiveWorkflow?: DesignedWorkflowInput,
+  mergedSlugs: Record<string, string> = {}
+) {
   const kb = loadKb();
   const workflow = kb.workflows.find((item) => item.id === workflowId);
-  if (!workflow) {
+  const designed = effectiveWorkflow ?? designedWorkflowInput(workflowId, kb);
+  if (!(designed || workflow)) {
     return scoreConformance(emptyConformanceInput(workflowId));
   }
   return scoreConformance({
@@ -1217,9 +1986,7 @@ function runConformance(data: ScopedData, workflowId: WorkflowId) {
       workflowId: session.workflow_id,
     })),
     steps: data.steps.map((step) => ({
-      activitySlug:
-        step.activity_id?.replace(ACTIVITY_ID_PREFIX_PATTERN, "") ??
-        step.intent,
+      activitySlug: mergedSlugForStep(step, mergedSlugs),
       actorPersonId: step.actor_person_id,
       artifactId: step.artifact_id,
       confidence: step.confidence,
@@ -1233,14 +2000,14 @@ function runConformance(data: ScopedData, workflowId: WorkflowId) {
       type: step.type,
     })),
     workflow: {
-      activities: workflow.activities.map((activity) => ({
-        expectedRole: activity.role,
+      activities: (designed?.activities ?? []).map((activity) => ({
+        expectedRole: activity.roleExpected ?? undefined,
         label: activity.label,
         slug: activity.slug,
       })),
-      id: workflow.id,
-      matrix: workflow.matrix,
-      projectId: workflow.project_id ?? undefined,
+      id: workflow?.id ?? workflowId,
+      matrix: designed?.matrix ?? [],
+      projectId: designed?.projectId ?? workflow?.project_id ?? undefined,
     },
   } satisfies ConformanceInput);
 }

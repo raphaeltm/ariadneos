@@ -67,6 +67,8 @@ beforeEach(() => {
   sqlite.exec(
     readFileSync("migrations/0006_channel_coordinator_runtime.sql", "utf8")
   );
+  sqlite.exec(readFileSync("migrations/0007_graph_kb_persistence.sql", "utf8"));
+  sqlite.exec(readFileSync("migrations/0008_graph_edit_revisions.sql", "utf8"));
   seedProcessRows(sqlite);
   env = {
     CHANNEL_COORDINATOR: fakeDurableObjectNamespace(),
@@ -149,6 +151,217 @@ describe("process API routes", () => {
         .prepare("SELECT COUNT(*) AS count FROM pm_journal WHERE kind = 'step'")
         .get()
     ).toEqual({ count: 1 });
+  });
+
+  it("persists designed graph edits with revision history and idempotent request ids", async () => {
+    const response = await post("/api/model/edit", {
+      action: "add_node",
+      base_revision: 0,
+      payload: {
+        label: "Draft status update",
+        role_expected: "pm",
+        slug: "draft_status_update",
+      },
+      request_id: "edit-add-node",
+      workflow_id: "wf_p1_incident",
+    });
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      designed: { nodes: Array<{ id: string }> };
+      edit: { revision: number };
+      graph_revision: number;
+      revision: number;
+    };
+    expect(payload.revision).toBe(1);
+    expect(payload.edit.revision).toBe(1);
+    expect(payload.graph_revision).toBe(1);
+    expect(payload.designed.nodes.map((node) => node.id)).toContain(
+      "act_draft_status_update"
+    );
+
+    const retry = await post("/api/model/edit", {
+      action: "add_node",
+      base_revision: 0,
+      payload: {
+        label: "Draft status update",
+        role_expected: "pm",
+        slug: "draft_status_update",
+      },
+      request_id: "edit-add-node",
+      workflow_id: "wf_p1_incident",
+    });
+    expect(retry.status).toBe(200);
+    expect(
+      sqlite
+        .prepare("SELECT COUNT(*) AS count FROM pm_graph_edit_revision")
+        .get()
+    ).toEqual({ count: 1 });
+
+    const history = await get("/api/model/edits?workflow_id=wf_p1_incident");
+    expect(history.status).toBe(200);
+    await expect(history.json()).resolves.toMatchObject({
+      edits: [
+        {
+          action: "add_node",
+          revision: 1,
+          undone: false,
+        },
+      ],
+      revision: 1,
+      workflow_id: "wf_p1_incident",
+    });
+  });
+
+  it("rejects stale graph edit revisions before writing", async () => {
+    expect(
+      (
+        await post("/api/model/edit", {
+          action: "add_node",
+          base_revision: 0,
+          payload: { slug: "draft_status_update" },
+          request_id: "edit-first",
+          workflow_id: "wf_p1_incident",
+        })
+      ).status
+    ).toBe(200);
+
+    const stale = await post("/api/model/edit", {
+      action: "add_node",
+      base_revision: 0,
+      payload: { slug: "publish_status_update" },
+      request_id: "edit-stale",
+      workflow_id: "wf_p1_incident",
+    });
+
+    expect(stale.status).toBe(409);
+    await expect(stale.json()).resolves.toMatchObject({
+      current_revision: 1,
+      error: { code: "edit_conflict" },
+    });
+    expect(
+      sqlite
+        .prepare("SELECT COUNT(*) AS count FROM pm_graph_edit_revision")
+        .get()
+    ).toEqual({ count: 1 });
+  });
+
+  it("undoes the latest designed graph edit as its own revision", async () => {
+    await post("/api/model/edit", {
+      action: "add_node",
+      base_revision: 0,
+      payload: { slug: "draft_status_update" },
+      request_id: "edit-add",
+      workflow_id: "wf_p1_incident",
+    });
+
+    const undo = await post("/api/model/edit/undo", {
+      base_revision: 1,
+      request_id: "undo-add",
+      workflow_id: "wf_p1_incident",
+    });
+
+    expect(undo.status).toBe(200);
+    const payload = (await undo.json()) as {
+      designed: { nodes: Array<{ id: string }> };
+      edit: { action: string; revision: number; target_edit_id: string };
+      revision: number;
+    };
+    expect(payload.revision).toBe(2);
+    expect(payload.edit).toMatchObject({ action: "undo", revision: 2 });
+    expect(payload.edit.target_edit_id).toBeTruthy();
+    expect(payload.designed.nodes.map((node) => node.id)).not.toContain(
+      "act_draft_status_update"
+    );
+
+    const rows = sqlite
+      .prepare(
+        "SELECT action, revision, undone FROM pm_graph_edit_revision ORDER BY revision"
+      )
+      .all();
+    expect(rows).toEqual([
+      { action: "add_node", revision: 1, undone: 1 },
+      { action: "undo", revision: 2, undone: 0 },
+    ]);
+  });
+
+  it("validates edge edits, merge rewrites and governed node removal", async () => {
+    const missingAck = await post("/api/model/edit", {
+      action: "remove_node",
+      payload: { slug: "security_review" },
+      request_id: "remove-governed-without-ack",
+      workflow_id: "wf_p1_incident",
+    });
+    expect(missingAck.status).toBe(400);
+    await expect(missingAck.json()).resolves.toMatchObject({
+      error: { code: "policy_acknowledgement_required" },
+      policy_ids: ["pol_sec_review"],
+    });
+
+    const edge = await post("/api/model/edit", {
+      action: "add_edge",
+      base_revision: 0,
+      payload: {
+        from_slug: "detect_incident",
+        probability: 0.25,
+        to_slug: "security_review",
+      },
+      request_id: "add-designed-edge",
+      workflow_id: "wf_p1_incident",
+    });
+    expect(edge.status).toBe(200);
+    await expect(edge.json()).resolves.toMatchObject({ revision: 1 });
+
+    const merge = await post("/api/model/edit", {
+      action: "merge_nodes",
+      base_revision: 1,
+      payload: {
+        source_slug: "open_incident_ticket",
+        target_slug: "assign_owner",
+      },
+      request_id: "merge-designed-nodes",
+      workflow_id: "wf_p1_incident",
+    });
+    expect(merge.status).toBe(200);
+    const merged = (await merge.json()) as {
+      designed: {
+        edges: Array<{ from: string; to: string }>;
+        nodes: Array<{ id: string }>;
+      };
+      revision: number;
+    };
+    expect(merged.revision).toBe(2);
+    expect(merged.designed.nodes.map((node) => node.id)).not.toContain(
+      "act_open_incident_ticket"
+    );
+    expect(merged.designed.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          from: "act_triage_incident",
+          to: "act_assign_owner",
+        }),
+      ])
+    );
+
+    const remove = await post("/api/model/edit", {
+      action: "remove_node",
+      base_revision: 2,
+      payload: {
+        acknowledged_policy_ids: ["pol_sec_review"],
+        slug: "security_review",
+      },
+      request_id: "remove-governed-with-ack",
+      workflow_id: "wf_p1_incident",
+    });
+    expect(remove.status).toBe(200);
+    const removed = (await remove.json()) as {
+      designed: { nodes: Array<{ id: string }> };
+      revision: number;
+    };
+    expect(removed.revision).toBe(3);
+    expect(removed.designed.nodes.map((node) => node.id)).not.toContain(
+      "act_security_review"
+    );
   });
 
   it("forwards stream cursor and configured scope to the coordinator", async () => {

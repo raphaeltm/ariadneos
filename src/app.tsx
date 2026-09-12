@@ -34,8 +34,10 @@ import {
   type ApiAdapter,
   type ConnectionScope,
   createProductionApiAdapter,
+  type ModelEditAction,
 } from "./api.ts";
 import { AccountMenu } from "./auth-gate.tsx";
+import { AgentChatPanel } from "./components/agent-chat/agent-chat-panel.tsx";
 import AppShell, {
   type AppShellView,
 } from "./components/app-shell/app-shell.tsx";
@@ -44,6 +46,7 @@ import {
   type InspectorCurationItem,
 } from "./components/inspector/inspector-data.ts";
 import { ProcessInspector } from "./components/inspector/process-inspector.tsx";
+import type { GraphEditHandler } from "./components/process-canvas/types.ts";
 import { WorkflowCanvas } from "./components/process-canvas/workflow-canvas.tsx";
 import {
   clampDemoStepIndex,
@@ -135,6 +138,7 @@ const legacyAskWorkflow: Record<string, string> = {
   wf_p1_incident: "vendor",
 };
 
+const activityIdPrefixPattern = /^act_/;
 const demoStepKeyPattern = /^[1-6]$/;
 
 function isTextEntryTarget(target: EventTarget | null) {
@@ -163,6 +167,8 @@ export default function App() {
   const [shellView, setShellView] = useState<AppShellView>("graph");
   const [notice, setNotice] = useState("");
   const [simulating, setSimulating] = useState(false);
+  const [modelEditing, setModelEditing] = useState(false);
+  const [addNodeLabel, setAddNodeLabel] = useState("");
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
   const [answer, setAnswer] = useState<AskAnswer | null>(null);
@@ -310,7 +316,7 @@ export default function App() {
   );
   const selectedSession = state.selection.case_id
     ? state.sessions[state.selection.case_id]
-    : sessions[0];
+    : undefined;
   const inspectorDetails = useMemo(
     () =>
       buildContractInspectorDetails({
@@ -483,7 +489,7 @@ export default function App() {
     }
     switch (demoStep.action) {
       case "ask":
-        ask("Which observations show process drift?").catch(() => undefined);
+        setShellView("chat");
         break;
       case "events":
         setShellView("activity");
@@ -602,6 +608,58 @@ export default function App() {
       `${status === "confirmed" ? "Accepted" : "Rejected"} ${item.label}.`
     );
     setReloadToken((value) => value + 1);
+  };
+
+  const askAgent = useCallback(
+    (prompt: string, signal: AbortSignal) =>
+      adapter.ask(
+        {
+          project_id: state.scope.project_id,
+          question: prompt,
+          workflow_id: state.scope.workflow_id,
+        },
+        signal
+      ),
+    [adapter, state.scope.project_id, state.scope.workflow_id]
+  );
+
+  const editGraph = useCallback<GraphEditHandler>(
+    async (action, payload) => {
+      const { current } = stateRef;
+      const currentGraph = selectCurrentGraph(current);
+      const edit = normalizeGraphEdit(action, payload, currentGraph);
+      if (!edit) {
+        setNotice("This graph edit is not supported for the live model yet.");
+        return;
+      }
+      setModelEditing(true);
+      setNotice("");
+      try {
+        await adapter.applyModelEdit({
+          action: edit.action,
+          payload: edit.payload,
+          request_id: crypto.randomUUID(),
+          scope: current.scope,
+        });
+        setNotice("Graph model edit saved. Recalculating conformance...");
+        setReloadToken((value) => value + 1);
+      } catch (caught) {
+        setNotice((caught as Error).message);
+      } finally {
+        setModelEditing(false);
+      }
+    },
+    [adapter]
+  );
+
+  const submitAddNode = async (event: { preventDefault: () => void }) => {
+    event.preventDefault();
+    const label = addNodeLabel.trim();
+    if (!label) {
+      return;
+    }
+    setAddNodeLabel("");
+    await editGraph("add_node", { label, slug: slugifyGraphLabel(label) });
   };
 
   const ask = async (text = question) => {
@@ -838,8 +896,13 @@ export default function App() {
               <div className="main-panel">
                 {shellView === "graph" ? (
                   <MapPanel
+                    addNodeLabel={addNodeLabel}
+                    canEdit={!modelEditing}
                     focusClass={isDemoTarget("graph")}
                     graph={graph}
+                    modelEditing={modelEditing}
+                    onAddNodeLabelChange={setAddNodeLabel}
+                    onEdit={editGraph}
                     onModeChange={(view) =>
                       setState((current) => {
                         const scope = { ...current.scope, view };
@@ -852,6 +915,7 @@ export default function App() {
                     }
                     onReload={() => setReloadToken((value) => value + 1)}
                     onSelect={select}
+                    onSubmitAddNode={submitAddNode}
                     selection={state.selection}
                   />
                 ) : null}
@@ -864,6 +928,15 @@ export default function App() {
                       onInspectSources={() => setShellView("activity")}
                     />
                   </div>
+                ) : null}
+                {shellView === "chat" ? (
+                  <AgentChatPanel
+                    ask={askAgent}
+                    className={isDemoTarget("conversation")}
+                    disabled={state.loading.requestId !== null}
+                    onInspectEvidence={() => setShellView("activity")}
+                    scopeLabel={activeProject?.label ?? "Current process"}
+                  />
                 ) : null}
                 {shellView === "activity" ? (
                   <ActivityPanel
@@ -912,13 +985,15 @@ export default function App() {
               messages={messages}
               onSelect={select}
             />
-            <AssistantPanel
-              answer={answer}
-              ask={ask}
-              asking={asking}
-              question={question}
-              setQuestion={setQuestion}
-            />
+            {shellView === "chat" ? null : (
+              <AssistantPanel
+                answer={answer}
+                ask={ask}
+                asking={asking}
+                question={question}
+                setQuestion={setQuestion}
+              />
+            )}
             <VariantSummary
               focusClass={isDemoTarget("variants")}
               graph={graph}
@@ -1105,18 +1180,30 @@ function VariantSummary({
 }
 
 function MapPanel({
+  addNodeLabel,
+  canEdit,
   focusClass,
   graph,
+  modelEditing,
+  onAddNodeLabelChange,
+  onEdit,
   onModeChange,
   onReload,
   onSelect,
+  onSubmitAddNode,
   selection,
 }: {
+  addNodeLabel: string;
+  canEdit: boolean;
   focusClass?: string;
   graph: ReturnType<typeof selectCurrentGraph>;
+  modelEditing: boolean;
+  onAddNodeLabelChange: (value: string) => void;
+  onEdit: GraphEditHandler;
   onModeChange: (view: ConnectionScope["view"]) => void;
   onReload: () => void;
   onSelect: (selection: AppSelection) => void;
+  onSubmitAddNode: (event: { preventDefault: () => void }) => void;
   selection: AppSelection;
 }) {
   if (!graph) {
@@ -1139,9 +1226,18 @@ function MapPanel({
         Live overlay from /api/snapshot
         <span>Click a node or edge to inspect evidence and conformance.</span>
       </div>
+      <GraphEditStrip
+        addNodeLabel={addNodeLabel}
+        canEdit={canEdit}
+        modelEditing={modelEditing}
+        onAddNodeLabelChange={onAddNodeLabelChange}
+        onSubmitAddNode={onSubmitAddNode}
+      />
       <div className={focusClass ?? ""} data-demo-target="graph">
         <WorkflowCanvas
+          canEdit={canEdit}
           graph={graph}
+          onEdit={onEdit}
           onModeChange={onModeChange}
           onSelectionChange={onSelect}
           selection={selection}
@@ -1149,6 +1245,129 @@ function MapPanel({
       </div>
     </>
   );
+}
+
+function GraphEditStrip({
+  addNodeLabel,
+  canEdit,
+  modelEditing,
+  onAddNodeLabelChange,
+  onSubmitAddNode,
+}: {
+  addNodeLabel: string;
+  canEdit: boolean;
+  modelEditing: boolean;
+  onAddNodeLabelChange: (value: string) => void;
+  onSubmitAddNode: (event: { preventDefault: () => void }) => void;
+}) {
+  return (
+    <div className="graph-edit-strip" role="toolbar">
+      <form onSubmit={onSubmitAddNode}>
+        <input
+          aria-label="New graph node label"
+          disabled={!canEdit}
+          maxLength={80}
+          onChange={(event) => onAddNodeLabelChange(event.target.value)}
+          placeholder="Add documented step"
+          value={addNodeLabel}
+        />
+        <button disabled={!(canEdit && addNodeLabel.trim())} type="submit">
+          {modelEditing ? (
+            <LoaderCircle className="spin" size={13} />
+          ) : (
+            <Sparkles size={13} />
+          )}
+          Add
+        </button>
+      </form>
+      <span>
+        Drag to connect, select a node to rename, promote, retire, or reject.
+      </span>
+    </div>
+  );
+}
+
+function normalizeGraphEdit(
+  action: Parameters<GraphEditHandler>[0],
+  payload: Record<string, string>,
+  graph: ReturnType<typeof selectCurrentGraph>
+): {
+  action: ModelEditAction;
+  payload: Record<string, boolean | number | string | string[]>;
+} | null {
+  const slugFor = (value: string | undefined) => {
+    if (!value) {
+      return "";
+    }
+    return (
+      graph?.nodes.find(
+        (node) => node.id === value || node.activity.slug === value
+      )?.activity.slug ?? value.replace(activityIdPrefixPattern, "")
+    );
+  };
+  switch (action) {
+    case "add_node":
+      return {
+        action,
+        payload: {
+          label: payload.label ?? "",
+          slug: payload.slug || slugifyGraphLabel(payload.label ?? ""),
+        },
+      };
+    case "add_edge":
+    case "require":
+      return {
+        action: "add_edge",
+        payload: {
+          from_slug: slugFor(payload.source ?? payload.from),
+          to_slug: slugFor(payload.target ?? payload.to),
+        },
+      };
+    case "merge":
+      return {
+        action,
+        payload: {
+          source_slug: slugFor(payload.source),
+          target_slug: slugFor(payload.target),
+        },
+      };
+    case "rename":
+      return {
+        action,
+        payload: { label: payload.label ?? "", slug: slugFor(payload.id) },
+      };
+    case "retire":
+      return {
+        action,
+        payload: { acknowledged_policy_ids: [], slug: slugFor(payload.id) },
+      };
+    case "promote":
+      return { action, payload: { slug: slugFor(payload.id) } };
+    case "remove_edge":
+      return {
+        action,
+        payload: {
+          from_slug: slugFor(payload.source ?? payload.from),
+          to_slug: slugFor(payload.target ?? payload.to),
+        },
+      };
+    case "remove_node":
+      return {
+        action,
+        payload: { acknowledged_policy_ids: [], slug: slugFor(payload.id) },
+      };
+    default:
+      return null;
+  }
+}
+
+function slugifyGraphLabel(value: string) {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return slug || `step_${Date.now()}`;
 }
 
 function LiveStats({

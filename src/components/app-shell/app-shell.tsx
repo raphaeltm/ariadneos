@@ -5,12 +5,18 @@ import {
   ChevronDown,
   CircleHelp,
   GitBranch,
+  MessageCircle,
   Settings,
   Waypoints,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-export type AppShellView = "activity" | "graph" | "inspector" | "settings";
+export type AppShellView =
+  | "activity"
+  | "chat"
+  | "graph"
+  | "inspector"
+  | "settings";
 
 export interface AppShellOption {
   detail?: string;
@@ -46,6 +52,7 @@ const navigationItems: NavigationItem[] = [
   { icon: Waypoints, id: "graph", label: "Graph canvas" },
   { icon: Activity, id: "inspector", label: "Inspector" },
   { icon: GitBranch, id: "activity", label: "Activity" },
+  { icon: MessageCircle, id: "chat", label: "Agent chat" },
   { icon: Settings, id: "settings", label: "Settings" },
 ];
 

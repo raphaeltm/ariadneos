@@ -36,6 +36,8 @@ describe("request boundaries", () => {
     { question: "", workflow: "vendor" },
     { question: 42, workflow: "vendor" },
     { question: "x".repeat(401), workflow: "vendor" },
+    { question: "show me the handoff", workflow_id: 42 },
+    { question: "show me the handoff", workflow_id: "wf_unknown" },
   ])("rejects invalid questions: %j", async (body) => {
     expect((await request("/api/ask", body)).status).toBe(400);
   });

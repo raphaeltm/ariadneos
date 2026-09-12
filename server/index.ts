@@ -1,10 +1,13 @@
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { editableGraph, prepareGraphEdit } from "../shared/graph-edits.ts";
 import {
   type ActivityEvent,
   duration,
+  type GraphEdit,
+  type GraphEditAction,
   isWorkflow,
-  mine,
+  type WorkflowId,
   workflows,
 } from "../shared/process.ts";
 import { simulate } from "../shared/simulation.ts";
@@ -43,6 +46,7 @@ interface Env
 }
 
 const app = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
+type AppContext = Context<{ Bindings: Env; Variables: { userId: string } }>;
 function channelCoordinatorReadiness(env: Env) {
   if (!env.CHANNEL_COORDINATOR) {
     return "unbound";
@@ -100,6 +104,121 @@ async function eventsFor(db: D1Database, workflow: string, session: string) {
     .bind(workflow, session)
     .all<{ payload: string }>();
   return rows.results.map((r) => JSON.parse(r.payload) as ActivityEvent);
+}
+async function editsFor(db: D1Database, workflow: WorkflowId, session: string) {
+  let rows: D1Result<{
+    action: GraphEditAction;
+    actor: string;
+    created_at: number;
+    id: string;
+    payload: string;
+    undone: number;
+    workflow: WorkflowId;
+  }>;
+  try {
+    rows = await db
+      .prepare(
+        "SELECT id,workflow,action,payload,actor,created_at,undone FROM edits WHERE session_id = ? AND workflow = ? ORDER BY created_at,id LIMIT 500"
+      )
+      .bind(session, workflow)
+      .all<{
+        action: GraphEditAction;
+        actor: string;
+        created_at: number;
+        id: string;
+        payload: string;
+        undone: number;
+        workflow: WorkflowId;
+      }>();
+  } catch (error) {
+    if ((error as Error).message.includes("no such table: edits")) {
+      return [];
+    }
+    throw error;
+  }
+  return rows.results.map((row) => ({
+    action: row.action,
+    actor: row.actor,
+    createdAt: new Date(row.created_at).toISOString(),
+    id: row.id,
+    payload: JSON.parse(row.payload) as Record<string, string>,
+    undone: row.undone === 1,
+    workflow: row.workflow,
+  }));
+}
+async function modelSnapshot(
+  c: AppContext,
+  workflow: WorkflowId,
+  extra: Record<string, unknown> = {}
+) {
+  const sid = c.get("userId");
+  const [events, edits, session] = await Promise.all([
+    eventsFor(c.env.DB, workflow, sid),
+    editsFor(c.env.DB, workflow, sid),
+    c.env.DB.prepare("SELECT runs FROM sessions WHERE id=?")
+      .bind(sid)
+      .first<{ runs: number }>(),
+  ]);
+  const graph = editableGraph(events, workflow, edits);
+  return c.json({
+    ...extra,
+    canRedo: edits.some((edit) => edit.undone),
+    canUndo: edits.some((edit) => !edit.undone),
+    conformance: graph.conformance,
+    designed: graph.designed,
+    edits,
+    events,
+    generatedAt: new Date().toISOString(),
+    model: graph.model,
+    remainingRuns: 5 - (session?.runs ?? 0),
+    revision: graph.revision,
+    source: "simulation",
+    workflow: workflows.find((item) => item.id === workflow),
+  });
+}
+async function parseEditBody(c: AppContext) {
+  try {
+    return (await c.req.json()) as {
+      action?: unknown;
+      payload?: unknown;
+      workflow?: unknown;
+    };
+  } catch (error) {
+    throw new Error("Invalid JSON.", { cause: error });
+  }
+}
+async function insertEdit(
+  db: D1Database,
+  session: string,
+  workflow: WorkflowId,
+  action: GraphEditAction,
+  payload: Record<string, string>,
+  actor: string
+) {
+  const createdAt = Date.now();
+  const edit: GraphEdit = {
+    action,
+    actor,
+    createdAt: new Date(createdAt).toISOString(),
+    id: `edt_${crypto.randomUUID()}`,
+    payload,
+    workflow,
+  };
+  await db
+    .prepare(
+      "INSERT INTO edits(id,session_id,workflow,action,payload,actor,created_at,undone) VALUES (?,?,?,?,?,?,?,0)"
+    )
+    .bind(
+      edit.id,
+      session,
+      workflow,
+      action,
+      JSON.stringify(payload),
+      actor,
+      createdAt
+    )
+    .run();
+  return edit;
 }
 async function quota(db: D1Database, kind: string, limit: number) {
   const bucket = `${kind}:${new Date().toISOString().slice(0, 10)}`;
@@ -229,28 +348,129 @@ app.get("/api/model", async (c) => {
   if (!isWorkflow(workflow)) {
     return c.json({ error: "Unknown workflow." }, 400);
   }
+  return await modelSnapshot(c, workflow);
+});
+app.get("/api/model/edits", async (c) => {
+  if (shouldUseProcessModelRoute(c.req.query())) {
+    return await forwardToProcessRoutes(c);
+  }
+  const workflow = c.req.query("workflow") ?? "vendor";
+  if (!isWorkflow(workflow)) {
+    return c.json({ error: "Unknown workflow." }, 400);
+  }
+  return c.json(await editsFor(c.env.DB, workflow, c.get("userId")));
+});
+app.post("/api/model/edit", async (c) => {
+  let body: Awaited<ReturnType<typeof parseEditBody>>;
+  try {
+    body = (await c.req.raw.clone().json()) as Awaited<
+      ReturnType<typeof parseEditBody>
+    >;
+  } catch {
+    return c.json({ error: "Invalid JSON." }, 400);
+  }
+  if (shouldUseProcessModelRoute(body)) {
+    return await forwardToProcessRoutes(c);
+  }
+  if (!isWorkflow(String(body.workflow ?? ""))) {
+    return c.json({ error: "Unknown workflow." }, 400);
+  }
+  const workflow = body.workflow as WorkflowId;
   const sid = c.get("userId");
   const events = await eventsFor(c.env.DB, workflow, sid);
-  const session = sid
-    ? await c.env.DB.prepare("SELECT runs FROM sessions WHERE id=?")
-        .bind(sid)
-        .first<{ runs: number }>()
-    : null;
-  return c.json({
-    events,
-    generatedAt: new Date().toISOString(),
-    model: mine(events),
-    remainingRuns: 5 - (session?.runs ?? 0),
-    source: "simulation",
-    workflow: workflows.find((w) => w.id === workflow),
-  });
+  const edits = await editsFor(c.env.DB, workflow, sid);
+  let prepared: ReturnType<typeof prepareGraphEdit>;
+  try {
+    prepared = prepareGraphEdit({
+      action: String(body.action ?? ""),
+      edits,
+      events,
+      payload: body.payload,
+      workflow,
+    });
+  } catch (error) {
+    return c.json({ error: (error as Error).message }, 400);
+  }
+  const edit = await insertEdit(
+    c.env.DB,
+    sid,
+    workflow,
+    prepared.action,
+    prepared.payload,
+    sid
+  );
+  return await modelSnapshot(c, workflow, { edit });
+});
+app.post("/api/model/edit/undo", async (c) => {
+  let body: { workflow?: unknown; workflow_id?: unknown };
+  try {
+    body = (await c.req.raw.clone().json()) as {
+      workflow?: unknown;
+      workflow_id?: unknown;
+    };
+  } catch {
+    return c.json({ error: "Invalid JSON." }, 400);
+  }
+  if (shouldUseProcessModelRoute(body)) {
+    return await forwardToProcessRoutes(c);
+  }
+  if (!isWorkflow(String(body.workflow ?? ""))) {
+    return c.json({ error: "Unknown workflow." }, 400);
+  }
+  const workflow = body.workflow as WorkflowId;
+  const edit = await c.env.DB.prepare(
+    "SELECT id FROM edits WHERE session_id = ? AND workflow = ? AND undone = 0 ORDER BY created_at DESC,id DESC LIMIT 1"
+  )
+    .bind(c.get("userId"), workflow)
+    .first<{ id: string }>();
+  if (!edit) {
+    return c.json({ error: "No graph edit to undo." }, 409);
+  }
+  await c.env.DB.prepare("UPDATE edits SET undone = 1 WHERE id = ?")
+    .bind(edit.id)
+    .run();
+  return await modelSnapshot(c, workflow, { undone: edit.id });
+});
+app.post("/api/model/edit/redo", async (c) => {
+  let body: { workflow?: unknown; workflow_id?: unknown };
+  try {
+    body = (await c.req.raw.clone().json()) as {
+      workflow?: unknown;
+      workflow_id?: unknown;
+    };
+  } catch {
+    return c.json({ error: "Invalid JSON." }, 400);
+  }
+  if (shouldUseProcessModelRoute(body)) {
+    return await forwardToProcessRoutes(c);
+  }
+  if (!isWorkflow(String(body.workflow ?? ""))) {
+    return c.json({ error: "Unknown workflow." }, 400);
+  }
+  const workflow = body.workflow as WorkflowId;
+  const edit = await c.env.DB.prepare(
+    "SELECT id FROM edits WHERE session_id = ? AND workflow = ? AND undone = 1 ORDER BY created_at DESC,id DESC LIMIT 1"
+  )
+    .bind(c.get("userId"), workflow)
+    .first<{ id: string }>();
+  if (!edit) {
+    return c.json({ error: "No graph edit to redo." }, 409);
+  }
+  await c.env.DB.prepare("UPDATE edits SET undone = 0 WHERE id = ?")
+    .bind(edit.id)
+    .run();
+  return await modelSnapshot(c, workflow, { redone: edit.id });
 });
 app.get("/api/context", async (c) => {
   const workflow = c.req.query("workflow") ?? "vendor";
   if (!isWorkflow(workflow)) {
     return c.json({ error: "Unknown workflow." }, 400);
   }
-  const model = mine(await eventsFor(c.env.DB, workflow, c.get("userId")));
+  const graph = editableGraph(
+    await eventsFor(c.env.DB, workflow, c.get("userId")),
+    workflow,
+    await editsFor(c.env.DB, workflow, c.get("userId"))
+  );
   return c.json({
     limitations: [
       "Observed frequencies are not execution permissions.",
@@ -259,7 +479,9 @@ app.get("/api/context", async (c) => {
     ],
     source: "simulation",
     workflow,
-    ...model,
+    ...graph.model,
+    conformance: graph.conformance,
+    revision: graph.revision,
   });
 });
 app.post("/api/simulate", async (c) => {
@@ -343,7 +565,8 @@ app.post("/api/ask", async (c) => {
   } catch {
     return c.json({ error: "Invalid JSON." }, 400);
   }
-  if (!isValidAskBody(body)) {
+  const workflow = readAskWorkflow(body);
+  if (!(workflow && isValidAskBody(body))) {
     return c.json(
       { error: "Choose a workflow and enter a question up to 400 characters." },
       400
@@ -358,7 +581,6 @@ app.post("/api/ask", async (c) => {
       400
     );
   }
-  const workflow = body.workflow ?? "";
   const question = body.question.trim();
   const memoryScope = askMemoryScope(
     c.env,
@@ -378,9 +600,12 @@ app.post("/api/ask", async (c) => {
     userTurn.threadKey
   );
   const contextStats = contextWindowStats(contextWindow);
-  const model = mine(
-    await eventsFor(c.env.DB, workflow ?? "", c.get("userId"))
+  const graph = editableGraph(
+    await eventsFor(c.env.DB, workflow, c.get("userId")),
+    workflow,
+    await editsFor(c.env.DB, workflow, c.get("userId"))
   );
+  const { model } = graph;
   const summary = {
     nodes: model.nodes,
     source: "synthetic simulation",
@@ -493,6 +718,24 @@ app.get("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 
 export class ChannelCoordinator extends ChannelCoordinatorClass {}
 
+async function forwardToProcessRoutes(c: AppContext) {
+  const url = new URL(c.req.url);
+  url.pathname = url.pathname.slice(4) || "/";
+  const request = new Request(url.toString(), c.req.raw);
+  request.headers.set("X-Ariadne-User-Id", c.get("userId"));
+  return await processRoutes.fetch(request, c.env);
+}
+
+function shouldUseProcessModelRoute(value: {
+  workflow?: unknown;
+  workflow_id?: unknown;
+}) {
+  if (typeof value.workflow_id === "string" && value.workflow_id.trim()) {
+    return !isWorkflow(value.workflow_id);
+  }
+  return typeof value.workflow === "string" && !isWorkflow(value.workflow);
+}
+
 function askMemoryScope(
   env: Env,
   userId: string,
@@ -516,9 +759,12 @@ function askMemoryScope(
   };
 }
 
-function isValidAskBody(
-  value: unknown
-): value is { question: string; thread_id?: string; workflow: string } {
+function isValidAskBody(value: unknown): value is {
+  question: string;
+  thread_id?: string;
+  workflow?: string;
+  workflow_id?: string;
+} {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
@@ -526,15 +772,31 @@ function isValidAskBody(
     question?: unknown;
     thread_id?: unknown;
     workflow?: unknown;
+    workflow_id?: unknown;
   };
   return (
-    typeof body.workflow === "string" &&
-    isWorkflow(body.workflow) &&
+    readAskWorkflow(body) !== null &&
     typeof body.question === "string" &&
     Boolean(body.question.trim()) &&
     body.question.length <= 400 &&
     (body.thread_id === undefined || typeof body.thread_id === "string")
   );
+}
+
+function readAskWorkflow(value: unknown): WorkflowId | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const body = value as { workflow?: unknown; workflow_id?: unknown };
+  const candidate =
+    typeof body.workflow === "string" ? body.workflow : body.workflow_id;
+  if (typeof candidate !== "string") {
+    return null;
+  }
+  const workflow = candidate.startsWith("wf_")
+    ? candidate.slice("wf_".length)
+    : candidate;
+  return isWorkflow(workflow) ? workflow : null;
 }
 
 function agentContextForPrompt(messages: readonly AgentMessageWindowItem[]) {
@@ -552,6 +814,9 @@ export default {
     await env.DB.batch([
       env.DB.prepare(
         "DELETE FROM events WHERE session_id != 'baseline' AND session_id IN (SELECT id FROM sessions WHERE created_at < ?)"
+      ).bind(Date.now() - 86_400_000),
+      env.DB.prepare(
+        "DELETE FROM edits WHERE session_id IN (SELECT id FROM sessions WHERE created_at < ?)"
       ).bind(Date.now() - 86_400_000),
       env.DB.prepare("DELETE FROM sessions WHERE created_at < ?").bind(
         Date.now() - 86_400_000

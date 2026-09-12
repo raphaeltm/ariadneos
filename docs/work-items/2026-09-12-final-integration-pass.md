@@ -25,12 +25,12 @@ Bring the currently merged Roman-spec features together on the latest `main`: fi
 - Store non-secret local/staging/production demo Slack scope defaults in `wrangler.jsonc`; without these values the live snapshot route has no configured channel scope in the local worker harness.
 
 ## Changes
-- Replaced the `/app` placeholder with a live app shell that loads settings, fetches `/api/snapshot`, subscribes to `/api/stream`, renders the React Flow process graph, opens the inspector with evidence and conformance details, exposes curation accept/reject controls, shows activity evidence, switches workspaces and routes settings through the shell. After merging the newer main branch, kept the live API path integrated with the guided demo walkthrough, how-it-works entry point, canvas accessibility updates and inspector refinements from the other completed tasks.
+- Replaced the `/app` placeholder with a live app shell that loads settings, fetches `/api/snapshot`, subscribes to `/api/stream`, renders the React Flow process graph, opens the inspector with evidence and conformance details, exposes curation accept/reject controls, shows activity evidence, switches workspaces and routes settings through the shell. After merging newer main heads, kept the live API path integrated with the guided walkthrough, how-it-works entry point, canvas accessibility updates, graph editing surface, inspector refinements and agent chat panel from the other completed tasks.
 - Added a D1-backed `/api/sim/run` route that generates deterministic synthetic demo transcripts, persists sessions/messages/steps/evidence, publishes journal entries, recalculates conformance, rebuilds graph data and returns the refreshed graph/conformance payload.
 - Connected demo mode in the client to the real simulator route and refreshes the live snapshot after the persisted run completes.
-- Added agent chat in the app shell using the existing `/api/ask` route so the agent memory and model runtime remain callable from the process workspace.
-- Added the Activity shell view and adjusted the graph fit padding so the browser smoke can reliably interact with graph nodes inside the sidebar layout.
-- Added process route coverage for simulator persistence and snapshot refresh, and updated browser E2E coverage around settings, project switching, persisted demo mode, graph selection, activity evidence and sign-out session rejection.
+- Added the dedicated Agent chat shell view using the existing `/api/ask` route so the agent memory and model runtime remain callable from the live process workspace. The client maps Roman workflow IDs such as `wf_p1_incident` to the current legacy agent-memory workflow ids accepted by `/api/ask`.
+- Added the Activity shell view, retained the graph editing toolbar against the live `/api/model/edit` route, and adjusted the graph/browser checks for the merged canvas accessible name and sidebar layout. Activity now defaults to all sessions unless a case is explicitly selected, so evidence jumps do not land on an empty newest-session filter.
+- Added process route coverage for simulator persistence and snapshot refresh, and updated browser E2E coverage around settings, project switching, persisted demo mode, graph selection, activity evidence, agent chat streaming and sign-out session rejection.
 
 ## Validation
 - `git merge --ff-only origin/main`: passed; branch was already up to date with `origin/main` at task start.
@@ -41,16 +41,20 @@ Bring the currently merged Roman-spec features together on the latest `main`: fi
 - `npm run typecheck`: passed.
 - `npx vitest run tests/process-routes.test.ts tests/client-state.test.ts tests/inspector.test.ts tests/process-canvas.test.ts`: passed, 31 tests.
 - `npx vitest run tests/process-routes.test.ts`: passed, 11 tests.
-- Merged the latest `origin/main` into the PR branch after PR #84 reported conflicts; resolved the `src/app.tsx` conflict by keeping the live `/api/` application shell and integrating the newer guided walkthrough, how-it-works route, canvas accessibility and inspector updates from main.
-- `npm run check`: passed after the latest-main merge; lint, typecheck, fixture validation, 189 coverage tests across 26 files, guardrails, migration check and production build all passed.
-- `npm run test:e2e`: passed after the latest-main merge; isolated API smoke and 13 Chromium browser tests passed, including `/app` settings, persisted demo mode, activity evidence, guided walkthrough, project switching, canvas keyboard selection and sign-out rejection.
-- `npm run check:repo`: passed with Ruff 0.16.7 installed locally for the required Python checks; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 13 browser tests all passed.
-- `python3 scripts/check_quality.py`: passed with the same locked Ruff 0.16.7 on PATH; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 13 browser tests all passed.
+- Merged `origin/main` after PR #84 reported conflicts; resolved the first conflict set by keeping the live `/api/` application shell and integrating the guided walkthrough, how-it-works route, canvas accessibility and inspector updates from main.
+- Merged the next `origin/main` head `ded9915` after agent chat and graph editing landed; resolved conflicts by preserving the D1-backed snapshot/SSE app, adding the dedicated Agent chat shell view, mapping live process workflow IDs to the `/api/ask` compatibility workflows, retaining graph edit controls against `/api/model/edit`, and keeping Activity as a first-class shell view.
+- `npm run fix`: passed on the final merge resolution.
+- `npm run typecheck`: passed on the final merge resolution.
+- `npm run build`: passed before E2E reruns so the Worker served the current client bundle.
+- `npm run check`: passed on the final source; lint, typecheck, fixture validation, 200 coverage tests across 27 files, guardrails, migration check and production build all passed.
+- `npm run test:e2e`: passed on the final source; isolated API smoke and 14 Chromium browser tests passed, including `/app` settings, persisted demo mode, activity evidence, guided walkthrough, project switching, canvas keyboard selection, agent chat streaming and sign-out rejection.
+- `npm run check:repo`: passed with Ruff 0.16.7 installed locally for the required Python checks; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 14 browser tests all passed.
+- `python3 scripts/check_quality.py`: passed with the same locked Ruff 0.16.7 on PATH; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 14 browser tests all passed.
 
 ## Risks and rollback
-- Open PRs still exist for adjacent graph editing, agent chat and dependency updates. This branch integrates the capabilities already present on `origin/main` and keeps mappings narrow where later PRs may introduce richer first-class process/agent workspace models.
-- The agent chat bridge uses the current seeded workflow IDs as a compatibility layer. If a later backend adds project-native agent memory endpoints, the bridge should be replaced with that API.
-- Rollback is a PR revert of this integration branch. No new database migrations were added.
+- Graph editing and agent chat landed on `origin/main` while this PR was open and are now integrated into the live app shell. The graph edit payload bridge is intentionally narrow and translates canvas ids to workflow slugs for the current `/api/model/edit` route.
+- The agent chat bridge uses the current seeded legacy workflow IDs as a compatibility layer for `/api/ask`. If a later backend adds project-native agent memory endpoints, the bridge should be replaced with that API.
+- Rollback is a PR revert of this integration branch. The only new migration in the final branch is the graph-edits migration already merged from `origin/main`.
 
 ## Next steps
-- Push the merge-resolution commit, wait for PR #84 CI to pass, then merge to `main` if branch protection permits.
+- Push the final merge-resolution commit, wait for PR #84 mergeability/CI to refresh, then merge to `main` if branch protection permits.

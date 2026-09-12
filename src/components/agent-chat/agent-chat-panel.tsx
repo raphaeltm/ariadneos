@@ -342,6 +342,13 @@ function tokenize(text: string): string[] {
   return text.match(/\S+\s*/g) ?? [text];
 }
 
+let messageSequence = 0;
+
 function messageId(prefix: ChatRole) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const randomId = globalThis.crypto?.randomUUID?.();
+  if (randomId) {
+    return `${prefix}-${randomId}`;
+  }
+  messageSequence += 1;
+  return `${prefix}-${Date.now()}-${messageSequence}`;
 }

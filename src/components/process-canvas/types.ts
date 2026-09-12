@@ -22,6 +22,9 @@ export interface CanvasPosition {
 export type CanvasPositionCache = Record<string, CanvasPosition>;
 
 export interface CanvasNodeData {
+  annotationLabel: string | null;
+  annotationTitle: string | null;
+  diffKind: CanvasNodeDiffKind;
   groundedCount: number;
   groundingRatio: number;
   hasRoleDeviation: boolean;
@@ -31,17 +34,22 @@ export interface CanvasNodeData {
   label: string;
   plane: GraphNode["activity"]["plane"];
   role: string;
+  severity: CanvasSeverity;
   support: number;
   violationCount: number;
   [key: string]: unknown;
 }
 
 export interface CanvasEdgeData {
+  annotationLabel: string | null;
+  annotationTitle: string | null;
   cases: string[];
+  diffKind: CanvasEdgeDiffKind;
   isBackEdge: boolean;
   kind: GraphEdge["kind"];
   label: string;
   plane: GraphEdge["plane"];
+  severity: CanvasSeverity;
   support: number;
   tooltip: string;
   violationCount: number;
@@ -76,4 +84,34 @@ export interface WorkflowCanvasProps {
   onModeChange?: (mode: WorkflowCanvasMode) => void;
   onSelectionChange?: (selection: AppSelection) => void;
   selection?: AppSelection;
+}
+
+export type CanvasEdgeDiffKind =
+  | "conformant"
+  | "deviant-path"
+  | "extra-path"
+  | "missing-path"
+  | "violation";
+
+export type CanvasNodeDiffKind =
+  | "conformant"
+  | "extra"
+  | "missing"
+  | "role-deviation"
+  | "violation";
+
+export type CanvasSeverity = "critical" | "info" | "none" | "warning";
+
+export type ConformanceIssueKind =
+  | "extra"
+  | "missing"
+  | "role-deviation"
+  | "violation";
+
+export interface ConformanceOverlaySummary {
+  extraCount: number;
+  missingCount: number;
+  orderBreakCount: number;
+  roleDeviationCount: number;
+  violationCount: number;
 }

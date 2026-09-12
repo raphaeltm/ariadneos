@@ -6,6 +6,7 @@
   --canvas-ok: #4ade80;
   --canvas-ghost: #52525b;
   --canvas-warn: #f87171;
+  --canvas-caution: #fb923c;
   display: grid;
   grid-template-rows: auto minmax(420px, 1fr) auto;
   min-height: 560px;
@@ -141,9 +142,21 @@
   opacity: 0.58;
 }
 
-.canvas-node.has-violation {
+.canvas-node.severity-critical {
   box-shadow:
     0 0 0 2px color-mix(in srgb, var(--canvas-warn) 70%, transparent),
+    0 18px 34px #0007;
+}
+
+.canvas-node.severity-warning {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--canvas-caution) 58%, transparent),
+    0 18px 34px #0007;
+}
+
+.canvas-node.severity-info {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--canvas-thread) 46%, transparent),
     0 18px 34px #0007;
 }
 
@@ -192,6 +205,11 @@
   background: #3f151a;
 }
 
+.violation-badge.is-warning {
+  color: #fed7aa;
+  background: #3b210a;
+}
+
 .support-badge {
   margin-left: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -208,6 +226,41 @@
   font-weight: 650;
   line-height: 1.2;
   white-space: nowrap;
+}
+
+.diff-pill {
+  justify-self: start;
+  max-width: 100%;
+  padding: 3px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  color: #fef3c7;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: #3a2f0c;
+  border: 1px solid #854d0e;
+  border-radius: 4px;
+}
+
+.diff-pill.severity-critical {
+  color: #fecaca;
+  background: #3f151a;
+  border-color: #7f1d1d;
+}
+
+.diff-pill.severity-warning {
+  color: #fed7aa;
+  background: #3b210a;
+  border-color: #9a3412;
+}
+
+.diff-pill.severity-info {
+  color: #fef3c7;
+  background: #3a2f0c;
+  border-color: #854d0e;
 }
 
 .grounding-bar {
@@ -268,8 +321,20 @@
 }
 
 .react-flow__edge:hover + .canvas-edge-label,
+.canvas-edge-label.severity-critical,
+.canvas-edge-label.severity-warning,
 .canvas-edge-label.selected {
   opacity: 1;
+}
+
+.canvas-edge-label.severity-critical {
+  color: #fee2e2;
+  background: #7f1d1d;
+}
+
+.canvas-edge-label.severity-warning {
+  color: #ffedd5;
+  background: #9a3412;
 }
 
 .canvas-legend {
@@ -315,6 +380,16 @@
 .legend-swatch.designed {
   background: transparent;
   border: 1px dashed var(--canvas-ghost);
+}
+
+.legend-swatch.violation {
+  background: #3f151a;
+  border: 1px solid var(--canvas-warn);
+}
+
+.legend-swatch.deviating {
+  background: #3b210a;
+  border: 1px solid var(--canvas-caution);
 }
 
 .legend-line {

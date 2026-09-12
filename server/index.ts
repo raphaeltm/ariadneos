@@ -9,7 +9,13 @@ import {
   type ActivityEvent,
 } from "../shared/process";
 import { simulate } from "../shared/simulation";
-type Env = { DB: D1Database; AI: Ai; ASSETS: Fetcher };
+type Env = {
+  DB: D1Database;
+  AI: Ai;
+  ASSETS: Fetcher;
+  APP_ENV: string;
+  RELEASE_SHA: string;
+};
 const app = new Hono<{ Bindings: Env }>();
 app.use("*", async (c, next) => {
   const url = new URL(c.req.url);
@@ -70,7 +76,13 @@ async function quota(db: D1Database, kind: string, limit: number) {
 }
 app.get("/api/health", async (c) => {
   await c.env.DB.prepare("SELECT 1").first();
-  return c.json({ ok: true, storage: "D1", source: "simulation" });
+  return c.json({
+    ok: true,
+    storage: "D1",
+    source: "simulation",
+    environment: c.env.APP_ENV ?? "local",
+    revision: c.env.RELEASE_SHA ?? "local",
+  });
 });
 app.get("/api/model", async (c) => {
   const workflow = c.req.query("workflow") ?? "vendor";

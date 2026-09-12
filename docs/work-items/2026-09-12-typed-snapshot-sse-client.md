@@ -1,9 +1,10 @@
 # Typed snapshot and SSE client
 
-Status: in-progress
+Status: in-review
 Owner: Codex agent for SAM task 01M2ATDY84XGKRH0Z5JM1SYECC
 Source: GitHub issue #23, "Build typed snapshot/SSE client and app state against fixtures"
 Branch: sam/implement-github-issue-23-1syecc
+PR: https://github.com/raphaeltm/ariadneos/pull/60
 
 ## Intent
 Build typed frontend API, snapshot, SSE, and state modules that can run against fixture-backed data now and keep component contracts stable when the production API lands. The work covers scoped view selection, sessions, messages, steps/evidence, graph revisions, connection state, ordered idempotent event application, reset/reconnect behavior, and issue #31 DTO concepts without changing the app shell or routes.
@@ -35,10 +36,11 @@ Build typed frontend API, snapshot, SSE, and state modules that can run against 
 - After rebasing on merged PR #14, `npm run check` passed with fixture validation and migration smoke included. A parallel `check` and `check:repo` attempt failed because both Vitest runs tried to write the same coverage directory; rerunning sequentially resolved it.
 - Final post-rebase `PATH="/tmp/ariadneos-ruff:$PATH" npm run check:repo`: passed work-item checks, Ruff, `npm run check`, dependency audit, isolated Worker/D1 smoke including `0005_pm_foundation.sql`, and 5 Chromium browser tests.
 - `python3 scripts/check_work_items.py --base origin/main`: passed after staging the work-item file; earlier unstaged run correctly failed with "Add or update a dated docs/work-items/*.md record (stage new files locally)."
+- After PR #58 for issue #31 merged into `main`, rebased again. `npm run fix`, `npm run check`, `PATH="/tmp/ariadneos-ruff:$PATH" npm run check:repo`, `npm run test -- tests/client-state.test.ts`, and `python3 scripts/check_work_items.py --base origin/main` passed on the rebased branch.
 
 ## Risks and rollback
 - The production snapshot/SSE API is still pending, so production adapters are typed but not exercised against live endpoints in this PR. The fixture adapter and reducer tests pin the component-facing contract until the runtime lands.
-- PR #31 does not exist as a pull request at the time of this update; rebase on that work if it lands before merge. Roll back by reverting this branch; no schema, route, app shell or deployment changes are included.
+- Roll back by reverting this branch; no schema, route, app shell or deployment changes are included.
 
 ## Next steps
-- Commit, push, open a PR with `Closes #23`, and monitor CI.
+- Monitor PR #60 CI, fix any failures, and merge when required checks are green.

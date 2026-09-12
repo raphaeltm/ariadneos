@@ -69,4 +69,6 @@ Message storage is an append-only observation history: earlier message contents 
 
 ## Audit status
 
-Both GitHub environments exist. Both have separately generated Better Auth secrets. Cloudflare repository secrets are present and previous staging deployments succeeded. At the configuration audit, all three Slack values were absent in both environments; they must be supplied by the Slack app owner. Secret values cannot be read back from GitHub, so presence alone is not proof that credentials are valid. Full Slack acceptance remains pending.
+Both GitHub environments exist and now contain all four required app secrets: BETTER_AUTH_SECRET, SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, and SLACK_SIGNING_SECRET. The Slack app owner supplied the Slack values during the audit. SLACK_APP_ID is also present but is not required or consumed by the current implementation. Cloudflare repository secrets are present.
+
+Actions run 34692614105 passed validation and staging deployment for application revision a72829a, including signed webhook verification and anonymous API checks. The login button reaches Slack's workspace sign-in page. Production credentials are staged in GitHub; the production Worker will receive them through the main-only deployment after this PR merges. Full user login/consent and real channel-event delivery still need the app owner's acceptance test. Secret values cannot be read back from GitHub, so presence alone is not proof of valid Slack credentials.

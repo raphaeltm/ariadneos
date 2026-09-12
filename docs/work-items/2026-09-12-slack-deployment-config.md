@@ -31,10 +31,13 @@ Make Slack setup reproducible for staging and production, identify missing crede
 - New sign-out regression found an off-viewport control; moved account actions into the top bar. Test harness now retains its dynamic port in the forwarded origin, so real Better Auth CSRF checks stay enabled.
 - Production environment branch restriction API calls returned HTTP 403; no environment branch policy was changed. Workflow main-only condition is preserved.
 
+- Live Actions run 34692614105 passed full validation and staging deployment for a72829a, including signed webhook challenge and anonymous API rejection. An initial smoke request returned 200 instead of 401; subsequent live probes and rerunning the same job passed with no relaxed checks. Production was skipped as intended for this branch.
+- Browser verification: staging /app shows the Slack login screen; clicking login reaches Slack's workspace sign-in page. Full Slack consent/callback is left to the user. Both GitHub environments now contain all required secret names; staging Worker names verified. Production values await the main-only deployment.
+
 ## Risks and rollback
 - Real Slack login and delivery remain unverified until the app credentials are supplied and a user completes the Slack flow.
 - Revert code changes to undo workflow behavior; do not rotate or remove established signing secrets during rollback.
 
 ## Next steps
-- User supplies each Slack app's Client ID, Client Secret, and Signing Secret; rerun Deploy on this branch, verify Slack URL challenge and real login/message delivery.
+- Slack credentials were supplied in both GitHub environments during the audit. User completes Slack URL verification, workspace installation, channel invitations, and real login/message-delivery acceptance tests.
 - A repository administrator may add production environment main-only branch restriction; workflow already enforces it.

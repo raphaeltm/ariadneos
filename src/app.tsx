@@ -1038,10 +1038,8 @@ function ProcessCanvasPanel({
             onSelectionChange={(nextSelection) => {
               const next = legacySelectionFromCanvas(nextSelection);
               setSelection(next);
-              if (next) {
-                setCaseId(undefined);
-                setShellView("inspector");
-              }
+              setCaseId(undefined);
+              setShellView(next ? "inspector" : "graph");
             }}
             selection={canvasSelectionFromLegacy(selection)}
           />

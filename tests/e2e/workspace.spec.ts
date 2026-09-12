@@ -174,7 +174,7 @@ test("supports keyboard selection and clearing on the process canvas", async ({
 }) => {
   await page.goto("/app");
   const canvas = page.getByRole("application", {
-    name: "Process map nodes and edges",
+    name: "Workflow graph nodes and edges",
   });
   await canvas.focus();
   await page.keyboard.press("ArrowRight");

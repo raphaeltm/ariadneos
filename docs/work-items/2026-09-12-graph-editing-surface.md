@@ -27,17 +27,17 @@ Add a focused graph editing slice to the existing TypeScript/Hono Worker, D1, Re
 - Extended `shared/process.ts` with graph edit action/log metadata and optional snapshot fields for conformance, revision, edit history, and undo/redo availability.
 - Added `migrations/0009_graph_edits.sql` with the session-scoped `edits` table and index.
 - Updated `server/index.ts` so `/api/model`, `/api/context`, and `/api/ask` use the edited projection; added `GET /api/model/edits`, `POST /api/model/edit`, `POST /api/model/edit/undo`, and `POST /api/model/edit/redo`.
-- Updated `src/process-graph.tsx`, `src/app.tsx`, and `src/style.css` with plane-aware node/edge rendering, node toolbars, inline node add/rename controls, edge creation from handles, merge-on-drag, inspector edit actions, revision display, and undo/redo buttons.
+- Updated `src/process-graph.tsx`, `src/components/process-canvas/workflow-canvas.tsx`, `src/components/process-canvas/types.ts`, `src/legacy-canvas-bridge.ts`, `src/app.tsx`, and `src/style.css` with plane-aware node/edge rendering, node toolbars, inline node add/rename controls, edge creation from handles, merge-on-drag, inspector edit actions, revision display, undo/redo buttons, and legacy id bridging for the active canvas component.
 - Added `tests/graph-edits.test.ts` for promotion, add/remove node and edge, merge rewiring, rename, retire, reject, require, undo/redo flags, role-deviation recomputation, and illegal edit rejection.
 
 ## Validation
 - `npm ci`: passed.
 - `npm run fix`: passed after formatter/lint-driven refactors; final run reported no fixes applied.
 - `npm exec -- vitest run tests/graph-edits.test.ts tests/request.test.ts tests/auth.test.ts`: passed, 26 tests before later graph-edit coverage expansion.
-- `npm run check`: passed lint, typecheck, fixture validation, 190 coverage tests across 25 files, guardrail probes, migration smoke with `0009_graph_edits.sql`, and production build.
+- `npm run check`: passed lint, typecheck, fixture validation, 197 coverage tests across 27 files, guardrail probes, migration smoke with `0009_graph_edits.sql`, and production build.
 - Initial `npm run check:repo` failed because `ruff` was not installed. Installed Ruff 0.16.7 under `/tmp/ariadneos-ruff-0.16.7/ruff-x86_64-unknown-linux-gnu`.
 - Second `npm run check:repo` failed because Playwright Chromium was not installed. Ran `npm exec --no -- playwright install --with-deps chromium`.
-- `PATH="/tmp/ariadneos-ruff-0.16.7/ruff-x86_64-unknown-linux-gnu:$PATH" npm run check:repo`: passed work-item tests, work-item context, Ruff, full app checks, dependency audit, isolated Worker/D1/API smoke, and 6 Chromium browser tests after applying 11 local migrations through main's `0008_agent_tools.sql`, main's `0008_graph_edit_revisions.sql`, and this branch's `0009_graph_edits.sql`.
+- `PATH="/tmp/ariadneos-ruff-0.16.7/ruff-x86_64-unknown-linux-gnu:$PATH" npm run check:repo`: passed work-item tests, work-item context, Ruff, full app checks, dependency audit, isolated Worker/D1/API smoke, and 13 Chromium browser tests after applying 11 local migrations through main's `0008_agent_tools.sql`, main's `0008_graph_edit_revisions.sql`, and this branch's `0009_graph_edits.sql`.
 - `PATH="/tmp/ariadneos-ruff-0.16.7/ruff-x86_64-unknown-linux-gnu:$PATH" python3 scripts/check_quality.py`: passed the same full quality suite after the latest rebase, inspector conflict resolution, migration rename, and process edit route compatibility fix.
 - `python3 scripts/check_work_items.py --base origin/main`: passed after the final rebase evidence update.
 - `git diff --check`: passed after the latest rebase, inspector conflict resolution, migration rename, process edit route compatibility fix, and edge-rendering fix.
@@ -63,3 +63,8 @@ Add a focused graph editing slice to the existing TypeScript/Hono Worker, D1, Re
 - After main added revisioned KB graph edit routes at `/api/model/edit`, updated the demo edit route handlers to pass KB workflow requests through to the process router while preserving the synthetic workflow edit surface used by `/app`.
 - Rebased again after main added workspace settings; kept the settings panel and shell navigation while preserving graph editing toolbar state and process-router forwarding for KB workflow edits.
 - Rebased again after main added Mastra agent tools and graph edit consistency checks; local smoke now applies 11 migrations and browser tests pass with the merged app shell.
+
+## Current-main canvas rebase update
+- Rebased onto `origin/main` commit `36756a0`, which added the graph canvas accessibility and guided walkthrough work. Preserved the active `WorkflowCanvas` surface and moved graph edit affordances into that canvas instead of switching back to the older legacy component.
+- Added canvas id normalization so `act_*` canvas node ids are translated back to existing process model ids before posting graph edit mutations.
+- A direct `npx playwright test ...` probe failed because this repo requires `npm run test:e2e` to provision authenticated browser sessions. The proper smoke harness then caught two canvas compatibility regressions; fixed the ARIA application label and rendered-edge ordering, then `npm run test:e2e` passed all 13 browser tests.

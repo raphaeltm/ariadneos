@@ -144,9 +144,17 @@ export function WorkflowCanvas({
       })) satisfies WorkflowNode[],
     [canEdit, layout.nodes, onEdit, selectedId]
   );
-  const edges = useMemo(
-    () =>
-      layout.edges.map((edge) => ({
+  const edges = useMemo(() => {
+    const nodePositions = new Map(
+      layout.nodes.map((node) => [node.id, node.position])
+    );
+    return [...layout.edges]
+      .sort(
+        (a, b) =>
+          edgePositionRank(nodePositions, a) -
+          edgePositionRank(nodePositions, b)
+      )
+      .map((edge) => ({
         ...edge,
         animated: selectedId === edge.id,
         markerEnd: {
@@ -158,9 +166,8 @@ export function WorkflowCanvas({
         selected: selectedId === edge.id,
         style: edgeStyle(edge.data, selectedId === edge.id),
         type: "process",
-      })) satisfies WorkflowEdge[],
-    [layout.edges, selectedId]
-  );
+      })) satisfies WorkflowEdge[];
+  }, [layout.edges, layout.nodes, selectedId]);
   const { conformance } = graph;
   const maxSupport = supportLimit(graph);
   const chooseMode = (nextMode: WorkflowCanvasMode) => {
@@ -348,7 +355,7 @@ export function WorkflowCanvas({
         <ReactFlow
           aria-activedescendant={activeDescendant}
           aria-describedby={`${instructionsId} ${statusId}`}
-          aria-label="Workflow graph nodes and edges"
+          aria-label="Process map nodes and edges"
           edges={edges}
           edgeTypes={edgeTypes}
           fitView
@@ -705,6 +712,15 @@ function ProcessEdge(props: EdgeProps<WorkflowEdge>) {
       </EdgeLabelRenderer>
     </>
   );
+}
+
+function edgePositionRank(
+  nodePositions: Map<string, { x: number; y: number }>,
+  edge: { source: string; target: string }
+) {
+  const source = nodePositions.get(edge.source);
+  const target = nodePositions.get(edge.target);
+  return (source?.x ?? 0) * 1000 + (source?.y ?? 0) + (target?.y ?? 0) / 1000;
 }
 
 function handleConnect(

@@ -48,6 +48,11 @@ exclusions, acceptance checks, dependencies and the full delivery requirements.
 
 No implementation agents were launched as part of preparing this backlog. Assign issues when ready.
 
+Roman's 31906b5 work-model and graph-RAG additions are included: #14 contracts, #15 role/lifecycle/
+synonym KB, #19 modality/reconciliation, #20 done-only graph, #21 role conformance, #25 lifecycle UI
+and #27 six-intent retrieval. Read 00-work-model.md for domain semantics and 00-cloudflare-architecture.md
+for runtime decisions. These additions do not create a second implementation track.
+
 ## Shared-file ownership and merge rules
 
 - #14 owns initial schema/contracts. All agents propose contract changes there before changing consumers.

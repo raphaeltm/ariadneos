@@ -47,6 +47,8 @@ independent, reviewable agent assignments with concrete acceptance criteria and 
   isolated D1/API smoke; local Chromium launch initially failed due to missing libnspr4.so.
   Installed documented Playwright OS dependencies and reran npm run test:e2e successfully:
   isolated API smoke and both Chromium tests passed. No gate was disabled.
+- After integrating main 31906b5, python3 scripts/check_quality.py passed in full, including
+  all 22 unit tests, isolated D1/API smoke and four Chromium homepage/app tests.
 - Documentation PR: https://github.com/raphaeltm/ariadneos/pull/30. Its Actions checks and deployment
   record are authoritative for current CI/staging status; no planned feature is claimed deployed.
 

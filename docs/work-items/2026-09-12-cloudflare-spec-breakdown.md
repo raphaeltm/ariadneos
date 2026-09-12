@@ -41,7 +41,10 @@ independent, reviewable agent assignments with concrete acceptance criteria and 
 - python3 scripts/check_work_items.py --base origin/main passed. Full quality runner passed context
   tests, Ruff, lint/types, 22 unit tests/coverage, guardrail probes, build, dependency audit and
   isolated D1/API smoke; local Chromium launch initially failed due to missing libnspr4.so.
-  Browser environment repair and CI/staging verification are pending; no gate was disabled.
+  Installed documented Playwright OS dependencies and reran npm run test:e2e successfully:
+  isolated API smoke and both Chromium tests passed. No gate was disabled.
+- Documentation PR: https://github.com/raphaeltm/ariadneos/pull/30. Its Actions checks and deployment
+  record are authoritative for current CI/staging status; no planned feature is claimed deployed.
 
 ## Risks and rollback
 - Documentation/issue changes only; no runtime resources or Slack messages were created. Revert
@@ -51,5 +54,6 @@ independent, reviewable agent assignments with concrete acceptance criteria and 
 - Staging is shared; each implementing agent must check its own deployed Actions revision.
 
 ## Next steps
-- Validate and open this documentation PR, check staging and merge when green under the requested workflow.
+- Watch PR #30 checks/staging and merge when green under the requested workflow; record final
+  Actions/revision evidence in the PR description. GitHub is authoritative for merge status.
 - Assign #14 first, then follow docs/implementation-plan.md. Future implementation agents own live acceptance.

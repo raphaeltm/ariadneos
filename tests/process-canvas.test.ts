@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { overlayGraph } from "../shared/fixtures.ts";
 import {
+  conformanceOverlaySummary,
   filterCanvasGraph,
   layoutCanvasGraph,
+  selectionForConformanceIssue,
   selectionForEdge,
   selectionForNode,
   supportLimit,
@@ -38,8 +40,8 @@ describe("workflow process canvas", () => {
       nodes: overlayGraph.nodes,
     };
     const withBackEdge = filterCanvasGraph(overlayGraph, "overlay", 1);
-    const layoutWithout = layoutCanvasGraph(withoutBackEdge);
-    const layoutWith = layoutCanvasGraph(withBackEdge);
+    const layoutWithout = layoutCanvasGraph(withoutBackEdge, overlayGraph);
+    const layoutWith = layoutCanvasGraph(withBackEdge, overlayGraph);
     expect(layoutWith.edges.map((edge) => edge.id)).toContain(
       "ged_deploy_root_rework"
     );
@@ -48,10 +50,11 @@ describe("workflow process canvas", () => {
 
   it("keeps existing node positions stable when a new node arrives", () => {
     const initial = filterCanvasGraph(overlayGraph, "overlay", 2);
-    const initialLayout = layoutCanvasGraph(initial);
+    const initialLayout = layoutCanvasGraph(initial, overlayGraph);
     const expanded = filterCanvasGraph(overlayGraph, "overlay", 1);
     const expandedLayout = layoutCanvasGraph(
       expanded,
+      overlayGraph,
       initialLayout.positionCache
     );
     for (const node of initialLayout.nodes) {
@@ -77,6 +80,75 @@ describe("workflow process canvas", () => {
   it("derives support control bounds from graph nodes and edges", () => {
     expect(supportLimit(overlayGraph)).toBe(3);
     expect(supportLimit({ ...overlayGraph, edges: [], nodes: [] })).toBe(1);
+  });
+
+  it("summarizes conformance overlay issues from the graph score", () => {
+    expect(conformanceOverlaySummary(overlayGraph)).toEqual({
+      extraCount: 3,
+      missingCount: 2,
+      orderBreakCount: 1,
+      roleDeviationCount: 1,
+      violationCount: 1,
+    });
+  });
+
+  it("annotates visible nodes with diff kind and severity", () => {
+    const visible = filterCanvasGraph(overlayGraph, "overlay", 1);
+    const layout = layoutCanvasGraph(visible, overlayGraph);
+    const byId = new Map(layout.nodes.map((node) => [node.id, node.data]));
+
+    expect(byId.get("act_security_review")).toMatchObject({
+      diffKind: "missing",
+      severity: "warning",
+    });
+    expect(byId.get("act_escalate_to_ceo")).toMatchObject({
+      diffKind: "extra",
+      severity: "info",
+    });
+    expect(byId.get("act_assign_owner")).toMatchObject({
+      diffKind: "role-deviation",
+      severity: "warning",
+    });
+    expect(byId.get("act_deploy_fix")).toMatchObject({
+      diffKind: "violation",
+      severity: "critical",
+    });
+  });
+
+  it("annotates deviant and violating edges", () => {
+    const visible = filterCanvasGraph(overlayGraph, "overlay", 1);
+    const layout = layoutCanvasGraph(visible, overlayGraph);
+    const byId = new Map(layout.edges.map((edge) => [edge.id, edge.data]));
+
+    expect(byId.get("ged_detect_escalate")).toMatchObject({
+      diffKind: "extra-path",
+      severity: "info",
+    });
+    expect(byId.get("ged_root_deploy_violation")).toMatchObject({
+      diffKind: "violation",
+      severity: "critical",
+    });
+  });
+
+  it("selects representative conformance issues", () => {
+    expect(selectionForConformanceIssue(overlayGraph, "missing")).toEqual({
+      node_id: "act_security_review",
+      workflow_id: "wf_p1_incident",
+    });
+    expect(selectionForConformanceIssue(overlayGraph, "extra")).toEqual({
+      node_id: "act_escalate_to_ceo",
+      workflow_id: "wf_p1_incident",
+    });
+    expect(
+      selectionForConformanceIssue(overlayGraph, "role-deviation")
+    ).toEqual({
+      node_id: "act_assign_owner",
+      workflow_id: "wf_p1_incident",
+    });
+    expect(selectionForConformanceIssue(overlayGraph, "violation")).toEqual({
+      edge_id: "ged_root_deploy_violation",
+      workflow_id: "wf_p1_incident",
+    });
   });
 });
 

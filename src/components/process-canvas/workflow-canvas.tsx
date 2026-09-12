@@ -15,12 +15,21 @@ import {
   Position,
   ReactFlow,
 } from "@xyflow/react";
-import { AlertTriangle, Link2, RotateCcw, ShieldCheck } from "lucide-react";
+import {
+  AlertTriangle,
+  Link2,
+  RotateCcw,
+  ShieldCheck,
+  Split,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { GraphEdge } from "../../../shared/contracts.ts";
+import type { AppSelection } from "../../store.ts";
 import {
+  conformanceOverlaySummary,
   filterCanvasGraph,
   layoutCanvasGraph,
+  selectionForConformanceIssue,
   selectionForEdge,
   selectionForNode,
   supportLimit,
@@ -66,14 +75,18 @@ export function WorkflowCanvas({
     [graph, debouncedMode, debouncedSupport]
   );
   const layout = useMemo(() => {
-    const next = layoutCanvasGraph(visible, positionCache.current);
+    const next = layoutCanvasGraph(visible, graph, positionCache.current);
     positionCache.current = next.positionCache;
     return next;
-  }, [visible]);
+  }, [graph, visible]);
   const selectedId = selection?.node_id ?? selection?.edge_id;
   const edgeById = useMemo(
     () => new Map(graph.edges.map((edge) => [edge.id, edge])),
     [graph.edges]
+  );
+  const overlaySummary = useMemo(
+    () => conformanceOverlaySummary(graph),
+    [graph]
   );
   const nodes = useMemo(
     () =>
@@ -191,6 +204,14 @@ export function WorkflowCanvas({
             <i className="legend-line rework" />
             Rework
           </span>
+          <span>
+            <i className="legend-swatch violation" />
+            Violation
+          </span>
+          <span>
+            <i className="legend-swatch deviating" />
+            Role/deviant
+          </span>
         </div>
       </div>
       <fieldset className="conformance-strip">
@@ -204,26 +225,40 @@ export function WorkflowCanvas({
           </strong>
         </button>
         <button
-          onClick={() => {
-            const missingSlug = conformance?.missing[0]?.slug;
-            const missingNode = graph.nodes.find(
-              (node) => node.activity.slug === missingSlug
-            );
-            if (missingNode) {
-              onSelectionChange?.(selectionForNode(graph, missingNode.id));
-            }
-          }}
+          onClick={() =>
+            selectConformanceIssue(graph, "missing", onSelectionChange)
+          }
           type="button"
         >
-          skipped <strong>{conformance?.missing.length ?? 0}</strong>
+          missing <strong>{overlaySummary.missingCount}</strong>
         </button>
-        <button type="button">
-          undocumented <strong>{conformance?.extra.length ?? 0}</strong>
+        <button
+          onClick={() =>
+            selectConformanceIssue(graph, "extra", onSelectionChange)
+          }
+          type="button"
+        >
+          extra <strong>{overlaySummary.extraCount}</strong>
         </button>
-        <button type="button">
-          role deviations{" "}
-          <strong>{conformance?.role_deviations.length ?? 0}</strong>
+        <button
+          onClick={() =>
+            selectConformanceIssue(graph, "violation", onSelectionChange)
+          }
+          type="button"
+        >
+          violations <strong>{overlaySummary.violationCount}</strong>
         </button>
+        <button
+          onClick={() =>
+            selectConformanceIssue(graph, "role-deviation", onSelectionChange)
+          }
+          type="button"
+        >
+          role deviations <strong>{overlaySummary.roleDeviationCount}</strong>
+        </button>
+        <span>
+          deviant paths <strong>{overlaySummary.orderBreakCount}</strong>
+        </span>
         <span>{visible.nodes.length} nodes visible</span>
       </fieldset>
     </section>
@@ -236,7 +271,8 @@ function ActivityNode({ data, selected }: NodeProps<WorkflowNode>) {
     <div
       className={`canvas-node plane-${data.plane} ${selected ? "selected" : ""} ${
         data.isProposed ? "is-proposed" : ""
-      } ${data.violationCount ? "has-violation" : ""}`}
+      } severity-${data.severity} diff-${data.diffKind}`}
+      title={data.annotationTitle ?? undefined}
     >
       <Handle position={Position.Left} type="target" />
       <div className="canvas-node__meta">
@@ -256,9 +292,19 @@ function ActivityNode({ data, selected }: NodeProps<WorkflowNode>) {
             <AlertTriangle size={11} />
           </span>
         ) : null}
+        {data.diffKind === "role-deviation" ? (
+          <span className="violation-badge is-warning">
+            <Split size={11} />
+          </span>
+        ) : null}
         <span className="support-badge">x{data.support}</span>
       </div>
       <strong>{data.label}</strong>
+      {data.annotationLabel ? (
+        <span className={`diff-pill severity-${data.severity}`}>
+          {data.annotationLabel}
+        </span>
+      ) : null}
       {data.groundingRatio > 0 && data.groundingRatio < 1 ? (
         <meter
           className="grounding-bar"
@@ -313,7 +359,9 @@ function ProcessEdge(props: EdgeProps<WorkflowEdge>) {
       />
       <EdgeLabelRenderer>
         <div
-          className={`canvas-edge-label ${props.selected ? "selected" : ""}`}
+          className={`canvas-edge-label severity-${data.severity} ${
+            props.selected ? "selected" : ""
+          }`}
           style={{
             transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
           }}
@@ -321,7 +369,7 @@ function ProcessEdge(props: EdgeProps<WorkflowEdge>) {
         >
           {data.violationCount > 0 ? <AlertTriangle size={11} /> : null}
           {data.isBackEdge ? <RotateCcw size={11} /> : null}
-          <span>{data.label}</span>
+          <span>{data.annotationLabel ?? data.label}</span>
         </div>
       </EdgeLabelRenderer>
     </>
@@ -334,6 +382,9 @@ function edgeColor(data: CanvasEdgeData, selected: boolean) {
   }
   if (data.violationCount > 0) {
     return "#f87171";
+  }
+  if (data.diffKind === "deviant-path") {
+    return "#fb923c";
   }
   if (data.plane === "designed") {
     return "#71717a";
@@ -349,9 +400,24 @@ function edgeStyle(data: CanvasEdgeData, selected: boolean) {
   return {
     stroke: edgeColor(data, selected),
     strokeDasharray:
-      data.isBackEdge || data.plane === "designed" ? "7 5" : undefined,
+      data.isBackEdge ||
+      data.plane === "designed" ||
+      data.diffKind === "deviant-path"
+        ? "7 5"
+        : undefined,
     strokeWidth,
   };
+}
+
+function selectConformanceIssue(
+  graph: WorkflowCanvasProps["graph"],
+  kind: Parameters<typeof selectionForConformanceIssue>[1],
+  onSelectionChange: ((selection: AppSelection) => void) | undefined
+) {
+  const nextSelection = selectionForConformanceIssue(graph, kind);
+  if (nextSelection) {
+    onSelectionChange?.(nextSelection);
+  }
 }
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {

@@ -4,6 +4,7 @@ Status: in-progress
 Owner: Codex agent for SAM task 01M2AXMBY2A3R09R0TK6B16CWP
 Source: GitHub issue #32 as directed by the user in-session: implement graph editing operations for add/remove/merge nodes and edges, editing-surface integration with the canvas, revision tracking, and undo/redo support. The issue body on GitHub appears stale/reused for an older replay task, so this record follows the user-provided scope and docs/specs/09-graph-interaction.md.
 Branch: sam/implement-github-issue-32-b16cwp
+PR: https://github.com/raphaeltm/ariadneos/pull/69
 
 ## Intent
 Add a focused graph editing slice to the existing TypeScript/Hono Worker, D1, React, and Vite app. Edits should be recorded as an ordered session-scoped log, recompute the effective designed graph for the current workflow, expose validated API operations, and give the canvas a direct editing surface for common node and edge mutations with undo and redo.
@@ -47,4 +48,4 @@ Add a focused graph editing slice to the existing TypeScript/Hono Worker, D1, Re
 - Rollback: revert the migration, server edit module/routes, client API wiring, canvas controls, tests, and this work item before remote migration. After remote D1 migration, leave the additive table unused or apply a cleanup migration.
 
 ## Next steps
-- Stage changes, rerun the merge-base work-item gate, open a PR with `Closes #32`, monitor CI, and merge only when required checks are green. Staging verification is intentionally skipped for this task per user instruction.
+- Monitor PR #69 CI and merge only when required checks are green. Staging verification is intentionally skipped for this task per user instruction.

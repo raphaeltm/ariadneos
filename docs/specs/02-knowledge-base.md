@@ -1,10 +1,14 @@
 # Spec 02 — Knowledge Base & Ground Truth
 
-> The authored half of the world. Everything here is hand-written YAML loaded into SQLite at boot.
+**Implementation authority:** [Cloudflare contract](00-cloudflare-architecture.md) and
+[scope](../SCOPE.md). Runtime, priorities and resolved edge cases there supersede older examples.
+
+
+> The authored half of the world. Everything here is authored data bundled into the Worker and explicitly seeded into D1.
 > It grounds the simulation, resolves entities during mining, and gives conformance something to
 > compare against.
 
-**Owner:** Track A · **Time budget:** 35 min (it is content, not code) · **Location:** `kb/`
+**Owner:** KB issue · **Location:** `kb/`, `server/kb.ts`, `scripts/seed-kb.ts`
 
 ---
 
@@ -28,12 +32,14 @@ kb/
 ├── artifacts.yaml         ~10 artifacts
 ├── policies.yaml          5 policies
 └── workflows/
-    ├── wf_p1_incident.yaml      designed process for Helios  (10 activities + 10×10 matrix)
+    ├── wf_p1_incident.yaml      designed process for Helios  (11 activities + 11×11 matrix)
     └── wf_feature_intake.yaml   designed process for Atlas   (8 activities + 8×8 matrix)
 ```
 
-Loader: `backend/app/kb.py::load_kb()` — reads YAML → upserts into SQLite → returns the Org graph.
-Idempotent, runs at every boot, ~60 lines.
+Loader: `server/kb.ts::loadKb()` consumes typed JSON fixtures bundled at build time and upserts
+into D1 through `scripts/seed-kb.ts`. YAML below describes content; commit runtime data as JSON to
+avoid filesystem reads or a runtime YAML parser. Seed explicitly after migrations, idempotently.
+Do not reseed on every isolate startup or overwrite curated/observed data.
 
 ---
 
@@ -168,7 +174,9 @@ activities:                       # index order defines the matrix axes
   - {slug: assign_owner,         label: "Assign incident owner",  role: pm}
   - {slug: reproduce_issue,      label: "Reproduce the issue",    role: eng}
   - {slug: root_cause_analysis,  label: "Root cause analysis",    role: eng}
-  - {slug: security_review,      label: "Security review",        role: eng}
+  # `synonyms` feed the graph-RAG lexicon (spec 07 §4) — how people really say it in the channel
+  - {slug: security_review,      label: "Security review",        role: eng,
+     synonyms: ["security review", "pre-deploy checklist", "the checklist", "sec review"]}
   - {slug: deploy_fix,           label: "Deploy the fix",         role: eng}
   - {slug: verify_resolution,    label: "Verify resolution",      role: support}
   - {slug: notify_customer,      label: "Notify the customer",    role: pm}
@@ -212,7 +220,7 @@ discovers them as **gold / undocumented** nodes. This is the punchline of the de
 
 ## 5. Loading & the Org graph
 
-```python
+```text
 load_kb() -> None
   # people, projects, artifacts, policies → tables
   # workflows → activity rows with plane="designed", role_expected
@@ -226,19 +234,19 @@ the discovered layer lighting up on top of it.
 
 ---
 
-## 6. Graph-RAG (P0)
+## 6. Graph-RAG (P1)
 
-`backend/app/rag.py::answer(question) -> {answer, citations[], subgraph}`
+`server/rag.ts::answer(question, scope)` returns `{answer, citations, subgraph}`.
 
-```
-1. link      LLM → {people[], projects[], activities[], artifacts[]} mentioned in the question
-             normalised string match against KB names/slugs; fuzzy fallback (difflib, cutoff .8)
-2. expand    BFS 2 hops from seeds over GOVERNS, WORKS_ON, CONTAINS, FOLLOWS, INSTANCE_OF
-             cap 40 nodes, prefer higher support
-3. evidence  for each Activity in the subgraph → top 3 Messages by step confidence
-4. answer    one LLM call over the serialised subgraph
-             MUST cite permalinks; any sentence with an unresolvable citation is dropped
-```
+Full design in **spec 07**. What the KB owes it:
+
+1. **Every entity contributes surface forms to the lexicon** — `Person.name` plus first name,
+   `Project.name`, `Artifact.name` plus its id pattern (`INC-4412`, `inc 4412`, `4412`),
+   `Activity.slug` and `label`, `Policy.id`, `Workflow.name`.
+2. **Activities carry authored `synonyms`** — how people *actually* refer to the activity in the
+   channel. No string-distance metric gets you from *"the checklist"* to `security_review`; a human
+   writes that down once, in the workflow YAML (§4).
+
 
 Answers are posted back into Slack in the `@Ariadne` path (spec 04 §7) and rendered in the UI
 inspector. No embeddings, no vector store — the graph is the index.
@@ -247,7 +255,7 @@ inspector. No embeddings, no vector store — the graph is the index.
 
 ## 7. Definition of done
 
-- [ ] `load_kb()` populates 6 people, 2 projects, ~10 artifacts, 5 policies, 2 designed workflows
+- [ ] `loadKb()` populates 6 people, 2 projects, ~10 artifacts, 5 policies, 2 designed workflows
 - [ ] `GET /api/graph/designed?workflow_id=` returns a renderable grey DAG before any simulation runs
 - [ ] A mined step can resolve `actor_person_id` and `artifact_id` to real KB ids ≥80% of the time
-- [ ] `answer("what happens after a P1 is triaged?")` returns prose with ≥2 Slack permalinks
+- [ ] P1: `answer("what happens after a P1 is triaged?")` returns prose with ≥2 Slack permalinks

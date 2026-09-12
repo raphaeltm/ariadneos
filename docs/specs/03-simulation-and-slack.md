@@ -1,9 +1,13 @@
 # Spec 03 — Simulation & Slack
 
-> Generates a believable organisation doing believable work, inside a real Slack channel.
-> The observer cannot tell simulated traffic from human traffic — it reads the same API.
+**Implementation authority:** [Cloudflare contract](00-cloudflare-architecture.md) and
+[scope](../SCOPE.md). Runtime, priorities and resolved edge cases there supersede older examples.
 
-**Owner:** Track A · **Time budget:** 60 min · **Modules:** `backend/app/slack.py`, `backend/app/sim.py`
+
+> Generates a believable organisation doing believable work, inside a real Slack channel.
+> The observer cannot tell simulated traffic from human traffic — it consumes the same persisted Slack observations.
+
+**Owners:** Slack ingestion and simulator issues · **Modules:** `server/slack/`, `server/simulation/`
 
 ---
 
@@ -28,17 +32,20 @@ for the observer to wade through.
    | `reactions:read` | ✅/❌ curation (P1) |
    | `reactions:write` | Ariadne reacts 🧵 when a message becomes evidence |
 
-4. **Install to Workspace** → copy `xoxb-…` → `.env` as `SLACK_BOT_TOKEN`.
+4. **Install to Workspace** → copy `xoxb-…` → local `.dev.vars` and environment-specific Worker secret `SLACK_BOT_TOKEN`.
 5. Create `#ops-war-room`, `/invite @Ariadne`, copy the channel id (`C…`) → `SLACK_CHANNEL_ID`.
 6. Set `SLACK_WORKSPACE=<subdomain>` (for permalink construction).
 
-**No Socket Mode. No Events API. No public URL. No tunnel.** We poll.
+Use the existing signed Events API integration (PR #5) at the deployed Worker URL. Add message,
+mention and reaction subscriptions as their features land. No Socket Mode or tunnel. History is
+bounded reconciliation/backfill, not the live delivery loop. Configure a separate staging channel
+and production channel; never run production simulation as a PR smoke test.
 
 ---
 
-## 2. Slack client — `slack.py` (≈90 lines, raw `httpx`)
+## 2. Slack client — `server/slack/client.ts` (native fetch)
 
-```python
+```text
 post(text, *, username, icon_emoji, session_id, thread_ts=None) -> ts
     # chat.postMessage with metadata={"event_type":"ariadne_sim",
     #                                 "event_payload":{"session_id":..., "person_id":...}}
@@ -57,7 +64,9 @@ react(ts, emoji)            # reactions.add
 reactions_on(msg) -> dict   # read from the history payload — free, no extra call
 ```
 
-Rate discipline: **≥1.1 s between posts**, poll every **2 s**. One channel only.
+Rate discipline: **≥1.2 s between posts** shared by simulator and observer, bounded retry and
+Slack `Retry-After`. One configured channel per environment. Paginate reconciliation before
+advancing a persisted cursor; never assume the first 200 history rows cover every delivery.
 
 ### 2.1 Persona identity — six people out of one token
 
@@ -69,7 +78,7 @@ conversation is the data source") collapses on camera.
 The mechanism is the `chat:write.customize` scope, which lets a single bot token override the author
 **per message**:
 
-```python
+```text
 post(text, username="Priya Raman", icon_url=PERSONA_AVATAR["per_priya"], ...)
 # chat.postMessage(channel=..., text=..., username=..., icon_url=...,
 #                  metadata={"event_type":"ariadne_sim",
@@ -97,10 +106,9 @@ The Slack MCP server is the right tool for *operating* a workspace conversationa
 for setup and inspection. It is the wrong tool for this simulation, on three counts:
 
 1. **No identity override.** It posts as the authenticated user. Six personas become one author.
-2. **Not reachable from the product.** The backend is a container a judge runs with
-   `docker compose up`; it cannot complete an interactive OAuth flow against a remote MCP. The bot
-   token is a string in `.env` and works everywhere, including CI.
-3. **Wrong grain.** We need `conversations.history` polling with cursors, message `metadata`, and
+2. **No interactive runtime dependency.** The product runs in a Cloudflare Worker. It uses a
+   server-side bot-token secret, not an agent session or interactive remote MCP login.
+3. **Wrong grain.** We need signed events, bounded history reconciliation, message `metadata`, and
    reaction payloads — a narrow, high-frequency machine interface, not a conversational one.
 
 Use MCP for *setup and verification* (create the channel, eyeball that messages landed). Use the bot
@@ -217,7 +225,7 @@ perform:   transcript JSON → Slack, one message every 1.2–2.0 s, with sessio
 ```
 
 - `generate` runs **before the demo** (and is re-runnable). ~14 LLM calls per variant, ~25 s.
-- `perform` is what the judge watches. It is deterministic, fast, and cannot fail on an API hiccup.
+- `perform` is what the judge watches. It avoids generation latency; Slack posting can still fail and must retry or pause visibly.
 - **Mining always runs live against Slack.** The chatter is pre-written; the intelligence is not.
 
 Transcript format:
@@ -245,7 +253,7 @@ POST /api/sim/run {scenario_id, variant}
    → creates session (status=open, source=simulation)
    → SSE: session_started
    → performs the transcript
-   → after the last beat, waits 20 s of silence → status=closed
+   → after the last beat, alarm waits 20 s of silence and drains extraction → status=closed
    → SSE: session_closed → triggers playbook post + conformance roll-up
 ```
 
@@ -255,12 +263,14 @@ POST /api/sim/run {scenario_id, variant}
 
 The simulator checks a flag **between beats**, so a pause is always clean:
 
-```python
-class Runner:
-    paused: asyncio.Event
-    async def next_beat(self):
-        await self.paused.wait()      # blocks while paused
+```ts
+// Operational state is persisted in ChannelCoordinator storage.
+// An alarm processes the next due beat only when paused === false.
+// Pause/resume updates durable state; resume schedules the next alarm.
 ```
+
+The runner must survive a restart and work without a connected browser; no sleeping HTTP request.
+
 
 Pause can be raised by:
 
@@ -277,8 +287,8 @@ being a dashboard and becomes an agent — the simulated team literally waits fo
 
 ## 8. Definition of done
 
-- [ ] `python -m app.sim generate --all` writes 5 transcripts to `fixtures/transcripts/`
+- [ ] `npm run sim:generate -- --all` (script added by simulator issue) writes 5 transcripts to `fixtures/transcripts/`
 - [ ] `POST /api/sim/run` makes six distinct named personas talk in the real `#ops-war-room`
 - [ ] Every simulated message carries a resolvable `session_id`
 - [ ] A message typed by a human into the channel is picked up, attributed, and mined identically
-- [ ] Pause from the UI stops the next beat within 2 s; ✅ in Slack resumes it
+- [ ] Pause from the UI stops the next beat before the next unsent beat; P1 ✅ in Slack resumes it

@@ -1,29 +1,29 @@
 # Spec 04 — Mining Engine & Observer Agent
 
+**Implementation authority:** [Cloudflare contract](00-cloudflare-architecture.md) and
+[scope](../SCOPE.md). Runtime, priorities and resolved edge cases there supersede older examples.
+
+
 > Slack messages in → structured event log → discovered process graph → conformance → the agent acts.
 > The LLM does the part only an LLM can do. Arithmetic does everything that must be reliable.
 
-**Owner:** Track A · **Time budget:** 75 min · **Modules:** `backend/app/mining/*`, `backend/app/observer.py`
+**Owners:** extraction, graph, conformance and observer issues · **Modules:** `server/mining/`, `shared/mining/`, `server/observer.ts`
 
 ---
 
 ## 1. The loop
 
-```
-┌─ every 2.0 s ──────────────────────────────────────────────────────────────┐
-│ 1  poll(cursor)                    new Slack messages                      │
-│ 2  attribute + persist             → Message rows        → SSE: message    │
-│ 3  route to session                metadata → thread_ts → idle gap         │
-│ 4  buffer                          fire when ≥4 new OR ≥6 s idle           │
-│ 5  extract(window)                 LLM, structured output → Step[]         │
-│ 6  canonicalise(step)              → Activity            → SSE: step       │
-│ 7  rebuild()                       full recompute (<50 ms) → SSE: graph_delta│
-│ 8  conform(session)                fitness/missing/extra  → SSE: conformance│
-│ 9  observer.react()                suggest / warn / answer / pause         │
-└────────────────────────────────────────────────────────────────────────────┘
+```text
+Signed Slack event → persist/dedupe → channel coordinator
+  → normalize and route session → journal: message
+  → schedule window deadline → validated extraction → canonicalize → journal: step
+  → deterministic rebuild/diff → journal: graph_delta + conformance
+  → P1 observer creates outgoing intent → rate-limited Slack post
 ```
 
-Latency target: **message → node on canvas ≤ 4 s.**
+The coordinator processes persisted pending work and durable alarms. No module-level background
+poll loop. Latency target is ~4 seconds during active flow; sparse windows wait six seconds plus
+model latency. Record actual timings. See spec 00 for retry/restart semantics.
 
 ---
 
@@ -41,7 +41,7 @@ Latency target: **message → node on canvas ≤ 4 s.**
 
 ## 3. Extraction (the one hard LLM call)
 
-`mining/extract.py::extract(window, prior_steps, kb_context) -> Step[]`
+`server/mining/extract.ts::extract(window, priorSteps, kbContext)` returns validated steps
 
 `kb_context` is compact: the 6 people (`id`, name, role), the project's artifacts (`id`, name), and
 the **designed activity slugs for this project** — so the model reaches for the documented
@@ -60,17 +60,22 @@ Structured output schema (enforced via `response_format: json_schema`, `strict: 
     "handoff_to_person_id": "per_priya",
     "evidence":        ["1757671251.000300"],    // ≥1 Slack ts from THIS window
     "confidence":      0.86,
-    "negated":         false                     // true = discussed but did NOT happen
+    "modality":        "reported"                // reported|committed|requested|negated
+                                                 // work-model spec 00 §3 — decides IF a step is created
+                                                 // and at which lifecycle state. "discussed"
+                                                 // is never returned; it means emit nothing.
 }]}
 ```
 
 Prompt rules, in this order of emphasis:
 
-1. **Only emit a step for work that actually occurred or was committed to.** Proposals, questions and
-   opinions are not steps.
-2. **`negated: true`** when a step is explicitly *skipped* ("we're skipping the checklist"). Negated
-   steps are stored but excluded from the graph — and they are **gold for the drift alert**, because
-   they are a direct admission of deviation with a citation.
+1. **Classify work modality** before materializing a step. Reported work enters done; requests
+   and commitments stay open. Discussion, hypothetical proposals and general questions emit nothing.
+2. **Return the `modality`** (work-model spec 00 §3). It, not the prose, decides what happens next:
+   `reported` → step at `done` · `committed` / `requested` → step opened, awaiting reconciliation ·
+   `negated` → step at `skipped`, stored but excluded from the graph. Negated acts are **gold for the
+   drift alert** — a direct, quotable admission that the documented process was bypassed.
+   When in doubt the act is `discussed`, and `discussed` means emit nothing.
 3. Prefer a `designed` slug from the provided list when the meaning matches.
 4. `evidence` must contain real `ts` values from the window. No ts → the step is discarded by code.
 5. Two-shot: one example producing 2 steps, one producing `{"steps": []}` (idle chatter).
@@ -81,6 +86,9 @@ the window. A dropped window costs one node; a crash costs the demo.
 ---
 
 ## 4. Canonicalisation
+
+Reconcile same-case requests/promises/reports per work-model spec 00 before emitting duplicate
+steps; only done + confirmed steps enter the DFG. Retain modality, lifecycle and curation separately.
 
 Per spec 01 §7: exact slug → designed match → discovered match → new activity.
 The LLM adjudication call is **batched per window** and only sees unmatched slugs plus a compact
@@ -93,7 +101,7 @@ Guards: slug regex `^[a-z][a-z0-9_]{2,40}$`; edit distance ≤2 to an existing s
 
 ## 5. Graph construction (deterministic — no LLM)
 
-```python
+```text
 def directly_follows(steps) -> Edges:
     for session in group_by_session(steps):
         for a, b in pairwise(sorted(session, key=seq)):
@@ -130,7 +138,11 @@ roll-up. Output shape:
   "extra":[{"slug":"escalate_to_ceo","occurrences":4},{"slug":"improvise_hotfix","occurrences":2}],
   "order_breaks":[{"from":"root_cause_analysis","to":"deploy_fix","expected_between":"security_review"}],
   "violations":[{"policy_id":"pol_sec_review","text":"A security review must complete before any production deploy.",
-                 "evidence":["1757671251.000300"],"quote":"skipping the checklist to save time"}] }
+                 "evidence":["1757671251.000300"],"quote":"skipping the checklist to save time"}],
+  "role_deviations":[{"slug":"assign_owner","expected":"pm","observed":"ceo",
+                      "sessions":3,"of":4,"evidence":["1757671001.000100"]}],
+  "unreconciled":[{"slug":"write_postmortem","state":"committed","actor":"per_lea",
+                   "quote":"i'll write it up monday"}] }
 ```
 
 The `quote` + `evidence` pair is what makes the Slack alert land: it names the policy **and** shows
@@ -138,7 +150,7 @@ the message that broke it.
 
 ---
 
-## 7. The observer acts (`observer.py`)
+## 7. The observer acts (`server/observer.ts`, P1)
 
 ### 7.1 Process-start recognition → suggest → **pause**
 
@@ -180,7 +192,9 @@ document can answer: *"what do we actually do when a P1 hits an enterprise accou
 
 ### 7.4 Reaction curation
 
-Read from the poll payload, zero extra API calls. On an Ariadne step-proposal message:
+Consume signed reaction events for existing messages, idempotently. An oldest-ts history cursor
+will not observe later reactions on old messages. Resolve the target proposal or suggestion from
+a persisted Slack-ts → step/session mapping. On an Ariadne step-proposal message:
 ✅ → `step.status = confirmed` (enters the graph) · ❌ → `rejected` (removed, activity support
 decremented) · ✋ → pause. Every reaction emits `graph_delta`, so the canvas moves when a human
 reacts in Slack. **Do this on camera.**
@@ -208,7 +222,7 @@ constant, and it makes the channel visibly *watched* — the thread motif, liter
 
 - [ ] A performed transcript yields ≥8 steps with ≥90% having a resolvable `actor_person_id`
 - [ ] `expected_deviations` in the transcript are all present in `conformance.extra` or `violations`
-- [ ] Node appears on the canvas ≤4 s after its Slack message
+- [ ] Measure active-flow message-to-node latency against ~4 s target; report sparse-window latency separately
 - [ ] Running helios v2 after v1 raises `support` on shared activities and creates ≥2 gold nodes
-- [ ] The drift alert fires in Slack with a real quote and a working permalink
-- [ ] ❌ on a proposed step removes the node from the canvas within 3 s
+- [ ] P1: The drift alert fires in Slack with a real quote and a working permalink
+- [ ] P1: ❌ on a proposed step removes the node from the canvas within 3 s

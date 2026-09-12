@@ -7,15 +7,20 @@ const authNames = [
   "SLACK_CLIENT_SECRET",
   "SLACK_SIGNING_SECRET",
 ] as const;
-const requiredNames = [
+const cloudflareNames = [
   "CLOUDFLARE_ACCOUNT_ID",
   "CLOUDFLARE_API_TOKEN",
-  ...authNames,
 ] as const;
+const stagingAgentNames = ["OPENROUTER_API_KEY"] as const;
 export function deploymentSecrets(env: NodeJS.ProcessEnv) {
   if (env.DEPLOY_ENV !== "staging" && env.DEPLOY_ENV !== "production") {
     throw new Error("DEPLOY_ENV must be staging or production.");
   }
+  const requiredNames = [
+    ...cloudflareNames,
+    ...authNames,
+    ...(env.DEPLOY_ENV === "staging" ? stagingAgentNames : []),
+  ] as const;
   const missing = requiredNames.filter((name) => !env[name]?.trim());
   if (missing.length) {
     throw new Error(
@@ -25,7 +30,11 @@ export function deploymentSecrets(env: NodeJS.ProcessEnv) {
   if ((env.BETTER_AUTH_SECRET?.length ?? 0) < 32) {
     throw new Error("BETTER_AUTH_SECRET must contain at least 32 characters.");
   }
-  return Object.fromEntries(authNames.map((name) => [name, env[name]]));
+  const syncedNames = [
+    ...authNames,
+    ...(env.OPENROUTER_API_KEY?.trim() ? stagingAgentNames : []),
+  ];
+  return Object.fromEntries(syncedNames.map((name) => [name, env[name]]));
 }
 if (
   process.argv[1] &&

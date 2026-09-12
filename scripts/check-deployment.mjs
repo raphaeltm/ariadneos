@@ -100,8 +100,48 @@ async function check() {
     signal: AbortSignal.timeout(15_000),
   });
   assert.equal(unsigned.status, 401, "Unsigned webhooks must be rejected");
+  const agentStatusResponse = await fetch(`${base}/api/agent/status`, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+  });
+  assert.equal(agentStatusResponse.status, 200, "Agent status must respond");
+  const agentStatus = await agentStatusResponse.json();
+  assert.equal(agentStatus.executor, "mastra-embedded");
+  assert.equal(agentStatus.fallback, "typed-fetch");
+  assert.equal(typeof agentStatus.config.models.answer, "string");
+  assert.equal(
+    JSON.stringify(agentStatus).includes("OPENROUTER_API_KEY"),
+    false
+  );
+  if (environment === "staging") {
+    assert.equal(
+      agentStatus.config.enabled,
+      true,
+      "Staging must enable the OpenRouter smoke path"
+    );
+    assert.equal(
+      agentStatus.config.hasOpenRouterKey,
+      true,
+      "Staging is missing the OPENROUTER_API_KEY secret"
+    );
+    const smokeResponse = await fetch(`${base}/api/agent/smoke`, {
+      body: "{}",
+      headers: { "Content-Type": "application/json", Origin: base },
+      method: "POST",
+      signal: AbortSignal.timeout(30_000),
+    });
+    assert.equal(smokeResponse.status, 200, "Agent smoke must succeed");
+    const smoke = await smokeResponse.json();
+    assert.equal(smoke.ok, true);
+    assert.equal(smoke.status, "ok");
+    assert.ok(
+      ["mastra-embedded", "typed-fetch"].includes(smoke.executor),
+      "Smoke response must report the executor that passed"
+    );
+    assert.equal(smoke.model, agentStatus.config.models.answer);
+  }
   console.log(
-    `PASS: ${base} serves ${environment} ${health.revision}; TLS, D1, app bundle, auth availability, and anonymous data protection verified.`
+    `PASS: ${base} serves ${environment} ${health.revision}; TLS, D1, app bundle, auth availability, Slack webhook signing, anonymous data protection, and agent runtime status verified.`
   );
 }
 // Allow time for a new custom domain or Worker revision to become available.

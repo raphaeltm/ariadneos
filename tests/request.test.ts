@@ -66,6 +66,55 @@ describe("request boundaries", () => {
       ).status
     ).toBe(400);
   });
+  it("reports the agent runtime as disabled without storage or secrets", async () => {
+    const response = await worker.fetch(
+      new Request(`${origin}/api/agent/status`),
+      env,
+      context
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      config: {
+        enabled: false,
+        hasOpenRouterKey: false,
+      },
+      executor: "mastra-embedded",
+      fallback: "typed-fetch",
+      path: "embedded-worker",
+    });
+  });
+  it("keeps the agent smoke disabled without storage or model calls", async () => {
+    const response = await request("/api/agent/smoke", {});
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      executor: "disabled",
+      ok: true,
+      status: "disabled",
+    });
+  });
+  it("reports a missing OpenRouter key before storage", async () => {
+    const response = await worker.fetch(
+      new Request(`${origin}/api/agent/smoke`, {
+        body: "{}",
+        headers: { "Content-Type": "application/json", Origin: origin },
+        method: "POST",
+      }),
+      { AGENT_ENABLED: "true" } as Parameters<typeof worker.fetch>[1],
+      context
+    );
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      executor: "disabled",
+      ok: false,
+      status: "missing_key",
+    });
+  });
+  it("rejects cross-origin agent smoke requests before storage", async () => {
+    expect(
+      (await request("/api/agent/smoke", {}, "https://untrusted.example"))
+        .status
+    ).toBe(403);
+  });
   it("preserves path and query on canonical redirects", async () => {
     const response = await worker.fetch(
       new Request("http://www.ariadneos.com/api/health?check=1"),

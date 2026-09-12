@@ -57,6 +57,15 @@ assert.equal(
 );
 const context = (await request("/api/context?workflow=vendor")).data;
 assert.equal(context.stats.cases, 30);
+const agentStatus = (await request("/api/agent/status")).data;
+assert.equal(agentStatus.config.enabled, false);
+assert.equal(agentStatus.config.hasOpenRouterKey, false);
+assert.equal(agentStatus.executor, "mastra-embedded");
+assert.equal(agentStatus.fallback, "typed-fetch");
+const agentSmoke = await request("/api/agent/smoke", { body: {} });
+assert.equal(agentSmoke.status, 200);
+assert.equal(agentSmoke.data.ok, true);
+assert.equal(agentSmoke.data.status, "disabled");
 const ids = new Set(model.events.map((e) => e.id));
 for (const edge of context.edges) {
   for (const item of edge.evidence) {
@@ -101,5 +110,5 @@ assert.equal(
   0
 );
 console.log(
-  "PASS: health, all workflows, D1 persistence, session isolation, evidence integrity, input validation, origin checks, body limits, and five-run cap."
+  "PASS: health, all workflows, D1 persistence, session isolation, agent-disabled smoke, evidence integrity, input validation, origin checks, body limits, and five-run cap."
 );

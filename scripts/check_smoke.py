@@ -30,6 +30,7 @@ def main():
         for key, value in os.environ.items()
         if not key.startswith(("CLOUDFLARE_", "CF_", "SLACK_", "BETTER_AUTH_", "ARIADNE_TEST_"))
     }
+    env.pop("OPENROUTER_API_KEY", None)
     env["WRANGLER_SEND_METRICS"] = "false"
     with tempfile.TemporaryDirectory(prefix="ariadneos-smoke-") as directory:
         config = json.loads(subprocess.check_output(["node", "scripts/read-wrangler-config.mjs"]))

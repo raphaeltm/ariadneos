@@ -22,6 +22,29 @@ npm run db:local
 npm run dev
 ```
 
+## Agent runtime smoke
+
+The agent foundation runs inside the existing Hono Cloudflare Worker. Issue #38 validated the
+embedded Mastra Agent path with OpenRouter; the committed runtime reports that path as
+`mastra-embedded` and falls back explicitly to a spec-11 `typed-fetch` OpenRouter call if Mastra
+throws at runtime. There is no public Mastra server, separate database, or non-Cloudflare host.
+
+`POST /api/agent/smoke` uses a fixed prompt and the configured answer model to prove one live
+OpenRouter call in staging. It is gated by `AGENT_ENABLED`, `OPENROUTER_API_KEY`, a D1-backed daily
+budget, and a timeout. `GET /api/agent/status` reports the active executor, fallback, models,
+budgets, attribution, and whether a key is present, but never returns the secret value.
+
+Model routing is intentionally compatible with the older names from spec 05:
+
+- `MODEL_ANSWER` controls agent answers and falls back to `MODEL_RAG` when only the previous RAG
+  variable is configured.
+- `MODEL_CLASSIFY` controls lightweight classification and falls back to `MODEL_SIM`.
+- `MODEL_EXTRACT` controls extraction and falls back to `MODEL_SIM`.
+
+`OPENROUTER_APP_TITLE` and `OPENROUTER_SITE_URL` provide OpenRouter attribution. Deployed
+`OPENROUTER_API_KEY` values must be configured as secrets; they do not belong in assets, Wrangler
+vars, logs, or work-item records.
+
 ## Conceptual flow
 
 ```text

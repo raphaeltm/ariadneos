@@ -13,6 +13,7 @@ import {
   type NodeProps,
   Position,
   ReactFlow,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import {
   Check,
@@ -22,8 +23,18 @@ import {
   Scissors,
   X,
 } from "lucide-react";
-import { useMemo } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ProcessModel } from "../shared/process.ts";
+import {
+  canvasShortcutInstructions,
+  shortcutActionForCanvas,
+} from "./components/process-canvas/graph.ts";
 import type {
   CurationAction,
   CurationDecoration,
@@ -31,6 +42,7 @@ import type {
 } from "./curation.ts";
 
 type ActivityNode = Node<{
+  ariaLabel: string;
   count: number;
   curation?: CurationDecoration;
   label: string;
@@ -45,10 +57,18 @@ type ActivityNode = Node<{
   role: string;
   terminal: boolean;
 }>;
+type LegacyNodeSummary = Pick<
+  ProcessModel["nodes"][number],
+  "count" | "grounded" | "label" | "plane" | "role"
+>;
 function Activity({ data, selected }: NodeProps<ActivityNode>) {
   return (
     <div
+      aria-current={selected ? "true" : undefined}
+      aria-label={data.ariaLabel}
       className={`activity-node ${selected ? "selected" : ""} ${data.terminal ? "terminal" : ""} ${data.curation ? `curated ${data.curation.action}` : ""}`}
+      id={legacyCanvasDomId(data.labelId)}
+      role="img"
     >
       {selected && data.onCurate ? (
         <CurationToolbar
@@ -80,6 +100,7 @@ function Activity({ data, selected }: NodeProps<ActivityNode>) {
   );
 }
 type CuratedEdge = Edge<{
+  ariaLabel: string;
   curation?: CurationDecoration;
   label: string;
   legalActions: CurationAction[];
@@ -108,9 +129,20 @@ export default function ProcessGraph({
     action: CurationAction,
     target: { id: string; kind: CurationTargetKind }
   ) => void;
-  onSelect: (value: { kind: "node" | "edge"; id: string }) => void;
+  onSelect: (value: { kind: "node" | "edge"; id: string } | undefined) => void;
   selected: string | undefined;
 }) {
+  const [flow, setFlow] = useState<ReactFlowInstance<ActivityNode> | null>(
+    null
+  );
+  const [announcement, setAnnouncement] = useState(
+    "Process map ready. Focus the canvas to use keyboard shortcuts."
+  );
+  const instructionsId = useId();
+  const statusId = useId();
+  const selectionHistory = useRef<Array<{ kind: "node" | "edge"; id: string }>>(
+    []
+  );
   const { nodes, edges } = useMemo(() => {
     const graph = new dagre.graphlib.Graph();
     graph.setGraph({
@@ -134,6 +166,7 @@ export default function ProcessGraph({
         return {
           animated: selected === e.id,
           data: {
+            ariaLabel: describeLegacyEdge(model, e.id),
             curation: edgeDecoration,
             label: `${e.count} · ${Math.round(e.probability * 100)}%`,
             legalActions: ["confirm", "reject", "split"],
@@ -167,6 +200,7 @@ export default function ProcessGraph({
         return {
           data: {
             ...n,
+            ariaLabel: describeLegacyNode(n),
             curation: nodeDecoration,
             labelId: n.id,
             legalActions: legalNodeActions(model, n.id),
@@ -185,38 +219,213 @@ export default function ProcessGraph({
       }),
     };
   }, [curation, model, onCurate, selected]);
+  const keyboardTargets = useMemo(
+    () => [
+      ...model.nodes.map((node) => ({
+        id: node.id,
+        kind: "node" as const,
+        label: describeLegacyNode(node),
+      })),
+      ...model.edges.map((edge) => ({
+        id: edge.id,
+        kind: "edge" as const,
+        label: describeLegacyEdge(model, edge.id),
+      })),
+    ],
+    [model]
+  );
+  const activeDescendant =
+    selected && model.nodes.some((node) => node.id === selected)
+      ? legacyCanvasDomId(selected)
+      : undefined;
+  const rememberSelection = () => {
+    const current = selected
+      ? keyboardTargets.find((target) => target.id === selected)
+      : undefined;
+    if (current) {
+      selectionHistory.current = [
+        { id: current.id, kind: current.kind },
+        ...selectionHistory.current,
+      ].slice(0, 12);
+    }
+  };
+  const selectTarget = (
+    target: (typeof keyboardTargets)[number] | undefined
+  ) => {
+    if (!target) {
+      setAnnouncement("No graph items to select.");
+      return;
+    }
+    rememberSelection();
+    onSelect({ id: target.id, kind: target.kind });
+    setAnnouncement(`Selected ${target.label}.`);
+  };
+  const restoreSelection = () => {
+    const [previous, ...rest] = selectionHistory.current;
+    if (!previous) {
+      setAnnouncement("No previous graph selection to restore.");
+      return;
+    }
+    selectionHistory.current = rest;
+    onSelect(previous);
+    setAnnouncement("Previous graph selection restored.");
+  };
+  const clearSelection = () => {
+    if (!selected) {
+      setAnnouncement("No graph selection to clear.");
+      return;
+    }
+    rememberSelection();
+    onSelect(undefined);
+    setAnnouncement("Graph selection cleared.");
+  };
+  const panCanvas = (x: number, y: number) => {
+    if (!flow) {
+      setAnnouncement("Canvas controls are still loading.");
+      return;
+    }
+    const viewport = flow.getViewport();
+    announceFlowResult(
+      flow.setViewport(
+        { ...viewport, x: viewport.x + x, y: viewport.y + y },
+        { duration: 120 }
+      ),
+      setAnnouncement,
+      "Canvas panned."
+    );
+  };
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    const action = shortcutActionForCanvas(shortcutInputFromEvent(event));
+    if (!action) {
+      return;
+    }
+    event.preventDefault();
+    switch (action) {
+      case "clear_selection":
+        clearSelection();
+        return;
+      case "fit_view":
+        if (flow) {
+          announceFlowResult(
+            flow.fitView({ duration: 150, padding: 0.2 }),
+            setAnnouncement,
+            "Graph fit to view."
+          );
+        }
+        return;
+      case "pan_down":
+        panCanvas(0, -72);
+        return;
+      case "pan_left":
+        panCanvas(72, 0);
+        return;
+      case "pan_right":
+        panCanvas(-72, 0);
+        return;
+      case "pan_up":
+        panCanvas(0, 72);
+        return;
+      case "restore_selection":
+        restoreSelection();
+        return;
+      case "select_first":
+        selectTarget(keyboardTargets[0]);
+        return;
+      case "select_last":
+        selectTarget(keyboardTargets.at(-1));
+        return;
+      case "select_next":
+        selectTarget(nextLegacyTarget(keyboardTargets, selected, 1));
+        return;
+      case "select_previous":
+        selectTarget(nextLegacyTarget(keyboardTargets, selected, -1));
+        return;
+      case "zoom_in":
+        if (flow) {
+          announceFlowResult(
+            flow.zoomIn({ duration: 120 }),
+            setAnnouncement,
+            "Graph zoomed in."
+          );
+        }
+        return;
+      case "zoom_out":
+        if (flow) {
+          announceFlowResult(
+            flow.zoomOut({ duration: 120 }),
+            setAnnouncement,
+            "Graph zoomed out."
+          );
+        }
+        return;
+      default:
+        assertNever(action);
+    }
+  };
   return (
-    <ReactFlow
-      edges={edges}
-      edgeTypes={edgeTypes}
-      fitView
-      fitViewOptions={{ padding: 0.2 }}
-      key={model.nodes.map((n) => n.id).join()}
-      maxZoom={1.5}
-      minZoom={0.3}
-      nodes={nodes}
-      nodesConnectable={false}
-      nodesDraggable={false}
-      nodeTypes={nodeTypes}
-      onEdgeClick={(_, e) => onSelect({ id: e.id, kind: "edge" })}
-      onEdgesChange={(changes) => {
-        const change = changes.find((c) => c.type === "select" && c.selected);
-        if (change && "id" in change) {
-          onSelect({ id: change.id, kind: "edge" });
-        }
-      }}
-      onNodeClick={(_, n) => onSelect({ id: n.id, kind: "node" })}
-      onNodesChange={(changes) => {
-        const change = changes.find((c) => c.type === "select" && c.selected);
-        if (change && "id" in change) {
-          onSelect({ id: change.id, kind: "node" });
-        }
-      }}
-      proOptions={{ hideAttribution: false }}
-    >
-      <Background color="#d9dfd5" gap={22} size={1} />
-      <Controls showInteractive={false} />
-    </ReactFlow>
+    <div className="graph-canvas__keyboard-layer">
+      <p className="sr-only" id={instructionsId}>
+        {canvasShortcutInstructions}
+      </p>
+      <p aria-live="polite" className="sr-only" id={statusId}>
+        {announcement}
+      </p>
+      <ReactFlow
+        aria-activedescendant={activeDescendant}
+        aria-describedby={`${instructionsId} ${statusId}`}
+        aria-label="Process map nodes and edges"
+        edges={edges}
+        edgeTypes={edgeTypes}
+        fitView
+        fitViewOptions={{ padding: 0.2 }}
+        key={model.nodes.map((n) => n.id).join()}
+        maxZoom={1.5}
+        minZoom={0.3}
+        nodes={nodes}
+        nodesConnectable={false}
+        nodesDraggable={false}
+        nodeTypes={nodeTypes}
+        onEdgeClick={(_, e) => {
+          rememberSelection();
+          onSelect({ id: e.id, kind: "edge" });
+          setAnnouncement(`Selected ${describeLegacyEdge(model, e.id)}.`);
+        }}
+        onEdgesChange={(changes) => {
+          const change = changes.find((c) => c.type === "select" && c.selected);
+          if (change && "id" in change) {
+            rememberSelection();
+            onSelect({ id: change.id, kind: "edge" });
+            setAnnouncement(
+              `Selected ${describeLegacyEdge(model, change.id)}.`
+            );
+          }
+        }}
+        onInit={setFlow}
+        onKeyDown={handleKeyDown}
+        onNodeClick={(_, n) => {
+          rememberSelection();
+          onSelect({ id: n.id, kind: "node" });
+          setAnnouncement(`Selected ${describeLegacyNode(n.data)}.`);
+        }}
+        onNodesChange={(changes) => {
+          const change = changes.find((c) => c.type === "select" && c.selected);
+          if (change && "id" in change) {
+            const node = model.nodes.find((item) => item.id === change.id);
+            rememberSelection();
+            onSelect({ id: change.id, kind: "node" });
+            setAnnouncement(
+              `Selected ${node ? describeLegacyNode(node) : change.id}.`
+            );
+          }
+        }}
+        proOptions={{ hideAttribution: false }}
+        role="application"
+        tabIndex={0}
+      >
+        <Background color="#d9dfd5" gap={22} size={1} />
+        <Controls showInteractive={false} />
+      </ReactFlow>
+    </div>
   );
 }
 
@@ -246,7 +455,11 @@ function CuratedGraphEdge({
       <BaseEdge id={id} markerEnd={markerEnd} path={edgePath} style={style} />
       <EdgeLabelRenderer>
         <div
+          aria-current={selected ? "true" : undefined}
+          aria-label={data?.ariaLabel ?? id}
           className={`edge-curation-label ${selected ? "selected" : ""}`}
+          id={legacyCanvasDomId(id)}
+          role="img"
           style={{
             transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
           }}
@@ -320,6 +533,73 @@ function edgeColor(selected: boolean, probability: number) {
     return "#bd7b3c";
   }
   return probability < 0.35 ? "#b9b2a5" : "#66816e";
+}
+
+function describeLegacyNode(node: LegacyNodeSummary) {
+  const grounded =
+    node.grounded === undefined ? "" : `, ${node.grounded} grounded`;
+  const plane = node.plane ? `, ${node.plane}` : "";
+  return `${node.label}, ${node.role} role, ${node.count} observations${grounded}${plane}`;
+}
+
+function describeLegacyEdge(model: ProcessModel, edgeId: string) {
+  const edge = model.edges.find((item) => item.id === edgeId);
+  if (!edge) {
+    return edgeId;
+  }
+  const source = model.nodes.find((node) => node.id === edge.source);
+  const target = model.nodes.find((node) => node.id === edge.target);
+  const probability = Math.round(edge.probability * 100);
+  return `${source?.label ?? edge.source} to ${target?.label ?? edge.target}, ${edge.count} transitions, ${probability}% probability`;
+}
+
+function nextLegacyTarget<TTarget extends { id: string }>(
+  targets: readonly TTarget[],
+  selectedId: string | undefined,
+  direction: -1 | 1
+) {
+  if (targets.length === 0) {
+    return;
+  }
+  const currentIndex = targets.findIndex((target) => target.id === selectedId);
+  if (currentIndex === -1) {
+    return direction === 1 ? targets[0] : targets.at(-1);
+  }
+  const nextIndex =
+    (currentIndex + direction + targets.length) % targets.length;
+  return targets[nextIndex];
+}
+
+function legacyCanvasDomId(id: string) {
+  return `process-map-item-${id.replaceAll(/[^A-Za-z0-9_-]/g, "-")}`;
+}
+
+function shortcutInputFromEvent(event: ReactKeyboardEvent<HTMLElement>) {
+  const target = event.target instanceof HTMLElement ? event.target : undefined;
+  return {
+    altKey: event.altKey,
+    ctrlKey: event.ctrlKey,
+    key: event.key,
+    metaKey: event.metaKey,
+    shiftKey: event.shiftKey,
+    targetIsContentEditable: target?.isContentEditable,
+    targetRole: target?.getAttribute("role"),
+    targetTagName: target?.tagName,
+  };
+}
+
+function announceFlowResult(
+  result: Promise<unknown>,
+  setAnnouncement: (message: string) => void,
+  successMessage: string
+) {
+  result
+    .then(() => setAnnouncement(successMessage))
+    .catch(() => setAnnouncement("Canvas command could not finish."));
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled graph keyboard action ${value}`);
 }
 
 function curationLabel(action: CurationAction, mergeLabel?: string) {

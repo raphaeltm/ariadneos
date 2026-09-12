@@ -1043,7 +1043,7 @@ interface LoadedWorkspaceProps {
   model: ProcessModel;
   onAbout: () => void;
   onExport: () => void;
-  onGraphSelect: (selection: Selection) => void;
+  onGraphSelect: (selection: Selection | undefined) => void;
   onRefreshSettings: () => void;
   onReload: () => void;
   question: string;

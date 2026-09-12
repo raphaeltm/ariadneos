@@ -166,6 +166,22 @@ test("exposes shell navigation, project switching, and mobile layout", async ({
   ).toBe(true);
 });
 
+test("supports keyboard selection and clearing on the process canvas", async ({
+  page,
+}) => {
+  await page.goto("/app");
+  const canvas = page.getByRole("application", {
+    name: "Process map nodes and edges",
+  });
+  await canvas.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByText("SELECTION INSPECTOR")).toBeVisible();
+  await page.keyboard.press("Delete");
+  await expect(page.getByText("PROCESS INSPECTOR")).toBeVisible();
+  await page.keyboard.press("ControlOrMeta+Z");
+  await expect(page.getByText("SELECTION INSPECTOR")).toBeVisible();
+});
+
 test("signs out and rejects the previous session", async ({
   page,
   context,

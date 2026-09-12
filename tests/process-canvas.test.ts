@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { overlayGraph } from "../shared/fixtures.ts";
 import {
+  canvasKeyboardTargets,
   conformanceOverlaySummary,
   filterCanvasGraph,
   layoutCanvasGraph,
+  nextCanvasKeyboardTarget,
   selectionForConformanceIssue,
   selectionForEdge,
   selectionForNode,
+  shortcutActionForCanvas,
   supportLimit,
 } from "../src/components/process-canvas/graph.ts";
 
@@ -149,6 +152,57 @@ describe("workflow process canvas", () => {
       edge_id: "ged_root_deploy_violation",
       workflow_id: "wf_p1_incident",
     });
+  });
+
+  it("orders keyboard targets across visible nodes and edges", () => {
+    const visible = filterCanvasGraph(overlayGraph, "overlay", 2);
+    const targets = canvasKeyboardTargets(visible, overlayGraph);
+    expect(targets[0]).toMatchObject({
+      id: visible.nodes[0]?.id,
+      kind: "node",
+    });
+    expect(targets.some((target) => target.kind === "edge")).toBe(true);
+    expect(nextCanvasKeyboardTarget(targets, undefined, 1)).toBe(targets[0]);
+    expect(nextCanvasKeyboardTarget(targets, targets[0]?.id, 1)).toBe(
+      targets[1]
+    );
+    expect(nextCanvasKeyboardTarget(targets, targets[0]?.id, -1)).toBe(
+      targets.at(-1)
+    );
+  });
+
+  it("maps canvas keyboard shortcuts without stealing text input", () => {
+    expect(shortcutActionForCanvas({ key: "ArrowRight" })).toBe("select_next");
+    expect(shortcutActionForCanvas({ key: "ArrowLeft" })).toBe(
+      "select_previous"
+    );
+    expect(shortcutActionForCanvas({ key: "ArrowDown", shiftKey: true })).toBe(
+      "pan_down"
+    );
+    expect(shortcutActionForCanvas({ key: "=", metaKey: true })).toBe(
+      "zoom_in"
+    );
+    expect(shortcutActionForCanvas({ ctrlKey: true, key: "-" })).toBe(
+      "zoom_out"
+    );
+    expect(shortcutActionForCanvas({ key: "0" })).toBe("fit_view");
+    expect(shortcutActionForCanvas({ key: "Delete" })).toBe("clear_selection");
+    expect(shortcutActionForCanvas({ ctrlKey: true, key: "z" })).toBe(
+      "restore_selection"
+    );
+    expect(
+      shortcutActionForCanvas({
+        key: "ArrowRight",
+        targetTagName: "input",
+      })
+    ).toBeNull();
+    expect(
+      shortcutActionForCanvas({
+        key: "z",
+        metaKey: true,
+        targetIsContentEditable: true,
+      })
+    ).toBeNull();
   });
 });
 

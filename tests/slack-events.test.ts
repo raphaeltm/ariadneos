@@ -1,12 +1,12 @@
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import worker from "../server/index.ts";
 
 const secret = "test-only-slack-signing-secret";
 let db: DatabaseSync;
-let run: ReturnType<typeof vi.fn<(sql: string, values: unknown[]) => unknown>>;
+let failWrites = false;
 let env: Record<string, unknown>;
 const event = (
   id = "Ev1",
@@ -16,6 +16,7 @@ const event = (
   event: {
     channel: "C1",
     channel_type: "channel",
+    event_ts: "1700000000.000001",
     text: "Hello",
     ts: "1700000000.000001",
     type: "message",
@@ -62,6 +63,41 @@ const rows = () =>
       "SELECT * FROM slack_message_events ORDER BY received_at, event_id"
     )
     .all();
+const pmMessages = () =>
+  db
+    .prepare("SELECT * FROM pm_message ORDER BY workspace_id, channel, ts")
+    .all();
+const processingRows = () =>
+  db
+    .prepare(
+      "SELECT * FROM pm_processing ORDER BY workspace_id, channel, observation_id"
+    )
+    .all();
+const journalRows = () =>
+  db.prepare("SELECT * FROM pm_journal ORDER BY id, operation_key").all();
+const createD1 = () => ({
+  batch: async (statements: D1PreparedStatement[]) => {
+    if (failWrites) {
+      throw new Error("Database unavailable");
+    }
+    return await Promise.all(statements.map((statement) => statement.run()));
+  },
+  prepare: (sql: string) => ({
+    bind: (...values: unknown[]) => {
+      const sqliteValues = values as (string | number | null)[];
+      return {
+        all: async () => ({ results: db.prepare(sql).all(...sqliteValues) }),
+        first: async () => db.prepare(sql).get(...sqliteValues),
+        run: () => {
+          if (failWrites) {
+            throw new Error("Database unavailable");
+          }
+          return Promise.resolve(db.prepare(sql).run(...sqliteValues));
+        },
+      };
+    },
+  }),
+});
 beforeEach(() => {
   db = new DatabaseSync(":memory:");
   db.exec(readFileSync("migrations/0004_slack_message_events.sql", "utf8"));
@@ -69,23 +105,12 @@ beforeEach(() => {
   db.exec(
     readFileSync("migrations/0006_channel_coordinator_runtime.sql", "utf8")
   );
-  run = vi.fn((sql: string, values: unknown[]) =>
-    db.prepare(sql).run(...(values as (string | number | null)[]))
-  );
+  failWrites = false;
   env = {
-    DB: {
-      batch: async (
-        statements: {
-          run: () => Promise<unknown>;
-        }[]
-      ) => await Promise.all(statements.map((statement) => statement.run())),
-      prepare: (sql: string) => ({
-        bind: (...values: unknown[]) => ({
-          run: async () => run(sql, values),
-        }),
-      }),
-    },
+    DB: createD1(),
+    SLACK_PROJECT_ID: "proj_helios",
     SLACK_SIGNING_SECRET: secret,
+    SLACK_WORKSPACE: "ariadneos",
   };
 });
 afterEach(() => db.close());
@@ -114,15 +139,51 @@ describe("Slack Events HTTP receiver and storage", () => {
       text: "Hello",
       user_id: "U1",
     });
+    expect(pmMessages()).toHaveLength(1);
+    expect(pmMessages()[0]).toMatchObject({
+      author_label: "U1",
+      channel: "C1",
+      id: "T1:C1:1700000000.000001",
+      is_agent: 0,
+      permalink: "https://ariadneos.slack.com/archives/C1/p1700000000000001",
+      revision: 1,
+      session_id: "ses_slack_T1_C1_1700000000_000001",
+      text: "Hello",
+      workspace_id: "T1",
+    });
+    expect(processingRows()).toMatchObject([
+      {
+        channel: "C1",
+        checkpoint_id: "slack:T1:Ev1",
+        extraction_window_revision: 1,
+        observation_id: "Ev1",
+        status: "pending",
+        workspace_id: "T1",
+      },
+    ]);
+    expect(journalRows()).toHaveLength(1);
+    expect(journalRows()[0]).toMatchObject({
+      channel: "C1",
+      kind: "message",
+      operation_key: "slack-message:T1:Ev1",
+      project_id: "proj_helios",
+      session_id: "ses_slack_T1_C1_1700000000_000001",
+      workspace_id: "T1",
+    });
   });
   it("keeps workspace identities separate", async () => {
     await request(event());
     await request(event("Ev1", "T2"));
     expect(rows()).toHaveLength(2);
+    expect(pmMessages()).toMatchObject([
+      { id: "T1:C1:1700000000.000001", workspace_id: "T1" },
+      { id: "T2:C1:1700000000.000001", workspace_id: "T2" },
+    ]);
   });
   it("retains edits and deletions arriving before the original message", async () => {
     await request(
       event("Ev2", "T1", {
+        event_ts: "1700000000.000002",
         message: { text: "Edited", ts: "1700000000.000001", user: "U1" },
         subtype: "message_changed",
       })
@@ -130,6 +191,7 @@ describe("Slack Events HTTP receiver and storage", () => {
     await request(
       event("Ev3", "T1", {
         deleted_ts: "1700000000.000001",
+        event_ts: "1700000000.000003",
         subtype: "message_deleted",
         text: undefined,
       })
@@ -144,6 +206,85 @@ describe("Slack Events HTTP receiver and storage", () => {
       subtype: "message_deleted",
       text: null,
     });
+    expect(pmMessages()).toMatchObject([
+      {
+        availability: "deleted",
+        deleted: 1,
+        id: "T1:C1:1700000000.000001",
+        revision: 3,
+        text: "Edited",
+      },
+    ]);
+    expect(processingRows()).toHaveLength(3);
+    expect(journalRows()).toHaveLength(3);
+  });
+  it("uses trusted Slack metadata for mining scope and persona provenance", async () => {
+    await request(
+      event("EvPersona", "T1", {
+        bot_id: "B1",
+        metadata: {
+          event_payload: {
+            person_id: "per_priya",
+            session_id: "ses_helios_live",
+          },
+          event_type: "ariadne_sim",
+        },
+        thread_ts: "1700000000.000000",
+        username: "Priya Raman",
+      })
+    );
+    expect(pmMessages()).toMatchObject([
+      {
+        author_label: "per_priya",
+        author_person_id: "per_priya",
+        is_agent: 0,
+        session_id: "ses_helios_live",
+        thread_ts: "1700000000.000000",
+      },
+    ]);
+    const payload = JSON.parse(journalRows()[0]?.payload_json as string);
+    expect(payload).toMatchObject({
+      author_person_id: "per_priya",
+      id: "T1:C1:1700000000.000001",
+      session_id: "ses_helios_live",
+    });
+  });
+  it("falls back to thread root for human messages without trusted metadata", async () => {
+    await request(
+      event("EvThread", "T1", {
+        text: "Human reply",
+        thread_ts: "1700000000.000000",
+      })
+    );
+    expect(pmMessages()).toMatchObject([
+      {
+        author_label: "U1",
+        author_person_id: null,
+        session_id: "ses_slack_T1_C1_1700000000_000000",
+        text: "Human reply",
+        thread_ts: "1700000000.000000",
+      },
+    ]);
+  });
+  it("marks observer bot output separately from mineable persona messages", async () => {
+    await request(
+      event("EvAgent", "T1", {
+        bot_id: "B1",
+        metadata: {
+          event_payload: { session_id: "ses_helios_live" },
+          event_type: "ariadne_agent",
+        },
+        username: "Ariadne",
+      })
+    );
+    expect(pmMessages()).toMatchObject([
+      {
+        author_label: "Ariadne",
+        author_person_id: null,
+        is_agent: 1,
+        session_id: "ses_helios_live",
+      },
+    ]);
   });
   it.each([-301, 301])(
     "rejects timestamps outside the replay window (%s seconds)",
@@ -202,11 +343,10 @@ describe("Slack Events HTTP receiver and storage", () => {
     expect(rows()).toHaveLength(0);
   });
   it("returns a retryable failure when persistence fails", async () => {
-    run.mockImplementation(() => {
-      throw new Error("Database unavailable");
-    });
+    failWrites = true;
     expect((await request(event())).status).toBe(500);
     expect(rows()).toHaveLength(0);
+    expect(pmMessages()).toHaveLength(0);
   });
   it("acknowledges unrelated events without storing them", async () => {
     expect(

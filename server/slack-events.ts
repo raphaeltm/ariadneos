@@ -4,16 +4,26 @@ import {
   type ChannelCoordinatorEnv,
   wakeChannelCoordinator,
 } from "./runtime/channel.ts";
+import { normalizeSlackObservation } from "./slack-observations.ts";
 
 export interface SlackEventsEnv extends ChannelCoordinatorEnv {
   DB: D1Database;
+  SLACK_PROJECT_ID?: "proj_helios" | "proj_atlas";
   SLACK_SIGNING_SECRET?: string;
+  SLACK_WORKSPACE?: string;
 }
 const TIMESTAMP = /^\d+$/;
 const SIGNATURE = /^v0=[a-f0-9]{64}$/;
 const HEX_PAIR = /../g;
 const MESSAGE_TIMESTAMP = /^\d+\.\d+$/;
 const encoder = new TextEncoder();
+interface SlackMessageEventRecord {
+  channel: string;
+  eventTs: string | null;
+  message: Record<string, unknown>;
+  subtype: string | null;
+  timestamp: string;
+}
 
 async function verified(headers: Headers, body: string, secret: string) {
   const timestamp = headers.get("x-slack-request-timestamp") ?? "";
@@ -49,50 +59,72 @@ function object(value: unknown): value is Record<string, unknown> {
 function nonempty(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
+function messageEventRecord(
+  event: Record<string, unknown>
+): SlackMessageEventRecord | null {
+  if (!(event.type === "message" && nonempty(event.channel))) {
+    return null;
+  }
+  const message = object(event.message) ? event.message : event;
+  const timestamp =
+    event.subtype === "message_deleted" ? event.deleted_ts : message.ts;
+  if (!(nonempty(timestamp) && MESSAGE_TIMESTAMP.test(timestamp))) {
+    return null;
+  }
+  return {
+    channel: event.channel,
+    eventTs: typeof event.event_ts === "string" ? event.event_ts : null,
+    message,
+    subtype: typeof event.subtype === "string" ? event.subtype : null,
+    timestamp,
+  };
+}
 
 async function persistSlackMessageEvent(
   env: SlackEventsEnv,
   envelope: Record<string, unknown>,
   event: Record<string, unknown>,
-  message: Record<string, unknown>,
-  timestamp: string
+  record: SlackMessageEventRecord
 ) {
   const teamId = envelope.team_id as string;
   const eventId = envelope.event_id as string;
-  const channelId = event.channel as string;
   const receivedAt = Date.now();
-  await env.DB.batch([
-    env.DB.prepare(
-      `INSERT INTO slack_message_events
-      (team_id, event_id, channel_id, message_ts, event_ts, subtype, user_id, text, payload, received_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(team_id, event_id) DO NOTHING`
-    ).bind(
+  await env.DB.prepare(
+    `INSERT INTO slack_message_events
+    (team_id, event_id, channel_id, message_ts, event_ts, subtype, user_id, text, payload, received_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(team_id, event_id) DO NOTHING`
+  )
+    .bind(
       teamId,
       eventId,
-      channelId,
-      timestamp,
-      typeof event.event_ts === "string" ? event.event_ts : null,
-      typeof event.subtype === "string" ? event.subtype : null,
-      typeof message.user === "string" ? message.user : null,
-      typeof message.text === "string" ? message.text : null,
+      record.channel,
+      record.timestamp,
+      record.eventTs,
+      record.subtype,
+      typeof record.message.user === "string" ? record.message.user : null,
+      typeof record.message.text === "string" ? record.message.text : null,
       JSON.stringify(event),
       receivedAt
-    ),
-    env.DB.prepare(
-      `INSERT INTO pm_processing
-      (checkpoint_id, workspace_id, channel, observation_id, status, updated_at)
-      VALUES (?, ?, ?, ?, 'pending', ?)
-      ON CONFLICT(checkpoint_id) DO NOTHING`
-    ).bind(
-      `slack:${teamId}:${eventId}`,
-      teamId,
-      channelId,
+    )
+    .run();
+  await normalizeSlackObservation(
+    env.DB,
+    {
+      channel: record.channel,
       eventId,
-      new Date(receivedAt).toISOString()
-    ),
-  ]);
-  return { channelId, teamId };
+      eventTs: record.eventTs,
+      messageTs: record.timestamp,
+      receivedAt,
+      subtype: record.subtype,
+      workspace: teamId,
+    },
+    {
+      projectId: env.SLACK_PROJECT_ID,
+      slackWorkspace: env.SLACK_WORKSPACE,
+    }
+  );
+  return { channelId: record.channel, teamId };
 }
 
 // Mounted before browser Origin/session middleware: Slack authenticates with HMAC.
@@ -144,14 +176,9 @@ slackEvents.post("/", async (c) => {
   if (event.type !== "message") {
     return c.json({ ok: true });
   }
-  if (!nonempty(event.channel)) {
-    return c.json({ error: "Missing channel." }, 400);
-  }
-  const message = object(event.message) ? event.message : event;
-  const timestamp =
-    event.subtype === "message_deleted" ? event.deleted_ts : message.ts;
-  if (!(nonempty(timestamp) && MESSAGE_TIMESTAMP.test(timestamp))) {
-    return c.json({ error: "Missing message timestamp." }, 400);
+  const record = messageEventRecord(event);
+  if (!record) {
+    return c.json({ error: "Missing message identity." }, 400);
   }
   // Append observed changes rather than overwriting messages: edits, deletions and
   // out-of-order deliveries retain their source evidence. Slack retries deduplicate.
@@ -159,8 +186,7 @@ slackEvents.post("/", async (c) => {
     c.env,
     envelope,
     event,
-    message,
-    timestamp
+    record
   );
   if (
     c.env.CHANNEL_COORDINATOR &&

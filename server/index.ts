@@ -26,6 +26,7 @@ interface Env extends AuthEnv, SlackEventsEnv, ChannelCoordinatorEnv {
   DB: D1Database;
   RELEASE_SHA: string;
 }
+
 const app = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
 function channelCoordinatorReadiness(env: Env) {
   if (!env.CHANNEL_COORDINATOR) {

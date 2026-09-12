@@ -38,21 +38,32 @@ async function check() {
   });
   assert.equal(asset.status, 200, "Frontend bundle must load");
   assert.match(asset.headers.get("content-type") ?? "", /javascript/);
-  for (const workflow of ["vendor", "refund", "access"]) {
-    const response = await fetch(`${base}/api/model?workflow=${workflow}`, {
+  const sessionResponse = await fetch(`${base}/api/auth/get-session`, {
+    signal: AbortSignal.timeout(15000),
+  });
+  assert.equal(
+    sessionResponse.status,
+    200,
+    "Authentication must be configured before staging is ready",
+  );
+  assert.equal(
+    await sessionResponse.json(),
+    null,
+    "Anonymous requests must not have a session",
+  );
+  for (const path of [
+    "/api/model?workflow=vendor",
+    "/api/model?workflow=refund",
+    "/api/model?workflow=access",
+    "/api/context",
+  ]) {
+    const response = await fetch(`${base}${path}`, {
       signal: AbortSignal.timeout(15000),
     });
-    assert.equal(response.status, 200);
-    const snapshot = await response.json();
-    assert.equal(snapshot.workflow.id, workflow);
-    assert.equal(snapshot.model.stats.cases, 24, "Baseline seed must exist");
-    assert.ok(
-      snapshot.model.edges.length > 0,
-      "Process graph must have evidence",
-    );
+    assert.equal(response.status, 401, "Process data must require login");
   }
   console.log(
-    `PASS: ${base} serves ${environment} ${health.revision}; TLS, D1, app bundle, and all workflow baselines verified.`,
+    `PASS: ${base} serves ${environment} ${health.revision}; TLS, D1, app bundle, auth availability, and anonymous data protection verified.`,
   );
 }
 // Allow time for a new custom domain or Worker revision to become available.

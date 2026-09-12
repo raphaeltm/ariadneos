@@ -12,18 +12,18 @@ import "./marketing.css";
 const steps = [
   {
     icon: MessageSquare,
-    title: "Start with the conversation",
     text: "Requests, decisions, and handoffs already happen in Slack. That’s where our integration starts.",
+    title: "Start with the conversation",
   },
   {
     icon: GitBranch,
-    title: "Find the path through it",
     text: "Bring those moments into a process view. See the common route, the detours, and where work waits.",
+    title: "Find the path through it",
   },
   {
     icon: Waypoints,
-    title: "Give the next step context",
     text: "Help people and agents understand how work moves, with observations behind the bigger picture.",
+    title: "Give the next step context",
   },
 ];
 
@@ -34,7 +34,7 @@ export default function Homepage() {
         Skip to content
       </a>
       <header className="marketing-nav">
-        <a className="marketing-brand" href="/" aria-label="AriadneOS home">
+        <a aria-label="AriadneOS home" className="marketing-brand" href="/">
           <span className="marketing-mark">
             A<span />
           </span>
@@ -53,7 +53,7 @@ export default function Homepage() {
         </nav>
       </header>
       <main id="main">
-        <section className="marketing-hero" aria-labelledby="hero-title">
+        <section aria-labelledby="hero-title" className="marketing-hero">
           <div className="marketing-hero-copy">
             <span className="marketing-kicker">
               <span /> PROCESS INTELLIGENCE, STARTING IN SLACK
@@ -81,9 +81,9 @@ export default function Homepage() {
               Interactive demo · Simulated data · No setup needed
             </span>
           </div>
-          <div
-            className="marketing-preview"
+          <figure
             aria-label="Illustrative example of a Slack conversation becoming a process map"
+            className="marketing-preview"
           >
             <div className="marketing-preview-label">
               <span className="marketing-kicker">FROM THE THREAD</span>
@@ -167,7 +167,7 @@ export default function Homepage() {
             <div className="marketing-preview-foot">
               The work is already there. Follow its thread.
             </div>
-          </div>
+          </figure>
         </section>
         <section className="marketing-principle" id="why-slack">
           <span className="marketing-kicker">
@@ -184,9 +184,9 @@ export default function Homepage() {
           </div>
         </section>
         <section
+          aria-labelledby="how-title"
           className="marketing-how"
           id="how-it-works"
-          aria-labelledby="how-title"
         >
           <div className="marketing-section-heading">
             <span className="marketing-kicker">FOLLOW THE WORK</span>
@@ -205,7 +205,7 @@ export default function Homepage() {
               <article key={title}>
                 <div className="marketing-step-top">
                   <Icon size={24} />
-                  <span>0{index + 1}</span>
+                  <span className="marketing-step-number">0{index + 1}</span>
                 </div>
                 <h3>{title}</h3>
                 <p>{text}</p>

@@ -133,4 +133,12 @@ A realistic hackathon demo would be:
 5. Give an agent access to the discovered model.
 6. Have the agent explain or reproduce one workflow.
 
+## Development workflow
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for PR checks, review gates, and deployment evidence. Humans and agents keep decisions, validation, and handoffs in [work items](docs/work-items/README.md); agents start with [AGENTS.md](AGENTS.md).
 See the [proposed Cloudflare stack](docs/cloudflare-stack.md) for researched technology choices, connector constraints, and a one-day implementation plan.
+
+## Research
+
+See the [research index](research/README.md) for integration explorations,
+including [Exa and CopilotKit](research/exa-copilotkit/README.md).

@@ -1,6 +1,6 @@
 # API Routes Bindings And Auth
 
-Status: in-progress
+Status: in-review
 Owner: Codex via SAM task 01M2AWQMS35X4SSNBS3V2C8P58 for Raphael
 Source: GitHub issue #22 requests authenticated Hono route mounting for process snapshots, journal SSE streams, KB CRUD/read paths, curation actions, graph views, D1/DO bindings, and route-level validation/error handling.
 Branch: sam/implement-github-issue-22-2c8p58
@@ -26,6 +26,7 @@ Connect the merged process-mining foundations into the Worker route layer withou
 - Replaced the old thin `/api/snapshot` and `/api/stream` coordinator proxies in `server/index.ts` with the mounted process route layer while preserving health, auth, Slack, legacy simulation, model, context and ask routes.
 - Added D1 read adapters for scoped `pm_session`, `pm_message`, `pm_step`, `pm_step_evidence` and `pm_journal`, plus graph/conformance adapters over the merged pure mining modules.
 - Added `tests/process-routes.test.ts` covering unauthenticated rejection, foreign scope rejection, D1-backed snapshot success, pagination validation, curation status journal writes and SSE cursor/scope forwarding to a Durable Object stub.
+- PR: https://github.com/raphaeltm/ariadneos/pull/64.
 
 ## Validation
 - `npm ci` passed and installed locked dependencies.
@@ -44,4 +45,4 @@ Connect the merged process-mining foundations into the Worker route layer withou
 - Rollback is a code revert; no schema or Wrangler binding changes are included in this route-layer PR.
 
 ## Next steps
-- Open the PR with `Closes #22`, link this work item, monitor CI, skip staging verification per user instruction for this time-critical task, and merge only when required checks are green.
+- Monitor PR #64 CI, skip staging verification per user instruction for this time-critical task, and merge only when required checks are green.

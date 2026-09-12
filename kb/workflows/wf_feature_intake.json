@@ -1,0 +1,122 @@
+{
+  "activities": [
+    {
+      "label": "Capture request",
+      "role": "pm",
+      "slug": "capture_request",
+      "synonyms": ["capture request", "log request", "new ask", "intake"]
+    },
+    {
+      "label": "Qualify business case",
+      "role": "cpo",
+      "slug": "qualify_business_case",
+      "synonyms": [
+        "qualify business case",
+        "business case",
+        "why this matters",
+        "value check"
+      ]
+    },
+    {
+      "label": "Estimate effort",
+      "role": "eng",
+      "slug": "estimate_effort",
+      "synonyms": [
+        "estimate effort",
+        "size the work",
+        "engineering estimate",
+        "t-shirt size"
+      ]
+    },
+    {
+      "label": "Roadmap review",
+      "role": "cpo",
+      "slug": "roadmap_review",
+      "synonyms": [
+        "roadmap review",
+        "CPO review",
+        "planning review",
+        "roadmap gate"
+      ]
+    },
+    {
+      "label": "Executive approval",
+      "role": "ceo",
+      "slug": "exec_approval",
+      "synonyms": [
+        "exec approval",
+        "CEO approval",
+        "Dana signoff",
+        "executive signoff"
+      ]
+    },
+    {
+      "label": "Update roadmap",
+      "role": "cpo",
+      "slug": "update_roadmap",
+      "synonyms": [
+        "update roadmap",
+        "move roadmap",
+        "schedule it",
+        "roadmap change"
+      ]
+    },
+    {
+      "label": "Communicate decision",
+      "role": "pm",
+      "slug": "communicate_decision",
+      "synonyms": [
+        "communicate decision",
+        "tell Vertex",
+        "send decision",
+        "customer decision"
+      ]
+    },
+    {
+      "label": "Create epic",
+      "role": "pmo",
+      "slug": "create_epic",
+      "synonyms": ["create epic", "open epic", "make the epic", "delivery epic"]
+    }
+  ],
+  "entry_activity": "capture_request",
+  "exit_activities": ["communicate_decision", "create_epic"],
+  "id": "wf_feature_intake",
+  "matrix": [
+    [0, 1, 0, 0, 0, 0, 0, 0],
+    [0, 0, 1, 0, 0, 0, 0, 0],
+    [0, 0, 0, 1, 0, 0, 0, 0],
+    [0, 0, 0, 0, 1, 0.4, 0, 0],
+    [0, 0, 0, 0, 0, 1, 0, 0],
+    [0, 0, 0, 0, 0, 0, 1, 0],
+    [0, 0, 0, 0, 0, 0, 0, 1],
+    [0, 0, 0, 0, 0, 0, 0, 0]
+  ],
+  "name": "Atlas feature intake",
+  "policy_ids": ["pol_roadmap_review", "pol_exec_threshold"],
+  "project_id": "proj_atlas",
+  "threshold_inputs": [
+    {
+      "field": "effort_days",
+      "source": "step",
+      "type": "number",
+      "unit": "engineer_days"
+    },
+    {
+      "field": "request_arr.amount",
+      "source": "artifact",
+      "type": "number",
+      "unit": "eur_arr"
+    },
+    {
+      "field": "planning_lock_date",
+      "source": "project",
+      "type": "date"
+    },
+    {
+      "field": "request_date",
+      "source": "step",
+      "type": "date"
+    }
+  ]
+}

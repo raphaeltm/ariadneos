@@ -1,0 +1,29 @@
+[
+  {
+    "advanced_by_roles": ["support", "eng"],
+    "states": [
+      "detected",
+      "triaged",
+      "owned",
+      "mitigated",
+      "resolved",
+      "post_mortemed"
+    ],
+    "type": "incident"
+  },
+  {
+    "advanced_by_roles": ["pm", "cpo", "ceo"],
+    "states": ["captured", "qualified", "estimated", "approved", "scheduled"],
+    "type": "ticket"
+  },
+  {
+    "advanced_by_roles": ["support", "eng", "pm", "cpo", "ceo", "pmo"],
+    "states": ["draft", "reviewed", "published"],
+    "type": "doc"
+  },
+  {
+    "advanced_by_roles": ["cpo", "ceo"],
+    "states": ["proposed", "approved", "signed"],
+    "type": "contract"
+  }
+]

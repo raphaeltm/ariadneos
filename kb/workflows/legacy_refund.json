@@ -1,0 +1,52 @@
+{
+  "activities": [
+    {
+      "label": "Refund requested",
+      "role": "Support",
+      "slug": "refund_requested",
+      "synonyms": ["refund requested", "customer refund", "refund ask"]
+    },
+    {
+      "label": "Eligibility checked",
+      "role": "Support",
+      "slug": "eligibility_checked",
+      "synonyms": [
+        "eligibility checked",
+        "check eligibility",
+        "refund eligibility"
+      ]
+    },
+    {
+      "label": "Escalated",
+      "role": "Team lead",
+      "slug": "escalated",
+      "synonyms": ["escalated", "manager escalation", "needs lead"]
+    },
+    {
+      "label": "Refund issued",
+      "role": "Finance",
+      "slug": "refund_issued",
+      "synonyms": ["refund issued", "processed refund", "money sent"]
+    },
+    {
+      "label": "Customer notified",
+      "role": "Support",
+      "slug": "customer_notified",
+      "synonyms": ["customer notified", "told customer", "sent refund notice"]
+    }
+  ],
+  "entry_activity": "refund_requested",
+  "exit_activities": ["customer_notified"],
+  "id": "legacy_refund",
+  "matrix": [
+    [0, 1, 0.2, 0, 0],
+    [0, 0, 0.3, 1, 0],
+    [0, 1, 0, 1, 0],
+    [0, 0, 0, 0, 1],
+    [0, 0, 0, 0, 0]
+  ],
+  "name": "Legacy customer refunds",
+  "policy_ids": [],
+  "project_id": null,
+  "threshold_inputs": []
+}

@@ -6,9 +6,6 @@ import {
   ArrowRight,
   ArrowUpRight,
   Check,
-  ChevronDown,
-  ChevronRight,
-  CircleHelp,
   Clock3,
   GitBranch,
   Layers3,
@@ -28,6 +25,9 @@ import {
   type WorkflowId,
   workflows,
 } from "../shared/process.ts";
+import AppShell, {
+  type AppShellView,
+} from "./components/app-shell/app-shell.tsx";
 import ProcessGraph from "./process-graph.tsx";
 
 interface Selection {
@@ -77,6 +77,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [tab, setTab] = useState("map");
+  const [shellView, setShellView] = useState<AppShellView>("graph");
+  const [workspace, setWorkspace] = useState("demo");
   const [selection, setSelection] = useState<Selection>();
   const [caseId, setCaseId] = useState<string>();
   const [search, setSearch] = useState("");
@@ -193,215 +195,154 @@ export default function App() {
   function chooseWorkflow(id: WorkflowId) {
     setWorkflow(id);
     setTab("map");
+    setShellView("graph");
     setNotice("");
   }
+  function navigateShell(view: AppShellView) {
+    setShellView(view);
+    setTab(view === "settings" ? "settings" : "map");
+  }
+  const projectOptions = workflows.map((item) => ({
+    id: item.id,
+    label: item.name,
+  }));
+  const workspaceOptions = [
+    {
+      detail: "Demo workspace",
+      id: "demo",
+      label: "Acme Studio",
+    },
+  ];
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <a aria-label="AriadneOS home" className="brand" href="/">
-          <span className="brand-mark">
-            A<span />
-          </span>
-          <span>
-            Ariadne<span className="brand-os">OS</span>
-          </span>
-        </a>
-        <button
-          className="workspace"
-          onClick={() => setInfo(true)}
-          type="button"
-        >
-          <span className="workspace-icon">A</span>
-          <span>
-            Acme Studio<small>Demo workspace</small>
-          </span>
-          <ChevronDown size={15} />
-        </button>
-        <div className="nav-caption">WORKSPACE</div>
-        <button
-          className={`nav-item ${tab === "events" ? "" : "active"}`}
-          onClick={() => setTab("map")}
-          type="button"
-        >
-          <Waypoints size={18} />
-          Process explorer
-          <span className="nav-dot" />
-        </button>
-        <button
-          className={`nav-item ${tab === "events" ? "active" : ""}`}
-          onClick={() => {
-            setSelection(undefined);
-            setCaseId(undefined);
-            setTab("events");
-          }}
-          type="button"
-        >
-          <Activity size={18} />
-          Event stream
-        </button>
-        <button
-          className="nav-item"
-          onClick={() => setInfo(true)}
-          type="button"
-        >
-          <Layers3 size={18} />
-          Sources<span className="count-pill">1</span>
-        </button>
-        <div className="nav-caption workflow-caption">
-          DISCOVERED PROCESSES <span>3</span>
-        </div>
-        <div className="workflow-links">
-          {workflows.map((w, i) => (
+    <AppShell
+      accountMenu={<AccountMenu />}
+      activeProjectId={workflow}
+      activeView={tab === "settings" ? "settings" : shellView}
+      activeWorkspaceId={workspace}
+      connectionLabel="Demo environment"
+      onAbout={() => setInfo(true)}
+      onNavigate={navigateShell}
+      onProjectChange={(id) => chooseWorkflow(id as WorkflowId)}
+      onWorkspaceChange={setWorkspace}
+      primaryAction={
+        <CompactRunButton
+          busy={busy}
+          loading={loading}
+          onRun={run}
+          remainingRuns={data?.remainingRuns}
+        />
+      }
+      projectOptions={projectOptions}
+      sidebarAction={
+        <SidebarRunCard
+          busy={busy}
+          loading={loading}
+          onRun={run}
+          remainingRuns={data?.remainingRuns}
+        />
+      }
+      workspaceOptions={workspaceOptions}
+    >
+      <main>
+        <div className="page-heading">
+          <div>
+            <div className="eyebrow">
+              <span />
+              PROCESS INTELLIGENCE
+            </div>
+            <h1>Follow the work.</h1>
+            <p>
+              Your organization’s activity, connected into a living process.
+            </p>
+          </div>
+          <div className="heading-actions">
             <button
-              className={`workflow-link ${workflow === w.id ? "current" : ""}`}
-              key={w.id}
-              onClick={() => chooseWorkflow(w.id)}
+              className="button secondary"
+              disabled={!data || loading}
+              onClick={exportModel}
               type="button"
             >
-              <span className={`workflow-dot dot-${i}`} />
-              {w.name}
+              <ArrowDownToLine size={16} />
+              Export model
             </button>
-          ))}
-        </div>
-        <div className="sidebar-bottom">
-          <div className="demo-note">
-            <span className="demo-orbit">
-              <Sparkles size={19} />
-            </span>
-            <strong>A little work. A bigger picture.</strong>
-            <p>Simulate activity and watch the hidden process emerge.</p>
             <button
+              className="button primary"
               disabled={busy || loading || data?.remainingRuns === 0}
               onClick={run}
               type="button"
             >
-              Run a simulation <ArrowUpRight size={15} />
+              {busy ? (
+                <LoaderCircle className="spin" size={16} />
+              ) : (
+                <Play fill="currentColor" size={14} />
+              )}
+              {busy ? "Observing…" : "Simulate activity"}
             </button>
           </div>
-          <button
-            className="help-link"
-            onClick={() => setInfo(true)}
-            type="button"
-          >
-            <CircleHelp size={17} />
-            About this demo
-            <ArrowUpRight size={14} />
-          </button>
         </div>
-      </aside>
-      <div className="main-shell">
-        <header className="topbar">
-          <div className="breadcrumbs">
-            Workspace <ChevronRight size={13} />
-            <span>Process explorer</span>
+        {Boolean(error) && (
+          <div className="banner error" role="alert">
+            {error}
+            <button onClick={() => setRefresh((x) => x + 1)} type="button">
+              Retry
+            </button>
           </div>
-          <div className="topbar-right">
-            <span className="live-label">
-              <span className="online-dot" />
-              Demo environment
-            </span>
+        )}
+        {Boolean(notice) && (
+          <div className="banner success" role="status">
+            <Check size={16} />
+            {notice}
             <button
-              aria-label="About AriadneOS"
-              className="icon-button"
-              onClick={() => setInfo(true)}
+              aria-label="Dismiss notification"
+              onClick={() => setNotice("")}
               type="button"
             >
-              <CircleHelp size={18} />
+              <X size={14} />
             </button>
-            <AccountMenu />
           </div>
-        </header>
-        <main>
-          <div className="page-heading">
-            <div>
-              <div className="eyebrow">
-                <span />
-                PROCESS INTELLIGENCE
-              </div>
-              <h1>Follow the work.</h1>
-              <p>
-                Your organization’s activity, connected into a living process.
-              </p>
+        )}
+        <WorkspaceStatus
+          loading={loading}
+          onReload={() => setRefresh((x) => x + 1)}
+          ready={Boolean(model && data)}
+        />
+        {!loading && model !== undefined && data !== null && (
+          <>
+            <div className="stats-row">
+              <Stat
+                icon={<Activity size={17} />}
+                label="Observed events"
+                sub="Every action, accounted for"
+                value={model.stats.events.toLocaleString()}
+              />
+              <Stat
+                icon={<Layers3 size={17} />}
+                label="Process cases"
+                sub="Individual workflow journeys"
+                value={String(model.stats.cases)}
+              />
+              <Stat
+                icon={<GitBranch size={17} />}
+                label="Discovered variants"
+                sub="Different paths through the work"
+                value={String(model.stats.variants).padStart(2, "0")}
+              />
+              <Stat
+                icon={<Clock3 size={17} />}
+                label="Median cycle time"
+                sub="First observation to last"
+                value={duration(model.stats.medianMinutes)}
+              />
             </div>
-            <div className="heading-actions">
-              <button
-                className="button secondary"
-                disabled={!data || loading}
-                onClick={exportModel}
-                type="button"
-              >
-                <ArrowDownToLine size={16} />
-                Export model
-              </button>
-              <button
-                className="button primary"
-                disabled={busy || loading || data?.remainingRuns === 0}
-                onClick={run}
-                type="button"
-              >
-                {busy ? (
-                  <LoaderCircle className="spin" size={16} />
-                ) : (
-                  <Play fill="currentColor" size={14} />
-                )}
-                {busy ? "Observing…" : "Simulate activity"}
-              </button>
-            </div>
-          </div>
-          {Boolean(error) && (
-            <div className="banner error" role="alert">
-              {error}
-              <button onClick={() => setRefresh((x) => x + 1)} type="button">
-                Retry
-              </button>
-            </div>
-          )}
-          {Boolean(notice) && (
-            <div className="banner success" role="status">
-              <Check size={16} />
-              {notice}
-              <button
-                aria-label="Dismiss notification"
-                onClick={() => setNotice("")}
-                type="button"
-              >
-                <X size={14} />
-              </button>
-            </div>
-          )}
-          <WorkspaceStatus
-            loading={loading}
-            onReload={() => setRefresh((x) => x + 1)}
-            ready={Boolean(model && data)}
-          />
-          {!loading && model !== undefined && data !== null && (
-            <>
-              <div className="stats-row">
-                <Stat
-                  icon={<Activity size={17} />}
-                  label="Observed events"
-                  sub="Every action, accounted for"
-                  value={model.stats.events.toLocaleString()}
-                />
-                <Stat
-                  icon={<Layers3 size={17} />}
-                  label="Process cases"
-                  sub="Individual workflow journeys"
-                  value={String(model.stats.cases)}
-                />
-                <Stat
-                  icon={<GitBranch size={17} />}
-                  label="Discovered variants"
-                  sub="Different paths through the work"
-                  value={String(model.stats.variants).padStart(2, "0")}
-                />
-                <Stat
-                  icon={<Clock3 size={17} />}
-                  label="Median cycle time"
-                  sub="First observation to last"
-                  value={duration(model.stats.medianMinutes)}
-                />
-              </div>
+            {tab === "settings" ? (
+              <SettingsPanel
+                data={data}
+                onAbout={() => setInfo(true)}
+                onReload={() => setRefresh((x) => x + 1)}
+                workflow={workflow}
+                workspace={workspace}
+              />
+            ) : (
               <section className="explorer">
                 <div className="explorer-header">
                   <div className="process-title">
@@ -466,6 +407,7 @@ export default function App() {
                             onSelect={(s) => {
                               setSelection(s);
                               setCaseId(undefined);
+                              setShellView("inspector");
                             }}
                             selected={selection?.id}
                           />
@@ -544,6 +486,8 @@ export default function App() {
                   />
                 </div>
               </section>
+            )}
+            {tab !== "settings" && (
               <div className="bottom-grid">
                 <section className="recent-card">
                   <div className="card-heading">
@@ -585,24 +529,82 @@ export default function App() {
                   setTab={setTab}
                 />
               </div>
-              <footer>
-                <span>
-                  <span className="online-dot" />
-                  Observed. Connected. Understood.
-                </span>
-                <span>
-                  AriadneOS preview <span>·</span> {data.remainingRuns}{" "}
-                  simulation runs left
-                </span>
-              </footer>
-            </>
-          )}
-        </main>
-      </div>
+            )}
+            <footer>
+              <span>
+                <span className="online-dot" />
+                Observed. Connected. Understood.
+              </span>
+              <span>
+                AriadneOS preview <span>·</span> {data.remainingRuns} simulation
+                runs left
+              </span>
+            </footer>
+          </>
+        )}
+      </main>
       {info ? <AboutDialog onClose={() => setInfo(false)} /> : null}
+    </AppShell>
+  );
+}
+
+function CompactRunButton({
+  busy,
+  loading,
+  onRun,
+  remainingRuns,
+}: {
+  busy: boolean;
+  loading: boolean;
+  onRun: () => void;
+  remainingRuns: number | undefined;
+}) {
+  return (
+    <button
+      className="button topbar-action"
+      disabled={busy || loading || remainingRuns === 0}
+      onClick={onRun}
+      type="button"
+    >
+      {busy ? (
+        <LoaderCircle className="spin" size={16} />
+      ) : (
+        <Play fill="currentColor" size={13} />
+      )}
+      Run
+    </button>
+  );
+}
+
+function SidebarRunCard({
+  busy,
+  loading,
+  onRun,
+  remainingRuns,
+}: {
+  busy: boolean;
+  loading: boolean;
+  onRun: () => void;
+  remainingRuns: number | undefined;
+}) {
+  return (
+    <div className="demo-note">
+      <span className="demo-orbit">
+        <Sparkles size={19} />
+      </span>
+      <strong>A little work. A bigger picture.</strong>
+      <p>Simulate activity and watch the hidden process emerge.</p>
+      <button
+        disabled={busy || loading || remainingRuns === 0}
+        onClick={onRun}
+        type="button"
+      >
+        Run a simulation <ArrowUpRight size={15} />
+      </button>
     </div>
   );
 }
+
 function Stat({
   label,
   value,
@@ -901,6 +903,67 @@ function Inspector({
         </button>
       </div>
     </aside>
+  );
+}
+
+function SettingsPanel({
+  data,
+  workflow,
+  workspace,
+  onAbout,
+  onReload,
+}: {
+  data: Snapshot;
+  workflow: WorkflowId;
+  workspace: string;
+  onAbout: () => void;
+  onReload: () => void;
+}) {
+  const workspaceLabel = workspace === "demo" ? "Acme Studio" : workspace;
+  return (
+    <section className="settings-panel">
+      <div>
+        <div className="section-kicker">WORKSPACE SETTINGS</div>
+        <h2>Demo workspace controls</h2>
+        <p>
+          Scope, source, and navigation state for the current process explorer.
+        </p>
+      </div>
+      <div className="settings-grid">
+        <article>
+          <span>Workspace</span>
+          <strong>{workspaceLabel}</strong>
+          <small>Synthetic observations · Slack auth gated</small>
+        </article>
+        <article>
+          <span>Project</span>
+          <strong>{data.workflow.name}</strong>
+          <small>
+            {workflow} · {data.workflow.description}
+          </small>
+        </article>
+        <article>
+          <span>Data source</span>
+          <strong>Simulation harness</strong>
+          <small>{data.remainingRuns} simulation runs left</small>
+        </article>
+        <article>
+          <span>Client state</span>
+          <strong>Scoped updates</strong>
+          <small>
+            Selection and view state stay inside the active workspace
+          </small>
+        </article>
+      </div>
+      <div className="settings-actions">
+        <button className="button secondary" onClick={onReload} type="button">
+          Reload workspace
+        </button>
+        <button className="button secondary" onClick={onAbout} type="button">
+          About this demo <ArrowUpRight size={14} />
+        </button>
+      </div>
+    </section>
   );
 }
 

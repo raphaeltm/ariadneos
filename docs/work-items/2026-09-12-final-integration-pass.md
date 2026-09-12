@@ -23,6 +23,7 @@ Bring the currently merged Roman-spec features together on the latest `main`: fi
 - Keep `/api/ask` wired through the existing workflow-backed agent memory route for this pass. The app maps the Helios and Atlas process workspaces to the current seeded workflows so the Mastra/OpenRouter runtime path remains callable and still falls back deterministically without live credentials.
 - Implement `/api/sim/run` on top of the existing demo transcript generator, readiness gate, process persistence, conformance recalculation and graph projection instead of adding a frontend-only simulator path, so demo mode exercises the production snapshot pipeline.
 - Store non-secret local/staging/production demo Slack scope defaults in `wrangler.jsonc`; without these values the live snapshot route has no configured channel scope in the local worker harness.
+- Treat a staging `/api/agent/smoke` 429 `budget_exhausted` response as an acceptable readiness result only after `/api/agent/status` proves the runtime is enabled and an OpenRouter key is configured. The smoke endpoint uses a shared budget, so exhausting that guard should not fail an otherwise healthy deployment.
 
 ## Changes
 - Replaced the `/app` placeholder with a live app shell that loads settings, fetches `/api/snapshot`, subscribes to `/api/stream`, renders the React Flow process graph, opens the inspector with evidence and conformance details, exposes curation accept/reject controls, shows activity evidence, switches workspaces and routes settings through the shell. After merging newer main heads, kept the live API path integrated with the guided walkthrough, how-it-works entry point, canvas accessibility updates, graph editing surface, inspector refinements and agent chat panel from the other completed tasks.
@@ -31,6 +32,7 @@ Bring the currently merged Roman-spec features together on the latest `main`: fi
 - Added the dedicated Agent chat shell view using the existing `/api/ask` route so the agent memory and model runtime remain callable from the live process workspace. The client maps Roman workflow IDs such as `wf_p1_incident` to the current legacy agent-memory workflow ids accepted by `/api/ask`.
 - Added the Activity shell view, retained the graph editing toolbar against the live `/api/model/edit` route, and adjusted the graph/browser checks for the merged canvas accessible name and sidebar layout. Activity now defaults to all sessions unless a case is explicitly selected, so evidence jumps do not land on an empty newest-session filter.
 - Added process route coverage for simulator persistence and snapshot refresh, and updated browser E2E coverage around settings, project switching, persisted demo mode, graph selection, activity evidence, agent chat streaming and sign-out session rejection.
+- Adjusted deployment readiness so staging still verifies agent configuration and accepts the structured `budget_exhausted` smoke response when the shared OpenRouter smoke budget has already been consumed.
 
 ## Validation
 - `git merge --ff-only origin/main`: passed; branch was already up to date with `origin/main` at task start.
@@ -50,11 +52,16 @@ Bring the currently merged Roman-spec features together on the latest `main`: fi
 - `npm run test:e2e`: passed on the final source; isolated API smoke and 14 Chromium browser tests passed, including `/app` settings, persisted demo mode, activity evidence, guided walkthrough, project switching, canvas keyboard selection, agent chat streaming and sign-out rejection.
 - `npm run check:repo`: passed with Ruff 0.16.7 installed locally for the required Python checks; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 14 browser tests all passed.
 - `python3 scripts/check_quality.py`: passed with the same locked Ruff 0.16.7 on PATH; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 14 browser tests all passed.
+- PR #84 staging deployment previously failed after the app deployed because `/api/agent/smoke` returned 429 `budget_exhausted`; the readiness script now treats that structured shared-budget response as acceptable only after status confirms staging agent runtime configuration.
+- After the deployment readiness change, `npm run check`: passed; lint, typecheck, fixture validation, 200 coverage tests, guardrails, migration check and production build all passed.
+- After the deployment readiness change, `npm run check:repo`: passed; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 14 browser tests all passed.
+- After the deployment readiness change, `python3 scripts/check_quality.py`: passed; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 14 browser tests all passed.
 
 ## Risks and rollback
 - Graph editing and agent chat landed on `origin/main` while this PR was open and are now integrated into the live app shell. The graph edit payload bridge is intentionally narrow and translates canvas ids to workflow slugs for the current `/api/model/edit` route.
 - The agent chat bridge uses the current seeded legacy workflow IDs as a compatibility layer for `/api/ask`. If a later backend adds project-native agent memory endpoints, the bridge should be replaced with that API.
+- Staging readiness now accepts only the structured `budget_exhausted` response from `/api/agent/smoke`; any other non-200 smoke response still fails, and agent status must still prove the route is enabled and keyed.
 - Rollback is a PR revert of this integration branch. The only new migration in the final branch is the graph-edits migration already merged from `origin/main`.
 
 ## Next steps
-- Push the final merge-resolution commit, wait for PR #84 mergeability/CI to refresh, then merge to `main` if branch protection permits.
+- Push the final deployment-readiness commit, wait for PR #84 mergeability/CI to refresh, then merge to `main` if branch protection permits.

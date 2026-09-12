@@ -34,7 +34,9 @@ Add D1-backed persistence for authored KB state and deterministic graph revision
 - `npm run check`: passed; lint, typecheck, fixture validation, 109 coverage tests, guardrail probes, migration smoke and production build.
 - `PATH=/workspaces/ariadneos/.local-tools/ruff-x86_64-unknown-linux-gnu:$PATH npm run check:repo`: passed after installing Ruff 0.16.7 and Playwright Chromium in the environment; includes Python work-item tests, all work-item context, Ruff, full app check, dependency audit, isolated Worker/D1 smoke with all seven migrations, and 5 Chromium browser tests.
 - `PATH=/workspaces/ariadneos/.local-tools/ruff-x86_64-unknown-linux-gnu:$PATH python3 scripts/check_quality.py`: passed with the same full quality suite.
+- `python3 scripts/check_work_items.py --base origin/main`: passed after staging this work item locally.
 - Earlier `npm run check:repo` attempts failed only on missing local tooling: first `ruff` was absent, then Playwright Chromium was absent. Both were installed before the passing rerun.
+- PR #63 initial Work item context failed because the PR body used an inline-code path instead of a Markdown link. Updated the PR body to link `[docs/work-items/2026-09-12-d1-graph-kb-persistence.md](docs/work-items/2026-09-12-d1-graph-kb-persistence.md)`.
 
 ## Risks and rollback
 - Risk: the live GitHub issue #18 title/body does not match this assignment text. Reviewers should verify whether `Closes #18` is still desired before merge.
@@ -42,4 +44,4 @@ Add D1-backed persistence for authored KB state and deterministic graph revision
 - Rollback: revert this PR; planned changes are additive migrations, isolated persistence helpers and tests.
 
 ## Next steps
-- Run the direct `python3 scripts/check_quality.py` command requested by the user, open a PR with `Closes #18`, monitor CI, and merge only after required checks are green. Staging verification is intentionally skipped per the user's explicit instruction for this time-critical task.
+- Monitor PR #63 CI and merge only after required checks are green. Staging verification is intentionally skipped per the user's explicit instruction for this time-critical task.

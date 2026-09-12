@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ariadneos-demo",
+  "main": "server/index.ts",
+  "compatibility_date": "2026-09-12",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"],
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ariadneos-demo",
+      "database_id": "ac5322ab-e51d-4d27-b4dc-5c69b6a8e979",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "ai": { "binding": "AI" },
+  "observability": { "enabled": true },
+  "triggers": { "crons": ["17 3 * * *"] },
+  "limits": { "cpu_ms": 50 },
+}

@@ -1,0 +1,35 @@
+{
+  "name": "ariadneos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build && wrangler dev",
+    "dev:ui": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "deploy": "npm run build && wrangler deploy",
+    "db:local": "wrangler d1 migrations apply ariadneos-demo --local",
+    "db:remote": "wrangler d1 migrations apply ariadneos-demo --remote"
+  },
+  "dependencies": {
+    "@dagrejs/dagre": "latest",
+    "@xyflow/react": "latest",
+    "hono": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.13",
+    "typescript": "latest",
+    "vite": "latest",
+    "vitest": "latest",
+    "wrangler": "latest"
+  }
+}

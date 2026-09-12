@@ -1,6 +1,6 @@
 # Post simulated personas into the real Slack channel
 
-Status: in review
+Status: in-review
 Owner: Claude (Opus 5), sponsored by Roman Grebnev
 Source: Session request — "can we implement the simulator". Verification of the existing code showed
 the inbound Slack path was complete but nothing in the repository ever called `chat.postMessage`, so

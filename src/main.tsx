@@ -1,5 +1,6 @@
 import React, { lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
+import AuthGate from "./auth-gate.tsx";
 import Homepage from "./homepage.tsx";
 import "./style.css";
 
@@ -22,7 +23,9 @@ createRoot(root).render(
           </div>
         }
       >
-        <App />
+        <AuthGate>
+          <App />
+        </AuthGate>
       </Suspense>
     ) : (
       <Homepage />

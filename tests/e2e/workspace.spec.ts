@@ -1,5 +1,27 @@
 import { expect, test } from "@playwright/test";
 
+test.beforeEach(async ({ context, baseURL }, testInfo) => {
+  const cookies: string[] = JSON.parse(
+    process.env.ARIADNE_BROWSER_COOKIES ?? "[]"
+  );
+  const cookie = cookies[testInfo.title.includes("signs out") ? 2 : 0];
+  if (!(cookie && baseURL)) {
+    throw new Error(
+      "Run browser tests through npm run test:e2e to provision real local sessions."
+    );
+  }
+  const separator = cookie.indexOf("=");
+  await context.addCookies([
+    {
+      httpOnly: true,
+      name: cookie.slice(0, separator),
+      sameSite: "Lax",
+      url: baseURL,
+      value: cookie.slice(separator + 1),
+    },
+  ]);
+});
+
 const CASE_COUNT = /Process cases/;
 const VENDOR = /Vendor onboarding/;
 const REFUND = /Customer refunds/;
@@ -58,4 +80,29 @@ test("refreshes persisted simulation results and exposes evidence", async ({
   await expect(page.getByRole("heading", { name: REFUND })).toBeVisible();
   await expect(cases).toHaveText("24");
   expect(errors).toEqual([]);
+});
+
+test("signs out and rejects the previous session", async ({
+  page,
+  context,
+}) => {
+  await page.goto("/app");
+  await expect(page.getByRole("heading", { name: VENDOR })).toBeVisible();
+  const before = await context.cookies();
+  const session = before.find(
+    (cookie) => cookie.name === "better-auth.session_token"
+  );
+  expect(session).toBeDefined();
+  await page.getByRole("button", { exact: true, name: "Sign out" }).click();
+  await expect(
+    page.getByRole("button", { name: "Sign in with Slack" })
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Sign in with Slack" })
+  ).toBeVisible();
+  const response = await page.request.get("/api/model", {
+    headers: { Cookie: `better-auth.session_token=${session?.value}` },
+  });
+  expect(response.status()).toBe(401);
 });

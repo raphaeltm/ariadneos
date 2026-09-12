@@ -4,6 +4,8 @@
   "main": "server/index.ts",
   "compatibility_date": "2026-09-12",
   "workers_dev": true,
+  "dev": { "host": "localhost" },
+  "compatibility_flags": ["nodejs_compat"],
   "routes": [
     {
       "pattern": "ariadneos.com",
@@ -39,6 +41,7 @@
   },
   "vars": {
     "APP_ENV": "production",
+    "BETTER_AUTH_URL": "https://ariadneos.com",
     "RELEASE_SHA": "local"
   },
   "env": {
@@ -64,6 +67,7 @@
       },
       "vars": {
         "APP_ENV": "staging",
+        "BETTER_AUTH_URL": "https://staging.ariadneos.com",
         "RELEASE_SHA": "local"
       },
       "triggers": {
@@ -96,6 +100,7 @@
       },
       "vars": {
         "APP_ENV": "production",
+        "BETTER_AUTH_URL": "https://ariadneos.com",
         "RELEASE_SHA": "local"
       },
       "triggers": {

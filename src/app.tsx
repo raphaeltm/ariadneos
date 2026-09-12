@@ -1,3 +1,4 @@
+import { AccountMenu } from "./auth-gate.tsx";
 import "@xyflow/react/dist/style.css";
 import {
   Activity,
@@ -286,13 +287,6 @@ export default function App() {
             About this demo
             <ArrowUpRight size={14} />
           </button>
-          <div className="profile">
-            <span className="avatar">AS</span>
-            <div>
-              Acme Studio<small>Exploration workspace</small>
-            </div>
-            <span className="online-dot" />
-          </div>
         </div>
       </aside>
       <div className="main-shell">
@@ -314,7 +308,7 @@ export default function App() {
             >
               <CircleHelp size={18} />
             </button>
-            <span className="avatar small">AS</span>
+            <AccountMenu />
           </div>
         </header>
         <main>

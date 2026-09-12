@@ -14,7 +14,7 @@ The longer-term idea is **process mining as context engineering for agents**. Ra
 
 A basic implementation is now included: interactive process maps, variants, event evidence, persistent simulations, JSON agent context, and Workers AI explanations. The homepage at `/` markets the Slack-focused product; the interactive application lives at `/app`. The demo uses a synthetic organization; live Slack ingestion is not connected yet.
 
-See [demo setup and verification](docs/demo.md) and [automatic staging/production deployment](docs/deployment.md).
+See [complete Slack and GitHub setup](docs/slack-setup.md), [demo setup and verification](docs/demo.md), and [automatic staging/production deployment](docs/deployment.md).
 
 ```sh
 npm ci

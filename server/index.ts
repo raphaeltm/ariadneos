@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { getCookie, setCookie } from "hono/cookie";
 import {
   type ActivityEvent,
   duration,
@@ -9,15 +8,17 @@ import {
   workflows,
 } from "../shared/process.ts";
 import { simulate } from "../shared/simulation.ts";
+import { type AuthEnv, authConfigured, createAuth } from "./auth.ts";
+import { type SlackEventsEnv, slackEvents } from "./slack-events.ts";
 
-interface Env {
+interface Env extends AuthEnv, SlackEventsEnv {
   AI: Ai;
   APP_ENV: string;
   ASSETS: Fetcher;
   DB: D1Database;
   RELEASE_SHA: string;
 }
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: { userId: string } }>();
 app.use("*", async (c, next) => {
   const url = new URL(c.req.url);
   if (
@@ -32,6 +33,7 @@ app.use("*", async (c, next) => {
   }
   return await next();
 });
+app.route("/api/slack/events", slackEvents);
 app.use(
   "/api/*",
   bodyLimit({
@@ -54,10 +56,6 @@ app.onError((err, c) => {
   console.error("API failure", err.message);
   return c.json({ error: "Something went wrong. Please try again." }, 500);
 });
-const SESSION_ID = /^[a-f0-9-]{36}$/;
-function sessionId(cookie: string | undefined) {
-  return cookie && SESSION_ID.test(cookie) ? cookie : "";
-}
 async function eventsFor(db: D1Database, workflow: string, session: string) {
   const rows = await db
     .prepare(
@@ -87,12 +85,31 @@ app.get("/api/health", async (c) => {
     storage: "D1",
   });
 });
+app.all("/api/auth/*", async (c) => {
+  if (!authConfigured(c.env)) {
+    return c.json({ error: "Slack login is not configured yet." }, 503);
+  }
+  return await createAuth(c.env).handler(c.req.raw);
+});
+app.use("/api/*", async (c, next) => {
+  if (!authConfigured(c.env)) {
+    return c.json({ error: "Slack login is not configured yet." }, 503);
+  }
+  const session = await createAuth(c.env).api.getSession({
+    headers: c.req.raw.headers,
+  });
+  if (!session) {
+    return c.json({ error: "Sign in with Slack to continue." }, 401);
+  }
+  c.set("userId", session.user.id);
+  return await next();
+});
 app.get("/api/model", async (c) => {
   const workflow = c.req.query("workflow") ?? "vendor";
   if (!isWorkflow(workflow)) {
     return c.json({ error: "Unknown workflow." }, 400);
   }
-  const sid = sessionId(getCookie(c, "ariadne_session"));
+  const sid = c.get("userId");
   const events = await eventsFor(c.env.DB, workflow, sid);
   const session = sid
     ? await c.env.DB.prepare("SELECT runs FROM sessions WHERE id=?")
@@ -113,13 +130,7 @@ app.get("/api/context", async (c) => {
   if (!isWorkflow(workflow)) {
     return c.json({ error: "Unknown workflow." }, 400);
   }
-  const model = mine(
-    await eventsFor(
-      c.env.DB,
-      workflow,
-      sessionId(getCookie(c, "ariadne_session"))
-    )
-  );
+  const model = mine(await eventsFor(c.env.DB, workflow, c.get("userId")));
   return c.json({
     limitations: [
       "Observed frequencies are not execution permissions.",
@@ -150,15 +161,16 @@ app.post("/api/simulate", async (c) => {
       429
     );
   }
-  let sid = sessionId(getCookie(c, "ariadne_session"));
+  const sid = c.get("userId");
   const found = sid
     ? await c.env.DB.prepare("SELECT id FROM sessions WHERE id=?")
         .bind(sid)
         .first()
     : null;
   if (!found) {
-    sid = crypto.randomUUID();
-    await c.env.DB.prepare("INSERT INTO sessions(id,created_at) VALUES (?,?)")
+    await c.env.DB.prepare(
+      "INSERT OR IGNORE INTO sessions(id,created_at) VALUES (?,?)"
+    )
       .bind(sid, Date.now())
       .run();
   }
@@ -169,7 +181,7 @@ app.post("/api/simulate", async (c) => {
     .first<{ runs: number }>();
   if (!reservation) {
     return c.json(
-      { error: "You have run all five simulations for this browser session." },
+      { error: "You have run all five simulations for this account." },
       429
     );
   }
@@ -195,13 +207,6 @@ app.post("/api/simulate", async (c) => {
       .run();
     throw error;
   }
-  setCookie(c, "ariadne_session", sid, {
-    httpOnly: true,
-    maxAge: 86_400,
-    path: "/",
-    sameSite: "Strict",
-    secure: new URL(c.req.url).protocol === "https:",
-  });
   return c.json({
     addedCases: 6,
     addedEvents: events.length,
@@ -230,11 +235,7 @@ app.post("/api/ask", async (c) => {
     );
   }
   const model = mine(
-    await eventsFor(
-      c.env.DB,
-      body.workflow ?? "",
-      sessionId(getCookie(c, "ariadne_session"))
-    )
+    await eventsFor(c.env.DB, body.workflow ?? "", c.get("userId"))
   );
   const summary = {
     nodes: model.nodes,

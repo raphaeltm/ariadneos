@@ -75,11 +75,31 @@ jobs:
         with:
           name: site-${{ github.sha }}
           path: dist
+      - name: Validate required deployment secrets
+        run: npx --no-install tsx scripts/deployment-config.ts check
+        env:
+          DEPLOY_ENV: staging
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
+          SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
       - name: Apply staging migrations
         run: npx --no-install wrangler d1 migrations apply DB --env staging --remote
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - name: Sync authentication and webhook secrets
+        run: npx --no-install tsx scripts/deployment-config.ts sync
+        env:
+          DEPLOY_ENV: staging
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
+          SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
       - name: Deploy staging
         run: npx --no-install wrangler deploy --env staging --var "APP_ENV:staging" --var "RELEASE_SHA:$GITHUB_SHA"
         env:
@@ -87,7 +107,9 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - name: Verify staging revision and readiness
         run: node scripts/check-deployment.mjs https://staging.ariadneos.com staging "$GITHUB_SHA"
-      - name: Verify staging simulation and isolation
+        env:
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+      - name: Verify staging anonymous access is blocked
         run: node scripts/smoke.mjs https://staging.ariadneos.com
 
   production:
@@ -111,11 +133,31 @@ jobs:
         with:
           name: site-${{ github.sha }}
           path: dist
+      - name: Validate required deployment secrets
+        run: npx --no-install tsx scripts/deployment-config.ts check
+        env:
+          DEPLOY_ENV: production
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
+          SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
       - name: Apply production migrations
         run: npx --no-install wrangler d1 migrations apply DB --env production --remote
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - name: Sync authentication and webhook secrets
+        run: npx --no-install tsx scripts/deployment-config.ts sync
+        env:
+          DEPLOY_ENV: production
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
+          SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
       - name: Deploy production
         run: npx --no-install wrangler deploy --env production --var "APP_ENV:production" --var "RELEASE_SHA:$GITHUB_SHA"
         env:
@@ -123,6 +165,8 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - name: Verify production revision and readiness
         run: node scripts/check-deployment.mjs https://ariadneos.com production "$GITHUB_SHA"
+        env:
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
       - name: Verify canonical redirect
         run: |
           node --input-type=module <<'JS'

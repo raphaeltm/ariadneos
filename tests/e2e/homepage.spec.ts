@@ -25,17 +25,17 @@ test("markets Slack without fetching app data and opens the explorer", async ({
     .click();
   await expect(page).toHaveURL(APP_URL);
   await expect(
-    page.getByText("Observed events", { exact: true })
+    page.getByRole("button", { name: "Sign in with Slack" })
   ).toBeVisible();
   await page.reload();
   await expect(
-    page.getByText("Observed events", { exact: true })
+    page.getByRole("button", { name: "Sign in with Slack" })
   ).toBeVisible();
-  await page.getByRole("link", { exact: true, name: "AriadneOS home" }).click();
+  await page.getByRole("link", { exact: true, name: "Ariadne OS" }).click();
   await expect(page.getByRole("heading", { name: HERO })).toBeVisible();
   await page.goto("/app/");
   await expect(
-    page.getByText("Observed events", { exact: true })
+    page.getByRole("button", { name: "Sign in with Slack" })
   ).toBeVisible();
 });
 

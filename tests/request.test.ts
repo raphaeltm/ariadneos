@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import worker from "../server/index.ts";
+
+vi.mock("../server/auth.ts", () => ({
+  authConfigured: () => true,
+  createAuth: () => ({
+    api: { getSession: async () => ({ user: { id: "test-user" } }) },
+  }),
+}));
 
 // These requests must be rejected before any storage or AI binding is used.
 const context = {} as ExecutionContext;

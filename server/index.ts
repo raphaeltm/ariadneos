@@ -783,7 +783,7 @@ function isValidAskBody(value: unknown): value is {
   );
 }
 
-function readAskWorkflow(value: unknown): string | null {
+function readAskWorkflow(value: unknown): WorkflowId | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }

@@ -71,7 +71,10 @@ test("refreshes persisted simulation results and exposes evidence", async ({
   await expect(cases).toHaveText("30");
   await page.reload();
   await expect(cases).toHaveText("30");
-  await page.locator(".react-flow__edge").first().click();
+  await expect(
+    page.getByRole("application", { name: "Process map nodes and edges" })
+  ).toBeVisible();
+  await page.locator(".react-flow__edge-interaction").first().click();
   await page.getByRole("button", { name: EVIDENCE }).click();
   await expect(page.locator(".events-panel .event-row").first()).toBeVisible();
   await page
@@ -174,7 +177,7 @@ test("supports keyboard selection and clearing on the process canvas", async ({
 }) => {
   await page.goto("/app");
   const canvas = page.getByRole("application", {
-    name: "Workflow graph nodes and edges",
+    name: "Process map nodes and edges",
   });
   await canvas.focus();
   await page.keyboard.press("ArrowRight");

@@ -1,3 +1,5 @@
+__pycache__/
+*.py[cod]
 node_modules/
 dist/
 .wrangler/
@@ -6,3 +8,8 @@ dist/
 .env.*
 !.env.example
 artifacts/
+coverage/
+.ruff_cache/
+.venv/
+test-results/
+playwright-report/

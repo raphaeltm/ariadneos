@@ -1,9 +1,11 @@
 # Exa and CopilotKit integration exploration
 
-Status: documentation prepared for PR; implementation not selected
+Status: done
+Owner: Research agent for the repository maintainer
+Source: User requested Exa/CopilotKit research and agent guidance; documentation merged in PR 6. Runtime implementation remains unselected.
 Branch: sam/integrate-exaai-copilotkitai-somehow-ht5kc8
 
-## Request and findings
+## Intent
 
 Explore integration ideas for AriadneOS. Reviewed README, demo documentation,
 frontend graph selection, and server context/ask/simulation routes. The existing
@@ -15,7 +17,7 @@ rendered evidence cards, and human review. Exa can retrieve external material
 relevant to an observed workflow step. These are proposals, not approved
 architecture decisions.
 
-## Suggested directions
+## Decisions and rationale
 
 1. Graph-aware process investigator: highlight handoffs, compare variants, and
    open supporting events from conversational requests (CopilotKit first).
@@ -31,7 +33,7 @@ architecture decisions.
 5. Workflow rehearsal: walk a user or agent through a discovered workflow in
    the sandbox, presenting research and review at the relevant steps.
 
-## Validation and limits
+## Validation
 
 Checked official documentation on 2026-09-12:
 - https://exa.ai/docs/reference/search
@@ -46,14 +48,14 @@ queries. Keep observed events, external sources, and proposed actions distinct.
 Observed behavior does not establish execution permission. CopilotKit needs an
 agent runtime/adapter; the current JSON ask endpoint is not an AG-UI stream.
 
-## Next step
+## Next steps
 
 Select a concept. For the vendor demo, reuse the process context endpoint,
 expose graph navigation tools, add server-side Exa retrieval, and show a sourced
 review packet plus a proposed next handoff. Start with synthetic cases and
 public vendor documentation.
 
-## Research folder follow-up
+## Changes
 
 User requested Markdown research, Claude/Codex housekeeping guidance, and a PR
 merged when green. Created research/README.md, shared research/AGENTS.md guidance,
@@ -72,3 +74,13 @@ tests and npm run build passed type checking and the production build. GitHub
 PR gates must pass before merging. No runtime/configuration changes.
 Next step: merge this documentation PR once all applicable checks pass; runtime
 integration remains a separate product decision.
+
+## Acceptance criteria
+- Record integration proposals with official-source evidence and explicit limits.
+- Organize research and agent guidance in Markdown and publish the documentation PR.
+
+## Risks and rollback
+No runtime integration is delivered by this research. Revert the documentation commit to remove the proposal; select and validate an implementation separately.
+
+## Quality-workflow integration note
+PR 6 merged as b199b1e. The quality-workflow agent normalized headings and metadata to the shared work-item schema; the original research claims and dated validation above are preserved. References above to merging the research PR describe the earlier handoff and are now complete.

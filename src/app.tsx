@@ -13,10 +13,13 @@ import {
   ExternalLink,
   GitBranch,
   Layers3,
+  Link2,
   LoaderCircle,
   MonitorPlay,
   Pause,
   Play,
+  Plus,
+  Redo2,
   RefreshCw,
   RotateCcw,
   Search,
@@ -25,11 +28,15 @@ import {
   SlidersHorizontal,
   Sparkles,
   Square,
+  Trash2,
+  Undo2,
+  Unlink,
   Waypoints,
   X,
 } from "lucide-react";
 import {
   type Dispatch,
+  type RefObject,
   type SetStateAction,
   useCallback,
   useEffect,
@@ -40,6 +47,7 @@ import {
 import {
   type ActivityEvent,
   duration,
+  type GraphEditAction,
   type ProcessModel,
   type Snapshot,
   type WorkflowId,
@@ -74,6 +82,7 @@ import {
 } from "./demo-walkthrough.ts";
 import {
   canvasSelectionFromLegacy,
+  legacyActivityId,
   legacyProcessToGraphView,
   legacySelectionFromCanvas,
 } from "./legacy-canvas-bridge.ts";
@@ -119,6 +128,20 @@ interface WorkspaceSettings {
     workspaceId: string | null;
   };
 }
+
+interface GraphEditing {
+  addLabel: string;
+  editBusy: boolean;
+  editGraph: (
+    action: GraphEditAction,
+    payload: Record<string, string>
+  ) => Promise<void>;
+  redoGraphEdit: () => Promise<void>;
+  setAddLabel: (value: string) => void;
+  submitAddNode: (event: { preventDefault: () => void }) => Promise<void>;
+  undoGraphEdit: () => Promise<void>;
+}
+
 async function api<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(
     path,
@@ -153,6 +176,73 @@ const explorerTabs = [
   ["variants", "Variants", GitBranch],
   ["events", "Event log", Activity],
 ] as const;
+
+function useGraphEditing({
+  currentWorkflow,
+  setCurationEdits,
+  setData,
+  setError,
+  setNotice,
+  workflow,
+}: {
+  currentWorkflow: RefObject<WorkflowId>;
+  setCurationEdits: Dispatch<SetStateAction<CurationDraft[]>>;
+  setData: Dispatch<SetStateAction<Snapshot | null>>;
+  setError: (value: string) => void;
+  setNotice: (value: string) => void;
+  workflow: WorkflowId;
+}): GraphEditing {
+  const [editBusy, setEditBusy] = useState(false);
+  const [addLabel, setAddLabel] = useState("");
+  async function postEdit(path: string, body: unknown, notice: string) {
+    setEditBusy(true);
+    setError("");
+    try {
+      const result = await api<Snapshot>(path, body);
+      if (currentWorkflow.current === workflow) {
+        setCurationEdits([]);
+        setData(result);
+        setNotice(notice);
+      }
+    } catch (error) {
+      setError((error as Error).message);
+    } finally {
+      setEditBusy(false);
+    }
+  }
+  async function editGraph(
+    action: GraphEditAction,
+    payload: Record<string, string>
+  ) {
+    await postEdit(
+      "/api/model/edit",
+      { action, payload, workflow },
+      editNotice(action)
+    );
+  }
+  const undoGraphEdit = () =>
+    postEdit("/api/model/edit/undo", { workflow }, "Graph edit undone.");
+  const redoGraphEdit = () =>
+    postEdit("/api/model/edit/redo", { workflow }, "Graph edit redone.");
+  async function submitAddNode(event: { preventDefault: () => void }) {
+    event.preventDefault();
+    const label = addLabel.trim();
+    if (!label) {
+      return;
+    }
+    setAddLabel("");
+    await editGraph("add_node", { label });
+  }
+  return {
+    addLabel,
+    editBusy,
+    editGraph,
+    redoGraphEdit,
+    setAddLabel,
+    submitAddNode,
+    undoGraphEdit,
+  };
+}
 
 const demoStepKeyPattern = /^[1-6]$/;
 
@@ -407,6 +497,14 @@ export default function App() {
   const [settingsRefresh, setSettingsRefresh] = useState(0);
   const currentWorkflow = useRef(workflow);
   currentWorkflow.current = workflow;
+  const graphEditing = useGraphEditing({
+    currentWorkflow,
+    setCurationEdits,
+    setData,
+    setError,
+    setNotice,
+    workflow,
+  });
   // biome-ignore lint/correctness/useExhaustiveDependencies: Refresh intentionally invalidates this request after a simulation.
   useEffect(() => {
     let active = true;
@@ -732,6 +830,7 @@ export default function App() {
             demoMode={demoMode}
             displayModel={visibleModel ?? model}
             events={events}
+            graphEditing={graphEditing}
             handleCurationAction={handleCurationAction}
             handleUndoCuration={handleUndoCuration}
             isDemoActive={isDemoActive}
@@ -904,6 +1003,7 @@ function ProcessCanvasPanel({
   canvasGraph,
   curationStats,
   focusClass,
+  graphEditing,
   selection,
   setCaseId,
   setSelection,
@@ -912,6 +1012,7 @@ function ProcessCanvasPanel({
   canvasGraph: ReturnType<typeof legacyProcessToGraphView> | undefined;
   curationStats: ReturnType<typeof curationSummary>;
   focusClass: string;
+  graphEditing: GraphEditing;
   selection: Selection | undefined;
   setCaseId: (value: string | undefined) => void;
   setSelection: (value: Selection | undefined) => void;
@@ -931,11 +1032,21 @@ function ProcessCanvasPanel({
       <div className={`graph-canvas ${focusClass}`} data-demo-target="graph">
         {canvasGraph ? (
           <WorkflowCanvas
+            canEdit={!graphEditing.editBusy}
             graph={canvasGraph}
+            onEdit={(
+              action: GraphEditAction,
+              payload: Record<string, string>
+            ) =>
+              graphEditing.editGraph(
+                action,
+                normalizeCanvasGraphEditPayload(payload)
+              )
+            }
             onSelectionChange={(nextSelection) => {
               const next = legacySelectionFromCanvas(nextSelection);
+              setSelection(next);
               if (next) {
-                setSelection(next);
                 setCaseId(undefined);
                 setShellView("inspector");
               }
@@ -1033,6 +1144,7 @@ interface LoadedWorkspaceProps {
   demoMode: DemoPlaybackState;
   displayModel: ProcessModel;
   events: ActivityEvent[];
+  graphEditing: GraphEditing;
   handleCurationAction: (
     action: CurationAction,
     target: CurationTarget
@@ -1150,6 +1262,8 @@ function ProcessExplorer(props: LoadedWorkspaceProps) {
         </span>
       </div>
       <ExplorerToolbar
+        data={props.data}
+        graphEditing={props.graphEditing}
         model={props.model}
         setTab={props.setTab}
         tab={props.tab}
@@ -1169,9 +1283,11 @@ function ProcessExplorer(props: LoadedWorkspaceProps) {
           <EventsTabPanel {...props} />
         </div>
         <Inspector
+          editBusy={props.graphEditing.editBusy}
           events={props.events}
           highlighted={props.isDemoActive("inspector")}
           model={props.displayModel}
+          onEdit={props.graphEditing.editGraph}
           selectedEdge={props.selectedEdge}
           selectedNode={props.selectedNode}
           selection={props.selection}
@@ -1186,10 +1302,14 @@ function ProcessExplorer(props: LoadedWorkspaceProps) {
 }
 
 function ExplorerToolbar({
+  data,
+  graphEditing,
   model,
   setTab,
   tab,
 }: {
+  data: Snapshot;
+  graphEditing: GraphEditing;
   model: ProcessModel;
   setTab: (value: string) => void;
   tab: string;
@@ -1216,6 +1336,7 @@ function ExplorerToolbar({
         {model.stats.cases} completed cases <span>·</span>{" "}
         {Math.round(model.stats.dominantShare * 100)}% follow the main path
       </span>
+      <GraphEditStrip data={data} graphEditing={graphEditing} />
     </div>
   );
 }
@@ -1230,6 +1351,7 @@ function MapPanel(props: LoadedWorkspaceProps) {
         canvasGraph={props.canvasGraph}
         curationStats={props.curationStats}
         focusClass={props.isDemoTarget("graph")}
+        graphEditing={props.graphEditing}
         selection={props.selection}
         setCaseId={props.setCaseId}
         setSelection={props.setSelection}
@@ -1412,6 +1534,50 @@ function CurationStatusBar({
       <button onClick={onUndo} type="button">
         Undo last edit
       </button>
+    </div>
+  );
+}
+
+function GraphEditStrip({
+  data,
+  graphEditing,
+}: {
+  data: Snapshot;
+  graphEditing: GraphEditing;
+}) {
+  return (
+    <div className="graph-edit-strip" role="toolbar">
+      <form onSubmit={graphEditing.submitAddNode}>
+        <input
+          aria-label="New graph node label"
+          disabled={graphEditing.editBusy}
+          maxLength={60}
+          onChange={(event) => graphEditing.setAddLabel(event.target.value)}
+          placeholder="Add step"
+          value={graphEditing.addLabel}
+        />
+        <button disabled={graphEditing.editBusy} type="submit">
+          <Plus size={13} />
+          Add
+        </button>
+      </form>
+      <button
+        disabled={graphEditing.editBusy || !data.canUndo}
+        onClick={graphEditing.undoGraphEdit}
+        type="button"
+      >
+        <Undo2 size={13} />
+        Undo
+      </button>
+      <button
+        disabled={graphEditing.editBusy || !data.canRedo}
+        onClick={graphEditing.redoGraphEdit}
+        type="button"
+      >
+        <Redo2 size={13} />
+        Redo
+      </button>
+      <span>Revision {data.revision ?? "base"}</span>
     </div>
   );
 }
@@ -1702,9 +1868,14 @@ function AboutDialog({ onClose }: { onClose: () => void }) {
 }
 
 interface InspectorProps {
+  editBusy: boolean;
   events: ActivityEvent[];
   highlighted: boolean;
   model: Snapshot["model"];
+  onEdit: (
+    action: GraphEditAction,
+    payload: Record<string, string>
+  ) => Promise<void>;
   selectedEdge: Snapshot["model"]["edges"][number] | undefined;
   selectedNode: Snapshot["model"]["nodes"][number] | undefined;
   selection: Selection | undefined;
@@ -1714,12 +1885,14 @@ interface InspectorProps {
   workflow: WorkflowId;
 }
 function Inspector({
+  editBusy,
   model,
   highlighted,
   selection,
   selectedNode,
   selectedEdge,
   events,
+  onEdit,
   workflow,
   setSelection,
   setCaseId,
@@ -1734,6 +1907,14 @@ function Inspector({
   });
   return (
     <ProcessInspector
+      actions={
+        <InspectorEditActions
+          editBusy={editBusy}
+          onEdit={onEdit}
+          selectedEdge={selectedEdge}
+          selectedNode={selectedNode}
+        />
+      }
       className={highlighted ? "is-demo-focus" : ""}
       details={details}
       onClearSelection={() => setSelection(undefined)}
@@ -1749,6 +1930,89 @@ function Inspector({
         )
       }
     />
+  );
+}
+
+function InspectorEditActions({
+  editBusy,
+  onEdit,
+  selectedEdge,
+  selectedNode,
+}: Pick<
+  InspectorProps,
+  "editBusy" | "onEdit" | "selectedEdge" | "selectedNode"
+>) {
+  if (!(selectedNode || selectedEdge)) {
+    return null;
+  }
+  return (
+    <div className="inspector-actions">
+      {selectedNode?.plane === "discovered" ? (
+        <button
+          disabled={editBusy}
+          onClick={() => onEdit("promote", { id: selectedNode.id })}
+          title="Promote node"
+          type="button"
+        >
+          <ArrowUpRight size={13} />
+          Promote
+        </button>
+      ) : null}
+      {selectedNode?.plane === "designed" ? (
+        <button
+          disabled={editBusy}
+          onClick={() => onEdit("retire", { id: selectedNode.id })}
+          title="Retire node"
+          type="button"
+        >
+          <Trash2 size={13} />
+          Retire
+        </button>
+      ) : null}
+      {selectedNode ? (
+        <button
+          disabled={editBusy}
+          onClick={() => onEdit("reject", { id: selectedNode.id })}
+          title="Remove node"
+          type="button"
+        >
+          <X size={13} />
+          Remove
+        </button>
+      ) : null}
+      {selectedEdge ? (
+        <button
+          disabled={editBusy}
+          onClick={() =>
+            onEdit("remove_edge", {
+              source: selectedEdge.source,
+              target: selectedEdge.target,
+            })
+          }
+          title="Remove edge"
+          type="button"
+        >
+          <Unlink size={13} />
+          Remove
+        </button>
+      ) : null}
+      {selectedEdge ? (
+        <button
+          disabled={editBusy}
+          onClick={() =>
+            onEdit("require", {
+              source: selectedEdge.source,
+              target: selectedEdge.target,
+            })
+          }
+          title="Require edge"
+          type="button"
+        >
+          <Link2 size={13} />
+          Require
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -2189,6 +2453,20 @@ function WorkspaceStatus({
       </button>
     </div>
   );
+}
+
+function normalizeCanvasGraphEditPayload(payload: Record<string, string>) {
+  const normalized = { ...payload };
+  for (const key of ["id", "source", "target"] as const) {
+    if (normalized[key]) {
+      normalized[key] = legacyActivityId(normalized[key]);
+    }
+  }
+  return normalized;
+}
+
+function editNotice(action: GraphEditAction) {
+  return `${sentenceCase(action.replaceAll("_", " "))} saved.`;
 }
 
 function sentenceCase(value: string) {

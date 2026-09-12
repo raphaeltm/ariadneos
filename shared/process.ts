@@ -106,6 +106,27 @@ export interface Conformance {
     quote?: string;
   }[];
 }
+export type GraphEditAction =
+  | "add_edge"
+  | "add_node"
+  | "confirm"
+  | "merge"
+  | "promote"
+  | "reject"
+  | "remove_edge"
+  | "remove_node"
+  | "rename"
+  | "require"
+  | "retire";
+export interface GraphEdit {
+  action: GraphEditAction;
+  actor: string;
+  createdAt: string;
+  id: string;
+  payload: Record<string, string>;
+  undone?: boolean;
+  workflow: WorkflowId;
+}
 export interface ProcessEdge {
   cases: number;
   count: number;
@@ -139,10 +160,15 @@ export interface CaseTrace {
 }
 export type ProcessModel = ReturnType<typeof mine>;
 export interface Snapshot {
+  canRedo?: boolean;
+  canUndo?: boolean;
+  conformance?: Conformance;
+  edits?: GraphEdit[];
   events: ActivityEvent[];
   generatedAt: string;
-  model: ProcessModel;
+  model: ProcessModel & { revision?: string };
   remainingRuns: number;
+  revision?: string;
   source: "simulation";
   workflow: (typeof workflows)[number];
 }

@@ -2,6 +2,7 @@ import "@xyflow/react/dist/style.css";
 import {
   Background,
   BaseEdge,
+  type Connection,
   Controls,
   type Edge,
   EdgeLabelRenderer,
@@ -12,16 +13,22 @@ import {
   MarkerType,
   type Node,
   type NodeProps,
+  NodeToolbar,
   Position,
   ReactFlow,
   type ReactFlowInstance,
 } from "@xyflow/react";
 import {
   AlertTriangle,
+  ArrowUp,
+  GitMerge,
   Link2,
+  Pencil,
   RotateCcw,
   ShieldCheck,
   Split,
+  Trash2,
+  X,
 } from "lucide-react";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -70,10 +77,12 @@ const nodeTypes = { activity: ActivityNode };
 const edgeTypes = { process: ProcessEdge };
 
 export function WorkflowCanvas({
+  canEdit = false,
   graph,
   initialMode = graph.kind === "instance" ? "instance" : "overlay",
   initialMinSupport = graph.min_support,
   onMinSupportChange,
+  onEdit,
   onModeChange,
   onSelectionChange,
   selection,
@@ -125,10 +134,15 @@ export function WorkflowCanvas({
     () =>
       layout.nodes.map((node) => ({
         ...node,
+        data: {
+          ...node.data,
+          canEdit,
+          onEdit,
+        },
         selected: selectedId === node.id,
         type: "activity",
       })) satisfies WorkflowNode[],
-    [layout.nodes, selectedId]
+    [canEdit, layout.nodes, onEdit, selectedId]
   );
   const edges = useMemo(
     () =>
@@ -342,9 +356,12 @@ export function WorkflowCanvas({
           maxZoom={1.5}
           minZoom={0.3}
           nodes={nodes}
-          nodesConnectable={false}
-          nodesDraggable={false}
+          nodesConnectable={canEdit}
+          nodesDraggable={canEdit}
           nodeTypes={nodeTypes}
+          onConnect={(connection) => {
+            handleConnect(connection, onEdit);
+          }}
           onEdgeClick={(_, edge) => {
             const graphEdge = edgeById.get(edge.id as GraphEdge["id"]);
             if (graphEdge) {
@@ -363,6 +380,18 @@ export function WorkflowCanvas({
               selectionForNode(graph, node.id as WorkflowNode["data"]["id"])
             );
             setAnnouncement(`Selected ${node.data.ariaLabel}.`);
+          }}
+          onNodeDragStop={(_, dragged) => {
+            const target = nodes.find(
+              (node) => node.id !== dragged.id && intersects(dragged, node)
+            );
+            if (target && onEdit) {
+              rememberSelection();
+              onEdit("merge", { source: dragged.id, target: target.id });
+              setAnnouncement(
+                `Merged ${dragged.data.label} into ${target.data.label}.`
+              );
+            }
           }}
           panOnDrag
           proOptions={{ hideAttribution: true }}
@@ -453,6 +482,16 @@ export function WorkflowCanvas({
 
 function ActivityNode({ data, selected }: NodeProps<WorkflowNode>) {
   const groundingPercent = Math.round(data.groundingRatio * 100);
+  const [renaming, setRenaming] = useState(false);
+  const [draftLabel, setDraftLabel] = useState(data.label);
+  const rename = () => setRenaming(true);
+  const submitRename = () => {
+    const label = draftLabel.trim();
+    if (label) {
+      data.onEdit?.("rename", { id: String(data.id), label });
+    }
+    setRenaming(false);
+  };
   return (
     <div
       aria-current={selected ? "true" : undefined}
@@ -464,6 +503,7 @@ function ActivityNode({ data, selected }: NodeProps<WorkflowNode>) {
       role="img"
       title={data.annotationTitle ?? undefined}
     >
+      <NodeEditToolbar data={data} onRename={rename} selected={selected} />
       <Handle position={Position.Left} type="target" />
       <div className="canvas-node__meta">
         <span
@@ -489,7 +529,33 @@ function ActivityNode({ data, selected }: NodeProps<WorkflowNode>) {
         ) : null}
         <span className="support-badge">x{data.support}</span>
       </div>
-      <strong>{data.label}</strong>
+      {renaming ? (
+        <form
+          className="node-rename-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitRename();
+          }}
+        >
+          <input
+            aria-label="Node label"
+            autoFocus
+            maxLength={60}
+            onBlur={submitRename}
+            onChange={(event) => setDraftLabel(event.target.value)}
+            value={draftLabel}
+          />
+        </form>
+      ) : (
+        <button
+          className="node-label-button"
+          onDoubleClick={rename}
+          title="Double-click to rename"
+          type="button"
+        >
+          {data.label}
+        </button>
+      )}
       {data.annotationLabel ? (
         <span className={`diff-pill severity-${data.severity}`}>
           {data.annotationLabel}
@@ -514,6 +580,76 @@ function ActivityNode({ data, selected }: NodeProps<WorkflowNode>) {
       ) : null}
       <Handle position={Position.Right} type="source" />
     </div>
+  );
+}
+
+function NodeEditToolbar({
+  data,
+  onRename,
+  selected,
+}: {
+  data: CanvasNodeData;
+  onRename: () => void;
+  selected: boolean;
+}) {
+  if (!(selected && data.canEdit && data.onEdit)) {
+    return null;
+  }
+  const canPromote = data.plane === "discovered";
+  const canRetire = data.plane === "designed";
+  return (
+    <NodeToolbar
+      align="center"
+      className="node-toolbar graph-edit-toolbar"
+      offset={9}
+      position={Position.Bottom}
+    >
+      {canPromote ? (
+        <button
+          aria-label="Promote node"
+          onClick={() => data.onEdit?.("promote", { id: String(data.id) })}
+          title="Promote node"
+          type="button"
+        >
+          <ArrowUp size={13} />
+        </button>
+      ) : null}
+      {canRetire ? (
+        <button
+          aria-label="Retire node"
+          onClick={() => data.onEdit?.("retire", { id: String(data.id) })}
+          title="Retire node"
+          type="button"
+        >
+          <Trash2 size={13} />
+        </button>
+      ) : null}
+      {canRetire ? null : (
+        <button
+          aria-label="Reject node"
+          onClick={() => data.onEdit?.("reject", { id: String(data.id) })}
+          title="Reject node"
+          type="button"
+        >
+          <X size={13} />
+        </button>
+      )}
+      <button
+        aria-label="Rename node"
+        onClick={onRename}
+        title="Rename node"
+        type="button"
+      >
+        <Pencil size={13} />
+      </button>
+      <button
+        aria-label="Merge hint"
+        title="Drag onto another node to merge"
+        type="button"
+      >
+        <GitMerge size={13} />
+      </button>
+    </NodeToolbar>
   );
 }
 
@@ -568,6 +704,31 @@ function ProcessEdge(props: EdgeProps<WorkflowEdge>) {
         </div>
       </EdgeLabelRenderer>
     </>
+  );
+}
+
+function handleConnect(
+  connection: Connection,
+  onEdit: WorkflowCanvasProps["onEdit"] | undefined
+) {
+  if (connection.source && connection.target && onEdit) {
+    onEdit("add_edge", {
+      source: connection.source,
+      target: connection.target,
+    });
+  }
+}
+
+function intersects(a: Node, b: Node) {
+  const aw = Number(a.measured?.width ?? a.width ?? 200);
+  const ah = Number(a.measured?.height ?? a.height ?? 80);
+  const bw = Number(b.measured?.width ?? b.width ?? 200);
+  const bh = Number(b.measured?.height ?? b.height ?? 80);
+  return !(
+    a.position.x + aw < b.position.x ||
+    b.position.x + bw < a.position.x ||
+    a.position.y + ah < b.position.y ||
+    b.position.y + bh < a.position.y
   );
 }
 

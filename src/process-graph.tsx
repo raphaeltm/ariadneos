@@ -2,6 +2,7 @@ import dagre from "@dagrejs/dagre";
 import {
   Background,
   BaseEdge,
+  type Connection,
   Controls,
   type Edge,
   EdgeLabelRenderer,
@@ -11,16 +12,21 @@ import {
   MarkerType,
   type Node,
   type NodeProps,
+  NodeToolbar,
   Position,
   ReactFlow,
   type ReactFlowInstance,
 } from "@xyflow/react";
 import {
+  ArrowUp,
   Check,
   CircleDot,
   GitMerge,
+  Link2,
   LoaderCircle,
+  Pencil,
   Scissors,
+  Trash2,
   X,
 } from "lucide-react";
 import {
@@ -30,7 +36,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ProcessModel } from "../shared/process.ts";
+import type { GraphEditAction, ProcessModel } from "../shared/process.ts";
 import {
   canvasShortcutInstructions,
   shortcutActionForCanvas,
@@ -41,10 +47,14 @@ import type {
   CurationTargetKind,
 } from "./curation.ts";
 
+const noopEdit = () => undefined;
+
 type ActivityNode = Node<{
   ariaLabel: string;
+  canEdit: boolean;
   count: number;
   curation?: CurationDecoration;
+  id: string;
   label: string;
   labelId: string;
   legalActions: CurationAction[];
@@ -53,7 +63,9 @@ type ActivityNode = Node<{
     action: CurationAction,
     target: { id: string; kind: CurationTargetKind }
   ) => void;
+  onEdit: (action: GraphEditAction, payload: Record<string, string>) => void;
   pending: boolean;
+  plane?: ProcessModel["nodes"][number]["plane"];
   role: string;
   terminal: boolean;
 }>;
@@ -62,11 +74,23 @@ type LegacyNodeSummary = Pick<
   "count" | "grounded" | "label" | "plane" | "role"
 >;
 function Activity({ data, selected }: NodeProps<ActivityNode>) {
+  const [renaming, setRenaming] = useState(false);
+  const [draftLabel, setDraftLabel] = useState(data.label);
+  const rename = () => setRenaming(true);
+  const submitRename = () => {
+    const label = draftLabel.trim();
+    if (label) {
+      data.onEdit("rename", { id: String(data.id), label });
+    }
+    setRenaming(false);
+  };
+  const canPromote = data.plane === "discovered";
+  const canRetire = data.plane === "designed";
   return (
     <div
       aria-current={selected ? "true" : undefined}
       aria-label={data.ariaLabel}
-      className={`activity-node ${selected ? "selected" : ""} ${data.terminal ? "terminal" : ""} ${data.curation ? `curated ${data.curation.action}` : ""}`}
+      className={`activity-node ${selected ? "selected" : ""} ${data.terminal ? "terminal" : ""} plane-${data.plane ?? "discovered"} ${data.curation ? `curated ${data.curation.action}` : ""}`}
       id={legacyCanvasDomId(data.labelId)}
       role="img"
     >
@@ -81,6 +105,60 @@ function Activity({ data, selected }: NodeProps<ActivityNode>) {
           pending={data.pending}
         />
       ) : null}
+      {selected && data.canEdit ? (
+        <NodeToolbar
+          align="center"
+          className="node-toolbar graph-edit-toolbar"
+          offset={9}
+          position={Position.Bottom}
+        >
+          {canPromote ? (
+            <button
+              aria-label="Promote node"
+              onClick={() => data.onEdit("promote", { id: String(data.id) })}
+              title="Promote node"
+              type="button"
+            >
+              <ArrowUp size={13} />
+            </button>
+          ) : null}
+          {canRetire ? (
+            <button
+              aria-label="Retire node"
+              onClick={() => data.onEdit("retire", { id: String(data.id) })}
+              title="Retire node"
+              type="button"
+            >
+              <Trash2 size={13} />
+            </button>
+          ) : null}
+          {canRetire ? null : (
+            <button
+              aria-label="Reject node"
+              onClick={() => data.onEdit("reject", { id: String(data.id) })}
+              title="Reject node"
+              type="button"
+            >
+              <X size={13} />
+            </button>
+          )}
+          <button
+            aria-label="Rename node"
+            onClick={rename}
+            title="Rename node"
+            type="button"
+          >
+            <Pencil size={13} />
+          </button>
+          <button
+            aria-label="Merge hint"
+            title="Drag onto another node to merge"
+            type="button"
+          >
+            <GitMerge size={13} />
+          </button>
+        </NodeToolbar>
+      ) : null}
       <Handle position={Position.Top} type="target" />
       <div className="node-heading">
         <span className="node-icon">
@@ -89,13 +167,41 @@ function Activity({ data, selected }: NodeProps<ActivityNode>) {
         <span>{data.role}</span>
         <span className="node-count">{data.count}</span>
       </div>
-      <strong>{data.label}</strong>
+      {renaming ? (
+        <form
+          className="node-rename-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitRename();
+          }}
+        >
+          <input
+            aria-label="Node label"
+            autoFocus
+            maxLength={60}
+            onBlur={submitRename}
+            onChange={(event) => setDraftLabel(event.target.value)}
+            value={draftLabel}
+          />
+        </form>
+      ) : (
+        <button
+          className="node-label-button"
+          onDoubleClick={rename}
+          title="Double-click to rename"
+          type="button"
+        >
+          {data.label}
+        </button>
+      )}
       {data.curation ? (
         <span className={`curation-badge ${data.curation.persistence}`}>
           {data.curation.persistence}
         </span>
       ) : null}
-      <Handle position={Position.Bottom} type="source" />
+      <Handle position={Position.Bottom} type="source">
+        <Link2 size={7} />
+      </Handle>
     </div>
   );
 }
@@ -114,12 +220,15 @@ type CuratedEdge = Edge<{
 const nodeTypes = { activity: Activity };
 const edgeTypes = { curated: CuratedGraphEdge };
 export default function ProcessGraph({
+  canEdit = false,
   model,
   onSelect,
   onCurate,
+  onEdit,
   curation,
   selected,
 }: {
+  canEdit?: boolean;
   curation?: {
     edgeDecorations: Record<string, CurationDecoration>;
     nodeDecorations: Record<string, CurationDecoration>;
@@ -129,6 +238,7 @@ export default function ProcessGraph({
     action: CurationAction,
     target: { id: string; kind: CurationTargetKind }
   ) => void;
+  onEdit?: (action: GraphEditAction, payload: Record<string, string>) => void;
   onSelect: (value: { kind: "node" | "edge"; id: string } | undefined) => void;
   selected: string | undefined;
 }) {
@@ -161,51 +271,60 @@ export default function ProcessGraph({
     }
     dagre.layout(graph);
     return {
-      edges: model.edges.map((e) => {
-        const edgeDecoration = curation?.edgeDecorations[e.id];
-        return {
-          animated: selected === e.id,
-          data: {
-            ariaLabel: describeLegacyEdge(model, e.id),
-            curation: edgeDecoration,
+      edges: [...model.edges]
+        .sort((a, b) => edgeRank(graph, a) - edgeRank(graph, b))
+        .map((e) => {
+          const edgeDecoration = curation?.edgeDecorations[e.id];
+          return {
+            animated: selected === e.id,
+            data: {
+              ariaLabel: describeLegacyEdge(model, e.id),
+              curation: edgeDecoration,
+              label: `${e.count} · ${Math.round(e.probability * 100)}%`,
+              legalActions: ["confirm", "reject", "split"],
+              onCurate,
+              onEdit: onEdit ?? noopEdit,
+              pending: edgeDecoration?.persistence === "pending",
+            },
+            id: e.id,
             label: `${e.count} · ${Math.round(e.probability * 100)}%`,
-            legalActions: ["confirm", "reject", "split"],
-            onCurate,
-            pending: edgeDecoration?.persistence === "pending",
-          },
-          id: e.id,
-          label: `${e.count} · ${Math.round(e.probability * 100)}%`,
-          labelBgPadding: [7, 4] as [number, number],
-          labelBgStyle: { fill: "#f9faf6" },
-          labelStyle: { fill: "#66736b", fontSize: 11, fontWeight: 600 },
-          markerEnd: {
-            color: "#829687",
-            height: 16,
-            type: MarkerType.ArrowClosed,
-            width: 16,
-          },
-          source: e.source,
-          style: {
-            stroke: edgeColor(e.id === selected, e.probability),
-            strokeDasharray: e.probability < 0.35 ? "5 4" : undefined,
-            strokeWidth:
-              selected === e.id ? 3 : Math.max(1.3, e.probability * 2.8),
-          },
-          target: e.target,
-          type: "curated",
-        };
-      }),
+            labelBgPadding: [7, 4] as [number, number],
+            labelBgStyle: { fill: "#f9faf6" },
+            labelStyle: { fill: "#66736b", fontSize: 11, fontWeight: 600 },
+            markerEnd: {
+              color: "#829687",
+              height: 16,
+              type: MarkerType.ArrowClosed,
+              width: 16,
+            },
+            source: e.source,
+            style: {
+              stroke: edgeColor(e.id === selected, e.probability),
+              strokeDasharray:
+                e.plane === "designed" || e.probability < 0.35
+                  ? "5 4"
+                  : undefined,
+              strokeWidth:
+                selected === e.id ? 3 : Math.max(1.3, e.probability * 2.8),
+            },
+            target: e.target,
+            type: "curated",
+          };
+        }),
       nodes: model.nodes.map((n) => {
         const nodeDecoration = curation?.nodeDecorations[n.id];
         return {
           data: {
             ...n,
             ariaLabel: describeLegacyNode(n),
+            canEdit,
             curation: nodeDecoration,
+            id: n.id,
             labelId: n.id,
             legalActions: legalNodeActions(model, n.id),
             mergeTargetLabel: getMergeTargetLabel(model, n.id),
             onCurate,
+            onEdit: onEdit ?? noopEdit,
             pending: nodeDecoration?.persistence === "pending",
           },
           id: n.id,
@@ -218,7 +337,7 @@ export default function ProcessGraph({
         };
       }),
     };
-  }, [curation, model, onCurate, selected]);
+  }, [canEdit, curation, model, onCurate, onEdit, selected]);
   const keyboardTargets = useMemo(
     () => [
       ...model.nodes.map((node) => ({
@@ -382,9 +501,12 @@ export default function ProcessGraph({
         maxZoom={1.5}
         minZoom={0.3}
         nodes={nodes}
-        nodesConnectable={false}
-        nodesDraggable={false}
+        nodesConnectable={canEdit}
+        nodesDraggable={canEdit}
         nodeTypes={nodeTypes}
+        onConnect={(connection) => {
+          handleConnect(connection, onEdit);
+        }}
         onEdgeClick={(_, e) => {
           rememberSelection();
           onSelect({ id: e.id, kind: "edge" });
@@ -406,6 +528,18 @@ export default function ProcessGraph({
           rememberSelection();
           onSelect({ id: n.id, kind: "node" });
           setAnnouncement(`Selected ${describeLegacyNode(n.data)}.`);
+        }}
+        onNodeDragStop={(_, dragged) => {
+          const target = nodes.find(
+            (node) => node.id !== dragged.id && intersects(dragged, node)
+          );
+          if (target && onEdit) {
+            rememberSelection();
+            onEdit("merge", { source: dragged.id, target: target.id });
+            setAnnouncement(
+              `Merged ${describeLegacyNode(dragged.data)} into ${describeLegacyNode(target.data)}.`
+            );
+          }
         }}
         onNodesChange={(changes) => {
           const change = changes.find((c) => c.type === "select" && c.selected);
@@ -525,6 +659,38 @@ function CurationToolbar({
         </button>
       ))}
     </div>
+  );
+}
+
+function edgeRank(
+  graph: { node: (id: string) => { y?: number } | undefined },
+  edge: ProcessModel["edges"][number]
+) {
+  return graph.node(edge.source)?.y ?? 0;
+}
+
+function handleConnect(
+  connection: Connection,
+  onEdit?: (action: GraphEditAction, payload: Record<string, string>) => void
+) {
+  if (connection.source && connection.target && onEdit) {
+    onEdit("add_edge", {
+      source: connection.source,
+      target: connection.target,
+    });
+  }
+}
+
+function intersects(a: Node, b: Node) {
+  const aw = Number(a.measured?.width ?? a.width ?? 200);
+  const ah = Number(a.measured?.height ?? a.height ?? 77);
+  const bw = Number(b.measured?.width ?? b.width ?? 200);
+  const bh = Number(b.measured?.height ?? b.height ?? 77);
+  return !(
+    a.position.x + aw < b.position.x ||
+    b.position.x + bw < a.position.x ||
+    a.position.y + ah < b.position.y ||
+    b.position.y + bh < a.position.y
   );
 }
 

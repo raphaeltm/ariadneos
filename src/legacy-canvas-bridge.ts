@@ -164,11 +164,11 @@ function humanizeSlug(slug: string) {
     .join(" ");
 }
 
-function legacyActivityId(id: string) {
+export function legacyActivityId(id: string) {
   return id.startsWith("act_") ? id.slice(4) : id;
 }
 
-function legacyEdgeId(id: string) {
+export function legacyEdgeId(id: string) {
   return id.startsWith("ged_") ? id.slice(4) : id;
 }
 

@@ -6,7 +6,13 @@ import type {
   GraphView,
   StepId,
 } from "../../../shared/contracts.ts";
+import type { GraphEditAction } from "../../../shared/process.ts";
 import type { AppSelection } from "../../store.ts";
+
+export type GraphEditHandler = (
+  action: GraphEditAction,
+  payload: Record<string, string>
+) => Promise<void> | void;
 
 export type WorkflowCanvasMode =
   | "designed"
@@ -25,6 +31,7 @@ export interface CanvasNodeData {
   annotationLabel: string | null;
   annotationTitle: string | null;
   ariaLabel: string;
+  canEdit?: boolean;
   diffKind: CanvasNodeDiffKind;
   groundedCount: number;
   groundingRatio: number;
@@ -33,6 +40,7 @@ export interface CanvasNodeData {
   id: ActivityId | StepId;
   isProposed: boolean;
   label: string;
+  onEdit?: GraphEditHandler;
   plane: GraphNode["activity"]["plane"];
   role: string;
   severity: CanvasSeverity;
@@ -50,6 +58,7 @@ export interface CanvasEdgeData {
   isBackEdge: boolean;
   kind: GraphEdge["kind"];
   label: string;
+  onEdit?: GraphEditHandler;
   plane: GraphEdge["plane"];
   severity: CanvasSeverity;
   support: number;
@@ -79,9 +88,11 @@ export interface LayoutResult {
 }
 
 export interface WorkflowCanvasProps {
+  canEdit?: boolean;
   graph: GraphView;
   initialMinSupport?: number;
   initialMode?: WorkflowCanvasMode;
+  onEdit?: GraphEditHandler;
   onMinSupportChange?: (value: number) => void;
   onModeChange?: (mode: WorkflowCanvasMode) => void;
   onSelectionChange?: (selection: AppSelection) => void;

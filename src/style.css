@@ -711,6 +711,15 @@ h1 {
   background: #eff5e8;
   border-color: #c9d8b7;
 }
+.activity-node.plane-designed {
+  background: #fbf9f0;
+  border-style: dashed;
+  opacity: 0.82;
+}
+.activity-node.plane-both {
+  border-color: #b8c78d;
+  box-shadow: inset 0 0 0 1px #e6edd3;
+}
 .activity-node.selected {
   border-color: #9da76e;
   box-shadow: 0 0 0 3px #b3bf9130;
@@ -723,6 +732,49 @@ h1 {
 .activity-node.curated.split {
   border-color: #c58a45;
   box-shadow: 0 0 0 3px #d4943e24;
+}
+.node-toolbar.graph-edit-toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: #f8fbf2;
+  border: 1px solid #dfe7d4;
+  border-radius: 6px;
+  box-shadow: 0 10px 30px #1e2d1830;
+}
+.node-toolbar.graph-edit-toolbar button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: #667957;
+  background: #fffffc;
+  border: 1px solid #e3ead9;
+  border-radius: 5px;
+}
+.node-toolbar.graph-edit-toolbar button:hover {
+  color: #456037;
+  background: #eff6e7;
+}
+.node-label-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 550;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+.node-rename-form input {
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 11px;
+  color: #405531;
+  background: #fff;
+  border: 1px solid #cdd9bf;
+  border-radius: 5px;
 }
 .curation-badge {
   display: inline-flex;
@@ -835,6 +887,12 @@ h1 {
   border: 1px solid #e4eadc;
   border-radius: 5px;
   box-shadow: 0 2px 8px #20341812;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+.react-flow__edge:hover + .edge-curation-label,
+.edge-curation-label.selected {
+  opacity: 1;
 }
 .edge-curation-label.selected {
   color: #7a542c;
@@ -873,6 +931,55 @@ h1 {
 }
 .curation-status button:hover {
   background: #fff4d6;
+}
+.graph-edit-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-left: auto;
+  font-size: 9px;
+  color: #7d8b69;
+}
+.graph-edit-strip form {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  padding: 4px 6px;
+  background: #fbfdf7;
+  border: 1px solid #dde8d0;
+  border-radius: 6px;
+}
+.graph-edit-strip input {
+  width: 92px;
+  padding: 0;
+  font: inherit;
+  color: #586a49;
+  outline: none;
+  background: transparent;
+  border: 0;
+}
+.graph-edit-strip button {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 5px 7px;
+  font-size: 9px;
+  color: #667957;
+  background: #fbfdf7;
+  border: 1px solid #dde8d0;
+  border-radius: 6px;
+}
+.graph-edit-strip button:disabled,
+.graph-edit-strip input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.graph-edit-strip > span {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .graph-legend {
   display: flex;

@@ -1,0 +1,59 @@
+{
+  "expected_deviations": [
+    "escalate_to_ceo",
+    "improvise_hotfix",
+    "hold_customer_call"
+  ],
+  "messages": [
+    {
+      "delay": 1.26,
+      "person_id": "per_priya",
+      "text": "Vertex checkout 500s are climbing again and the renewal is in November."
+    },
+    {
+      "delay": 1.64,
+      "person_id": "per_dana",
+      "text": "This is our biggest logo. I need a fix now; Tom, jump on it directly."
+    },
+    {
+      "delay": 1.69,
+      "person_id": "per_tom",
+      "text": "I can push a mitigation before we know the root cause, but that carries risk."
+    },
+    {
+      "delay": 1.42,
+      "person_id": "per_tom",
+      "text": "I am skipping the security checklist to save time."
+    },
+    {
+      "delay": 1.72,
+      "person_id": "per_lea",
+      "text": "That checklist is mandatory for production changes."
+    },
+    {
+      "delay": 1.43,
+      "person_id": "per_dana",
+      "text": "Ship it, we will review after the customer is stable."
+    },
+    {
+      "delay": 1.87,
+      "person_id": "per_tom",
+      "text": "Hotfix is out and the production fix is deployed."
+    },
+    {
+      "delay": 1.32,
+      "person_id": "per_marc",
+      "text": "I am calling Vertex now before we finish verification."
+    },
+    {
+      "delay": 1.55,
+      "person_id": "per_priya",
+      "text": "Errors dropped to baseline across the last five checks."
+    }
+  ],
+  "project_id": "proj_helios",
+  "scenario_id": "helios_p1",
+  "seed": 29,
+  "variant": "v2_skip_review",
+  "workflow_id": "wf_p1_incident"
+}

@@ -18,6 +18,7 @@ import type {
 } from "./inspector-data.ts";
 
 interface ProcessInspectorProps {
+  className?: string;
   details: InspectorDetails;
   onClearSelection?: () => void;
   onCuration?: (
@@ -29,6 +30,7 @@ interface ProcessInspectorProps {
 }
 
 export function ProcessInspector({
+  className = "",
   details,
   onClearSelection,
   onCuration,
@@ -60,7 +62,7 @@ export function ProcessInspector({
   };
 
   return (
-    <aside className="inspector">
+    <aside className={`inspector ${className}`} data-demo-target="inspector">
       <div className="inspector-label">
         {selected ? "SELECTION INSPECTOR" : "PROCESS INSPECTOR"}
         {selected && onClearSelection ? (

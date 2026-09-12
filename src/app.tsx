@@ -6,19 +6,25 @@ import {
   ArrowRight,
   ArrowUpRight,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Cloud,
   ExternalLink,
   GitBranch,
   Layers3,
   LoaderCircle,
+  MonitorPlay,
+  Pause,
   Play,
   RefreshCw,
+  RotateCcw,
   Search,
   Send,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Square,
   Waypoints,
   X,
 } from "lucide-react";
@@ -44,6 +50,7 @@ import AppShell, {
 } from "./components/app-shell/app-shell.tsx";
 import { buildLegacyInspectorDetails } from "./components/inspector/inspector-data.ts";
 import { ProcessInspector } from "./components/inspector/process-inspector.tsx";
+import { WorkflowCanvas } from "./components/process-canvas/workflow-canvas.tsx";
 import {
   applyCurationEdits,
   type CurationAction,
@@ -55,7 +62,21 @@ import {
   undoLastCurationDraft,
   updateCurationDraft,
 } from "./curation.ts";
-import ProcessGraph from "./process-graph.tsx";
+import {
+  clampDemoStepIndex,
+  type DemoPlaybackState,
+  type DemoTarget,
+  type DemoWalkthroughStep,
+  demoStepLabel,
+  demoWalkthroughSteps,
+  firstDemoWalkthroughStep,
+  nextDemoStepIndex,
+} from "./demo-walkthrough.ts";
+import {
+  canvasSelectionFromLegacy,
+  legacyProcessToGraphView,
+  legacySelectionFromCanvas,
+} from "./legacy-canvas-bridge.ts";
 
 interface Selection {
   id: string;
@@ -132,6 +153,235 @@ const explorerTabs = [
   ["variants", "Variants", GitBranch],
   ["events", "Event log", Activity],
 ] as const;
+
+const demoStepKeyPattern = /^[1-6]$/;
+
+interface DemoControllerInput {
+  busy: boolean;
+  data: Snapshot | null;
+  loading: boolean;
+  model: Snapshot["model"] | undefined;
+  run: () => Promise<void>;
+  setCaseId: Dispatch<SetStateAction<string | undefined>>;
+  setNotice: Dispatch<SetStateAction<string>>;
+  setSearch: Dispatch<SetStateAction<string>>;
+  setSelection: Dispatch<SetStateAction<Selection | undefined>>;
+  setShellView: Dispatch<SetStateAction<AppShellView>>;
+  setTab: Dispatch<SetStateAction<string>>;
+  workflow: WorkflowId;
+}
+
+function useDemoWalkthroughController({
+  busy,
+  data,
+  loading,
+  model,
+  run,
+  setCaseId,
+  setNotice,
+  setSearch,
+  setSelection,
+  setShellView,
+  setTab,
+  workflow,
+}: DemoControllerInput) {
+  const [demoMode, setDemoMode] = useState<DemoPlaybackState>("idle");
+  const [demoStepIndex, setDemoStepIndex] = useState(0);
+  const demoRunStarted = useRef(false);
+  const currentDemoWorkflow = useRef(workflow);
+  const demoStep: DemoWalkthroughStep =
+    demoWalkthroughSteps[demoStepIndex] ?? firstDemoWalkthroughStep;
+  const activeDemoTarget = demoMode === "idle" ? undefined : demoStep.target;
+  const canRunSimulation =
+    !(busy || loading) && data !== null && data.remainingRuns !== 0;
+  const isDemoActive = (target: DemoTarget) => activeDemoTarget === target;
+  const isDemoTarget = (target: DemoTarget) =>
+    isDemoActive(target) ? "is-demo-focus" : "";
+  const goToDemoStep = useCallback((index: number) => {
+    setDemoStepIndex(clampDemoStepIndex(index));
+    setDemoMode((current) => (current === "idle" ? "paused" : current));
+  }, []);
+  const advanceDemoStep = useCallback((direction: -1 | 1) => {
+    setDemoStepIndex((current) => nextDemoStepIndex(current, direction));
+    setDemoMode((current) => (current === "idle" ? "paused" : current));
+  }, []);
+  const stopDemo = useCallback(() => {
+    setDemoMode("idle");
+    setDemoStepIndex(0);
+    setSelection(undefined);
+    setCaseId(undefined);
+    setNotice("");
+  }, [setCaseId, setNotice, setSelection]);
+  const restartDemo = useCallback(() => {
+    demoRunStarted.current = false;
+    setDemoStepIndex(0);
+    setDemoMode("playing");
+    setSelection(undefined);
+    setCaseId(undefined);
+    setSearch("");
+    setTab("map");
+    setShellView("graph");
+  }, [setCaseId, setSearch, setSelection, setShellView, setTab]);
+  const toggleDemoPlayback = useCallback(() => {
+    setDemoMode((current) => {
+      if (current === "playing") {
+        return "paused";
+      }
+      return "playing";
+    });
+  }, []);
+  useEffect(() => {
+    if (currentDemoWorkflow.current === workflow) {
+      return;
+    }
+    currentDemoWorkflow.current = workflow;
+    demoRunStarted.current = false;
+    setDemoMode("idle");
+    setDemoStepIndex(0);
+  });
+  useEffect(() => {
+    if (demoMode === "idle") {
+      return;
+    }
+    switch (demoStep.action) {
+      case "ask":
+        setShellView("graph");
+        setTab("map");
+        break;
+      case "events":
+        setShellView("graph");
+        setTab("events");
+        setSelection(undefined);
+        setCaseId(undefined);
+        break;
+      case "graph":
+        setShellView("graph");
+        setTab("map");
+        setSelection(undefined);
+        setCaseId(undefined);
+        break;
+      case "run":
+        setShellView("graph");
+        setTab("map");
+        setSelection(undefined);
+        setCaseId(undefined);
+        if (!(demoRunStarted.current || !canRunSimulation)) {
+          demoRunStarted.current = true;
+          run().catch((error: unknown) => {
+            setNotice((error as Error).message);
+          });
+        }
+        break;
+      case "select-edge": {
+        setShellView("inspector");
+        setTab("map");
+        const edge = model?.edges.find((item) => item.evidence.length > 0);
+        if (edge) {
+          setSelection((current) =>
+            current?.id === edge.id && current.kind === "edge"
+              ? current
+              : { id: edge.id, kind: "edge" }
+          );
+        }
+        break;
+      }
+      case "select-node": {
+        setShellView("inspector");
+        setTab("map");
+        const node =
+          model?.nodes.find((item) => item.count > 1 && !item.terminal) ??
+          model?.nodes[0];
+        if (node) {
+          setSelection((current) =>
+            current?.id === node.id && current.kind === "node"
+              ? current
+              : { id: node.id, kind: "node" }
+          );
+        }
+        break;
+      }
+      case "variants":
+        setShellView("graph");
+        setTab("variants");
+        setSelection(undefined);
+        setCaseId(undefined);
+        break;
+      default:
+        break;
+    }
+  }, [
+    canRunSimulation,
+    demoMode,
+    demoStep.action,
+    model,
+    run,
+    setCaseId,
+    setNotice,
+    setSelection,
+    setShellView,
+    setTab,
+  ]);
+  useEffect(() => {
+    if (demoMode !== "playing" || loading || busy) {
+      return;
+    }
+    if (demoStepIndex === demoWalkthroughSteps.length - 1) {
+      const timeout = window.setTimeout(() => setDemoMode("paused"), 1600);
+      return () => window.clearTimeout(timeout);
+    }
+    const timeout = window.setTimeout(
+      () => setDemoStepIndex((current) => nextDemoStepIndex(current, 1)),
+      demoStep.durationMs
+    );
+    return () => window.clearTimeout(timeout);
+  }, [busy, demoMode, demoStep.durationMs, demoStepIndex, loading]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || shouldIgnoreShortcut(event)) {
+        return;
+      }
+      if (event.code === "Space") {
+        event.preventDefault();
+        toggleDemoPlayback();
+        return;
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        advanceDemoStep(1);
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        advanceDemoStep(-1);
+        return;
+      }
+      if (demoStepKeyPattern.test(event.key)) {
+        event.preventDefault();
+        goToDemoStep(Number(event.key) - 1);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [advanceDemoStep, goToDemoStep, toggleDemoPlayback]);
+  return {
+    advanceDemoStep,
+    demoMode,
+    demoStepIndex,
+    goToDemoStep,
+    isDemoActive,
+    isDemoTarget,
+    restartDemo,
+    stopDemo,
+    toggleDemoPlayback,
+  };
+}
+
+function activeShellView(tab: string, shellView: AppShellView) {
+  if (tab === "settings") {
+    return "settings";
+  }
+  return shellView;
+}
 export default function App() {
   const [workflow, setWorkflow] = useState<WorkflowId>("vendor");
   const [data, setData] = useState<Snapshot | null>(null);
@@ -212,7 +462,7 @@ export default function App() {
       active = false;
     };
   }, [settingsRefresh]);
-  async function run() {
+  const run = useCallback(async () => {
     setBusy(true);
     setError("");
     try {
@@ -230,7 +480,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }
+  }, [workflow]);
   async function ask(text = question) {
     if (!text.trim() || asking) {
       return;
@@ -279,6 +529,13 @@ export default function App() {
     [curationEdits, model]
   );
   const visibleModel = curationProjection?.model ?? model;
+  const canvasGraph = useMemo(
+    () =>
+      visibleModel && data
+        ? legacyProcessToGraphView(visibleModel, workflow, data.generatedAt)
+        : undefined,
+    [data, visibleModel, workflow]
+  );
   const curationStats = useMemo(
     () => curationSummary(curationEdits),
     [curationEdits]
@@ -308,6 +565,30 @@ export default function App() {
     selection,
     visibleModel,
   });
+  const {
+    advanceDemoStep,
+    demoMode,
+    demoStepIndex,
+    goToDemoStep,
+    isDemoActive,
+    isDemoTarget,
+    restartDemo,
+    stopDemo,
+    toggleDemoPlayback,
+  } = useDemoWalkthroughController({
+    busy,
+    data,
+    loading,
+    model: visibleModel,
+    run,
+    setCaseId,
+    setNotice,
+    setSearch,
+    setSelection,
+    setShellView,
+    setTab,
+    workflow,
+  });
   function chooseWorkflow(id: WorkflowId) {
     setWorkflow(id);
     setTab("map");
@@ -334,7 +615,7 @@ export default function App() {
     <AppShell
       accountMenu={<AccountMenu />}
       activeProjectId={workflow}
-      activeView={tab === "settings" ? "settings" : shellView}
+      activeView={activeShellView(tab, shellView)}
       activeWorkspaceId={workspace}
       connectionLabel="Demo environment"
       onAbout={() => setInfo(true)}
@@ -360,8 +641,11 @@ export default function App() {
       }
       workspaceOptions={workspaceOptions}
     >
-      <main>
-        <div className="page-heading">
+      <main className={demoMode === "idle" ? "" : "demo-active"}>
+        <div
+          className={`page-heading ${isDemoTarget("overview")}`}
+          data-demo-target="overview"
+        >
           <div>
             <div className="eyebrow">
               <span />
@@ -384,6 +668,7 @@ export default function App() {
             </button>
             <button
               className="button primary"
+              data-demo-target="run"
               disabled={busy || loading || data?.remainingRuns === 0}
               onClick={run}
               type="button"
@@ -423,19 +708,34 @@ export default function App() {
           onReload={() => setRefresh((x) => x + 1)}
           ready={Boolean(model && data)}
         />
+        <DemoWalkthrough
+          busy={busy}
+          mode={demoMode}
+          onBack={() => advanceDemoStep(-1)}
+          onJump={goToDemoStep}
+          onNext={() => advanceDemoStep(1)}
+          onRestart={restartDemo}
+          onStop={stopDemo}
+          onToggle={toggleDemoPlayback}
+          stepIndex={demoStepIndex}
+        />
         {!loading && model !== undefined && data !== null && (
           <LoadedWorkspace
             answer={answer}
             ask={ask}
             asking={asking}
+            canvasGraph={canvasGraph}
             caseId={caseId}
             curationProjection={curationProjection}
             curationStats={curationStats}
             data={data}
+            demoMode={demoMode}
             displayModel={visibleModel ?? model}
             events={events}
             handleCurationAction={handleCurationAction}
             handleUndoCuration={handleUndoCuration}
+            isDemoActive={isDemoActive}
+            isDemoTarget={isDemoTarget}
             model={model}
             onAbout={() => setInfo(true)}
             onExport={exportModel}
@@ -455,6 +755,7 @@ export default function App() {
             setQuestion={setQuestion}
             setSearch={setSearch}
             setSelection={setSelection}
+            setShellView={setShellView}
             setTab={setTab}
             settings={settings}
             settingsError={settingsError}
@@ -467,6 +768,194 @@ export default function App() {
       </main>
       {info ? <AboutDialog onClose={() => setInfo(false)} /> : null}
     </AppShell>
+  );
+}
+
+function DemoWalkthrough({
+  busy,
+  mode,
+  onBack,
+  onJump,
+  onNext,
+  onRestart,
+  onStop,
+  onToggle,
+  stepIndex,
+}: {
+  busy: boolean;
+  mode: DemoPlaybackState;
+  onBack: () => void;
+  onJump: (index: number) => void;
+  onNext: () => void;
+  onRestart: () => void;
+  onStop: () => void;
+  onToggle: () => void;
+  stepIndex: number;
+}) {
+  const step = demoWalkthroughSteps[stepIndex] ?? firstDemoWalkthroughStep;
+  const running = mode === "playing";
+  const toggleLabel = playbackButtonLabel(mode);
+  return (
+    <section
+      aria-label="Demo auto-play walkthrough"
+      className={`demo-walkthrough ${mode === "idle" ? "collapsed" : ""} ${
+        mode !== "idle" && step.target === "run" ? "is-demo-focus" : ""
+      }`}
+      data-demo-target="run"
+    >
+      <div className="demo-walkthrough__control">
+        <span className="demo-walkthrough__icon">
+          <MonitorPlay size={18} />
+        </span>
+        <div>
+          <span className="section-kicker">GUIDED DEMO</span>
+          <h2>Auto-play walkthrough</h2>
+        </div>
+        <button
+          aria-label={`${toggleLabel} walkthrough`}
+          className="button primary"
+          disabled={busy}
+          onClick={onToggle}
+          type="button"
+        >
+          {running ? (
+            <Pause size={15} />
+          ) : (
+            <Play fill="currentColor" size={14} />
+          )}
+          {toggleLabel}
+        </button>
+        <button
+          aria-label="Restart walkthrough"
+          className="icon-button"
+          onClick={onRestart}
+          type="button"
+        >
+          <RotateCcw size={17} />
+        </button>
+        <button
+          aria-label="Stop walkthrough"
+          className="icon-button"
+          disabled={mode === "idle"}
+          onClick={onStop}
+          type="button"
+        >
+          <Square size={15} />
+        </button>
+      </div>
+      {mode === "idle" ? null : (
+        <div aria-live="polite" className="demo-walkthrough__stage">
+          <div className="demo-walkthrough__annotation">
+            <span>{demoStepLabel(stepIndex)}</span>
+            <div>
+              <strong>{step.title}</strong>
+              <p>{step.detail}</p>
+            </div>
+          </div>
+          <div className="demo-walkthrough__nav">
+            <button
+              aria-label="Previous walkthrough step"
+              disabled={stepIndex === 0}
+              onClick={onBack}
+              type="button"
+            >
+              <ChevronLeft size={15} />
+            </button>
+            <div className="demo-beats">
+              {demoWalkthroughSteps.map((item, index) => (
+                <button
+                  aria-current={index === stepIndex ? "step" : undefined}
+                  className={index === stepIndex ? "current" : ""}
+                  key={item.id}
+                  onClick={() => onJump(index)}
+                  type="button"
+                >
+                  <i />
+                  <span>{item.label}</span>
+                </button>
+              ))}
+            </div>
+            <button
+              aria-label="Next walkthrough step"
+              disabled={stepIndex === demoWalkthroughSteps.length - 1}
+              onClick={onNext}
+              type="button"
+            >
+              <ChevronRight size={15} />
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function playbackButtonLabel(mode: DemoPlaybackState) {
+  if (mode === "idle") {
+    return "Start";
+  }
+  if (mode === "playing") {
+    return "Pause";
+  }
+  return "Resume";
+}
+
+function ProcessCanvasPanel({
+  canvasGraph,
+  curationStats,
+  focusClass,
+  selection,
+  setCaseId,
+  setSelection,
+  setShellView,
+}: {
+  canvasGraph: ReturnType<typeof legacyProcessToGraphView> | undefined;
+  curationStats: ReturnType<typeof curationSummary>;
+  focusClass: string;
+  selection: Selection | undefined;
+  setCaseId: (value: string | undefined) => void;
+  setSelection: (value: Selection | undefined) => void;
+  setShellView: Dispatch<SetStateAction<AppShellView>>;
+}) {
+  return (
+    <>
+      <div className={`graph-hint ${focusClass}`} data-demo-target="graph">
+        <span className="tiny-dot" />
+        Discovered from observed activity
+        <span>
+          {curationStats.active
+            ? graphCurationHint(curationStats)
+            : "Click a step or connection to see its evidence"}
+        </span>
+      </div>
+      <div className={`graph-canvas ${focusClass}`} data-demo-target="graph">
+        {canvasGraph ? (
+          <WorkflowCanvas
+            graph={canvasGraph}
+            onSelectionChange={(nextSelection) => {
+              const next = legacySelectionFromCanvas(nextSelection);
+              if (next) {
+                setSelection(next);
+                setCaseId(undefined);
+                setShellView("inspector");
+              }
+            }}
+            selection={canvasSelectionFromLegacy(selection)}
+          />
+        ) : null}
+      </div>
+      <div className="graph-legend">
+        <span>
+          <i className="legend-line" />
+          Common transition
+        </span>
+        <span>
+          <i className="legend-line dashed" />
+          Less frequent path
+        </span>
+        <span className="legend-right">Count · transition probability</span>
+      </div>
+    </>
   );
 }
 
@@ -536,10 +1025,12 @@ interface LoadedWorkspaceProps {
   answer: Answer | undefined;
   ask: (text?: string) => Promise<void>;
   asking: boolean;
+  canvasGraph: ReturnType<typeof legacyProcessToGraphView> | undefined;
   caseId: string | undefined;
   curationProjection: ReturnType<typeof applyCurationEdits> | undefined;
   curationStats: ReturnType<typeof curationSummary>;
   data: Snapshot;
+  demoMode: DemoPlaybackState;
   displayModel: ProcessModel;
   events: ActivityEvent[];
   handleCurationAction: (
@@ -547,6 +1038,8 @@ interface LoadedWorkspaceProps {
     target: CurationTarget
   ) => void;
   handleUndoCuration: () => void;
+  isDemoActive: (target: DemoTarget) => boolean;
+  isDemoTarget: (target: DemoTarget) => string;
   model: ProcessModel;
   onAbout: () => void;
   onExport: () => void;
@@ -562,6 +1055,7 @@ interface LoadedWorkspaceProps {
   setQuestion: (value: string) => void;
   setSearch: (value: string) => void;
   setSelection: (value: Selection | undefined) => void;
+  setShellView: Dispatch<SetStateAction<AppShellView>>;
   setTab: (value: string) => void;
   settings: WorkspaceSettings | null;
   settingsError: string;
@@ -574,7 +1068,10 @@ interface LoadedWorkspaceProps {
 function LoadedWorkspace(props: LoadedWorkspaceProps) {
   return (
     <>
-      <WorkspaceStats model={props.model} />
+      <WorkspaceStats
+        focusClass={props.isDemoTarget("overview")}
+        model={props.model}
+      />
       {props.tab === "settings" ? (
         <SettingsPanel
           data={props.data}
@@ -597,9 +1094,15 @@ function LoadedWorkspace(props: LoadedWorkspaceProps) {
   );
 }
 
-function WorkspaceStats({ model }: { model: ProcessModel }) {
+function WorkspaceStats({
+  focusClass,
+  model,
+}: {
+  focusClass: string;
+  model: ProcessModel;
+}) {
   return (
-    <div className="stats-row">
+    <div className={`stats-row ${focusClass}`} data-demo-target="overview">
       <Stat
         icon={<Activity size={17} />}
         label="Observed events"
@@ -656,6 +1159,7 @@ function ProcessExplorer(props: LoadedWorkspaceProps) {
           <MapPanel {...props} />
           {props.tab === "variants" && (
             <VariantsPanel
+              highlighted={props.isDemoActive("variants")}
               model={props.model}
               setCaseId={props.setCaseId}
               setSelection={props.setSelection}
@@ -666,6 +1170,7 @@ function ProcessExplorer(props: LoadedWorkspaceProps) {
         </div>
         <Inspector
           events={props.events}
+          highlighted={props.isDemoActive("inspector")}
           model={props.displayModel}
           selectedEdge={props.selectedEdge}
           selectedNode={props.selectedNode}
@@ -721,39 +1226,19 @@ function MapPanel(props: LoadedWorkspaceProps) {
   }
   return (
     <>
-      <div className="graph-hint">
-        <span className="tiny-dot" />
-        Discovered from observed activity
-        <span>
-          {props.curationStats.active
-            ? graphCurationHint(props.curationStats)
-            : "Click a step or connection to see its evidence"}
-        </span>
-      </div>
-      <div className="graph-canvas">
-        <ProcessGraph
-          curation={props.curationProjection}
-          model={props.displayModel}
-          onCurate={props.handleCurationAction}
-          onSelect={props.onGraphSelect}
-          selected={props.selection?.id}
-        />
-      </div>
+      <ProcessCanvasPanel
+        canvasGraph={props.canvasGraph}
+        curationStats={props.curationStats}
+        focusClass={props.isDemoTarget("graph")}
+        selection={props.selection}
+        setCaseId={props.setCaseId}
+        setSelection={props.setSelection}
+        setShellView={props.setShellView}
+      />
       <CurationStatusBar
         onUndo={props.handleUndoCuration}
         stats={props.curationStats}
       />
-      <div className="graph-legend">
-        <span>
-          <i className="legend-line" />
-          Common transition
-        </span>
-        <span>
-          <i className="legend-line dashed" />
-          Less frequent path
-        </span>
-        <span className="legend-right">Count · transition probability</span>
-      </div>
     </>
   );
 }
@@ -816,6 +1301,7 @@ function RecentAndAssistant({
   asking,
   data,
   question,
+  isDemoActive,
   setCaseId,
   setQuestion,
   setSelection,
@@ -825,6 +1311,7 @@ function RecentAndAssistant({
     <div className="bottom-grid">
       <RecentObservations
         data={data}
+        highlighted={isDemoActive("conversation")}
         setCaseId={setCaseId}
         setSelection={setSelection}
         setTab={setTab}
@@ -833,6 +1320,7 @@ function RecentAndAssistant({
         answer={answer}
         ask={ask}
         asking={asking}
+        highlighted={isDemoActive("assistant")}
         question={question}
         setCaseId={setCaseId}
         setQuestion={setQuestion}
@@ -845,17 +1333,22 @@ function RecentAndAssistant({
 
 function RecentObservations({
   data,
+  highlighted,
   setCaseId,
   setSelection,
   setTab,
 }: {
   data: Snapshot;
+  highlighted: boolean;
   setCaseId: (value: string | undefined) => void;
   setSelection: (value: Selection | undefined) => void;
   setTab: (value: string) => void;
 }) {
   return (
-    <section className="recent-card">
+    <section
+      className={`recent-card ${highlighted ? "is-demo-focus" : ""}`}
+      data-demo-target="conversation"
+    >
       <div className="card-heading">
         <h2>
           <Activity size={17} />
@@ -1210,6 +1703,7 @@ function AboutDialog({ onClose }: { onClose: () => void }) {
 
 interface InspectorProps {
   events: ActivityEvent[];
+  highlighted: boolean;
   model: Snapshot["model"];
   selectedEdge: Snapshot["model"]["edges"][number] | undefined;
   selectedNode: Snapshot["model"]["nodes"][number] | undefined;
@@ -1221,6 +1715,7 @@ interface InspectorProps {
 }
 function Inspector({
   model,
+  highlighted,
   selection,
   selectedNode,
   selectedEdge,
@@ -1239,6 +1734,7 @@ function Inspector({
   });
   return (
     <ProcessInspector
+      className={highlighted ? "is-demo-focus" : ""}
       details={details}
       onClearSelection={() => setSelection(undefined)}
       onInspectSources={() => {
@@ -1473,6 +1969,7 @@ interface AssistantPanelProps {
   answer: Answer | undefined;
   ask: (text?: string) => Promise<void>;
   asking: boolean;
+  highlighted: boolean;
   question: string;
   setCaseId: (value: string | undefined) => void;
   setQuestion: (value: string) => void;
@@ -1482,6 +1979,7 @@ interface AssistantPanelProps {
 function AssistantPanel({
   answer,
   asking,
+  highlighted,
   question,
   ask,
   setQuestion,
@@ -1490,7 +1988,10 @@ function AssistantPanel({
   setCaseId,
 }: AssistantPanelProps) {
   return (
-    <section className="assistant-card">
+    <section
+      className={`assistant-card ${highlighted ? "is-demo-focus" : ""}`}
+      data-demo-target="assistant"
+    >
       <div className="assistant-heading">
         <span className="assistant-icon">
           <Sparkles size={19} />
@@ -1577,19 +2078,24 @@ function AssistantPanel({
 }
 
 interface VariantsPanelProps {
+  highlighted: boolean;
   model: Snapshot["model"];
   setCaseId: (value: string | undefined) => void;
   setSelection: (value: Selection | undefined) => void;
   setTab: (value: string) => void;
 }
 function VariantsPanel({
+  highlighted,
   model,
   setSelection,
   setCaseId,
   setTab,
 }: VariantsPanelProps) {
   return (
-    <div className="variants-panel">
+    <div
+      className={`variants-panel ${highlighted ? "is-demo-focus" : ""}`}
+      data-demo-target="variants"
+    >
       <div className="section-kicker">SAME WORK. DIFFERENT PATHS.</div>
       <h3>The ways this process unfolds</h3>
       <p>Sequences reconstructed from complete case histories.</p>

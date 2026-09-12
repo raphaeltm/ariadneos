@@ -3,10 +3,15 @@ import { bodyLimit } from "hono/body-limit";
 import { editableGraph, prepareGraphEdit } from "../shared/graph-edits.ts";
 import {
   type ActivityEvent,
+  applyGraphCanvasEdits,
   duration,
+  type GraphCanvasEdit,
+  type GraphCanvasEditAction,
+  type GraphCanvasEditPayload,
   type GraphEdit,
   type GraphEditAction,
   isWorkflow,
+  type ProcessModel,
   type WorkflowId,
   workflows,
 } from "../shared/process.ts";
@@ -146,32 +151,80 @@ async function editsFor(db: D1Database, workflow: WorkflowId, session: string) {
     workflow: row.workflow,
   }));
 }
+
+async function graphCanvasEditsFor(
+  db: D1Database,
+  workflow: string,
+  session: string
+) {
+  const rows = await db
+    .prepare(
+      "SELECT id, workflow, action, payload, actor, created_at, undone FROM graph_canvas_edits WHERE session_id = ? AND workflow = ? ORDER BY created_at, id"
+    )
+    .bind(session, workflow)
+    .all<{
+      action: GraphCanvasEditAction;
+      actor: string;
+      created_at: number;
+      id: string;
+      payload: string;
+      undone: number;
+      workflow: string;
+    }>();
+  return rows.results.map((row) => ({
+    action: row.action,
+    actor: row.actor,
+    createdAt: new Date(row.created_at).toISOString(),
+    id: row.id,
+    payload: JSON.parse(row.payload) as GraphCanvasEditPayload,
+    undone: row.undone === 1,
+    workflow: row.workflow as GraphCanvasEdit["workflow"],
+  }));
+}
+async function editableGraphState(
+  db: D1Database,
+  workflow: WorkflowId,
+  session: string
+) {
+  const [events, edits, canvasEdits] = await Promise.all([
+    eventsFor(db, workflow, session),
+    editsFor(db, workflow, session),
+    graphCanvasEditsFor(db, workflow, session),
+  ]);
+  const graph = editableGraph(events, workflow, edits);
+  return {
+    canvasEdits,
+    edits,
+    events,
+    graph,
+    model: applyGraphCanvasEdits(graph.model, canvasEdits),
+  };
+}
 async function modelSnapshot(
   c: AppContext,
   workflow: WorkflowId,
   extra: Record<string, unknown> = {}
 ) {
   const sid = c.get("userId");
-  const [events, edits, session] = await Promise.all([
-    eventsFor(c.env.DB, workflow, sid),
-    editsFor(c.env.DB, workflow, sid),
+  const [state, session] = await Promise.all([
+    editableGraphState(c.env.DB, workflow, sid),
     c.env.DB.prepare("SELECT runs FROM sessions WHERE id=?")
       .bind(sid)
       .first<{ runs: number }>(),
   ]);
-  const graph = editableGraph(events, workflow, edits);
   return c.json({
     ...extra,
-    canRedo: edits.some((edit) => edit.undone),
-    canUndo: edits.some((edit) => !edit.undone),
-    conformance: graph.conformance,
-    designed: graph.designed,
-    edits,
-    events,
+    canRedo: state.edits.some((edit) => edit.undone),
+    canUndo: state.edits.some((edit) => !edit.undone),
+    canvasEdits: state.canvasEdits,
+    conformance: state.graph.conformance,
+    designed: state.graph.designed,
+    edits: state.edits,
+    events: state.events,
     generatedAt: new Date().toISOString(),
-    model: graph.model,
+    model: state.model,
     remainingRuns: 5 - (session?.runs ?? 0),
-    revision: graph.revision,
+    revision: state.graph.revision,
     source: "simulation",
     workflow: workflows.find((item) => item.id === workflow),
   });
@@ -219,6 +272,131 @@ async function insertEdit(
     )
     .run();
   return edit;
+}
+
+function isGraphCanvasEditAction(
+  value: unknown
+): value is GraphCanvasEditAction {
+  return (
+    value === "create_edge" ||
+    value === "move_edge" ||
+    value === "rename_edge" ||
+    value === "rename_node"
+  );
+}
+
+function validateGraphCanvasEdit(
+  action: GraphCanvasEditAction,
+  payload: unknown,
+  model: ProcessModel
+): GraphCanvasEditPayload | string {
+  if (!isObject(payload)) {
+    return "Graph edit payload is required.";
+  }
+  const nodeIds = new Set(model.nodes.map((node) => node.id));
+  const edgeIds = new Set(model.edges.map((modelEdge) => modelEdge.id));
+  if (action === "rename_node") {
+    return validateRenameNode(payload, nodeIds);
+  }
+  if (action === "rename_edge") {
+    return validateRenameEdge(payload, edgeIds);
+  }
+  if (action === "create_edge") {
+    return validateCreateEdge(payload, nodeIds);
+  }
+  return validateMoveEdge(payload, nodeIds, model);
+}
+
+function validateRenameNode(
+  payload: Record<string, unknown>,
+  nodeIds: ReadonlySet<string>
+) {
+  const nodeId = stringField(payload, "nodeId");
+  const label = labelField(payload);
+  if (!(nodeId && nodeIds.has(nodeId))) {
+    return "Choose an existing node to rename.";
+  }
+  if (!label) {
+    return "Enter a label from 1 to 80 characters.";
+  }
+  return { label, nodeId };
+}
+
+function validateRenameEdge(
+  payload: Record<string, unknown>,
+  edgeIds: ReadonlySet<string>
+) {
+  const edgeId = stringField(payload, "edgeId");
+  const label = labelField(payload);
+  if (!(edgeId && edgeIds.has(edgeId))) {
+    return "Choose an existing edge to rename.";
+  }
+  if (!label) {
+    return "Enter a label from 1 to 80 characters.";
+  }
+  return { edgeId, label };
+}
+
+function validateCreateEdge(
+  payload: Record<string, unknown>,
+  nodeIds: ReadonlySet<string>
+) {
+  const source = stringField(payload, "source");
+  const target = stringField(payload, "target");
+  const endpointError = validateEdgeEndpoints(source, target, nodeIds);
+  if (endpointError) {
+    return endpointError;
+  }
+  return { label: labelField(payload), source, target };
+}
+
+function validateMoveEdge(
+  payload: Record<string, unknown>,
+  nodeIds: ReadonlySet<string>,
+  model: ProcessModel
+) {
+  const edgeId = stringField(payload, "edgeId");
+  const editableEdge = model.edges.find((item) => item.id === edgeId);
+  if (!(edgeId && editableEdge)) {
+    return "Choose an existing edge to move.";
+  }
+  if (!(editableEdge.plane === "designed" || editableEdge.plane === "both")) {
+    return "Only designed edges can be moved.";
+  }
+  const source = stringField(payload, "source") ?? editableEdge.source;
+  const target = stringField(payload, "target") ?? editableEdge.target;
+  const endpointError = validateEdgeEndpoints(source, target, nodeIds);
+  if (endpointError) {
+    return endpointError;
+  }
+  return { edgeId, source, target };
+}
+
+function validateEdgeEndpoints(
+  source: string | undefined,
+  target: string | undefined,
+  nodeIds: ReadonlySet<string>
+): string | undefined {
+  if (!(source && target && nodeIds.has(source) && nodeIds.has(target))) {
+    return "Choose two existing nodes to connect.";
+  }
+  return source === target
+    ? "A designed edge needs two different nodes."
+    : undefined;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringField(source: Record<string, unknown>, key: string) {
+  const value = source[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function labelField(source: Record<string, unknown>) {
+  const value = stringField(source, "label");
+  return value && value.length <= 80 ? value : undefined;
 }
 async function quota(db: D1Database, kind: string, limit: number) {
   const bucket = `${kind}:${new Date().toISOString().slice(0, 10)}`;
@@ -461,16 +639,101 @@ app.post("/api/model/edit/redo", async (c) => {
     .run();
   return await modelSnapshot(c, workflow, { redone: edit.id });
 });
+
+app.get("/api/model/canvas-edits", async (c) => {
+  const workflow = c.req.query("workflow") ?? "vendor";
+  if (!isWorkflow(workflow)) {
+    return c.json({ error: "Unknown workflow." }, 400);
+  }
+  return c.json(await graphCanvasEditsFor(c.env.DB, workflow, c.get("userId")));
+});
+app.post("/api/model/canvas-edit", async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON." }, 400);
+  }
+  if (
+    !isObject(body) ||
+    typeof body.workflow !== "string" ||
+    !isWorkflow(body.workflow) ||
+    !isGraphCanvasEditAction(body.action)
+  ) {
+    return c.json({ error: "Choose a workflow and graph edit action." }, 400);
+  }
+  const sid = c.get("userId");
+  const state = await editableGraphState(c.env.DB, body.workflow, sid);
+  const payload = validateGraphCanvasEdit(
+    body.action,
+    body.payload,
+    state.model
+  );
+  if (typeof payload === "string") {
+    return c.json({ error: payload }, 400);
+  }
+  const edit: GraphCanvasEdit = {
+    action: body.action,
+    actor: sid,
+    createdAt: new Date().toISOString(),
+    id: crypto.randomUUID(),
+    payload,
+    workflow: body.workflow,
+  };
+  await c.env.DB.prepare(
+    "INSERT INTO graph_canvas_edits(id, session_id, workflow, action, payload, actor, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  )
+    .bind(
+      edit.id,
+      sid,
+      edit.workflow,
+      edit.action,
+      JSON.stringify(edit.payload),
+      edit.actor,
+      Date.parse(edit.createdAt)
+    )
+    .run();
+  return c.json({
+    edit,
+    model: applyGraphCanvasEdits(state.model, [...state.canvasEdits, edit]),
+  });
+});
+app.post("/api/model/canvas-edit/undo", async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON." }, 400);
+  }
+  if (
+    !isObject(body) ||
+    typeof body.workflow !== "string" ||
+    !isWorkflow(body.workflow)
+  ) {
+    return c.json({ error: "Choose a workflow." }, 400);
+  }
+  const sid = c.get("userId");
+  const latest = await c.env.DB.prepare(
+    "SELECT id FROM graph_canvas_edits WHERE session_id = ? AND workflow = ? AND undone = 0 ORDER BY created_at DESC, id DESC LIMIT 1"
+  )
+    .bind(sid, body.workflow)
+    .first<{ id: string }>();
+  if (latest) {
+    await c.env.DB.prepare(
+      "UPDATE graph_canvas_edits SET undone = 1 WHERE id = ? AND session_id = ?"
+    )
+      .bind(latest.id, sid)
+      .run();
+  }
+  const state = await editableGraphState(c.env.DB, body.workflow, sid);
+  return c.json({ model: state.model });
+});
 app.get("/api/context", async (c) => {
   const workflow = c.req.query("workflow") ?? "vendor";
   if (!isWorkflow(workflow)) {
     return c.json({ error: "Unknown workflow." }, 400);
   }
-  const graph = editableGraph(
-    await eventsFor(c.env.DB, workflow, c.get("userId")),
-    workflow,
-    await editsFor(c.env.DB, workflow, c.get("userId"))
-  );
+  const state = await editableGraphState(c.env.DB, workflow, c.get("userId"));
   return c.json({
     limitations: [
       "Observed frequencies are not execution permissions.",
@@ -479,9 +742,9 @@ app.get("/api/context", async (c) => {
     ],
     source: "simulation",
     workflow,
-    ...graph.model,
-    conformance: graph.conformance,
-    revision: graph.revision,
+    ...state.model,
+    conformance: state.graph.conformance,
+    revision: state.graph.revision,
   });
 });
 app.post("/api/simulate", async (c) => {
@@ -600,12 +863,11 @@ app.post("/api/ask", async (c) => {
     userTurn.threadKey
   );
   const contextStats = contextWindowStats(contextWindow);
-  const graph = editableGraph(
-    await eventsFor(c.env.DB, workflow, c.get("userId")),
+  const { model } = await editableGraphState(
+    c.env.DB,
     workflow,
-    await editsFor(c.env.DB, workflow, c.get("userId"))
+    c.get("userId")
   );
-  const { model } = graph;
   const summary = {
     nodes: model.nodes,
     source: "synthetic simulation",
@@ -817,6 +1079,9 @@ export default {
       ).bind(Date.now() - 86_400_000),
       env.DB.prepare(
         "DELETE FROM edits WHERE session_id IN (SELECT id FROM sessions WHERE created_at < ?)"
+      ).bind(Date.now() - 86_400_000),
+      env.DB.prepare(
+        "DELETE FROM graph_canvas_edits WHERE session_id IN (SELECT id FROM sessions WHERE created_at < ?)"
       ).bind(Date.now() - 86_400_000),
       env.DB.prepare("DELETE FROM sessions WHERE created_at < ?").bind(
         Date.now() - 86_400_000

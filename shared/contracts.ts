@@ -338,6 +338,7 @@ export interface GraphEdge {
   id: GraphEdgeId;
   is_back_edge: boolean;
   kind: FollowKind;
+  label?: string;
   observed_support: number;
   plane: GraphPlane;
   probability: number | null;

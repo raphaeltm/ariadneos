@@ -1,10 +1,17 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 test.beforeEach(async ({ context, baseURL }, testInfo) => {
   const cookies: string[] = JSON.parse(
     process.env.ARIADNE_BROWSER_COOKIES ?? "[]"
   );
-  const cookie = cookies[testInfo.title.includes("signs out") ? 2 : 0];
+  let cookieIndex = 0;
+  if (testInfo.title.includes("edits graph labels")) {
+    cookieIndex = 1;
+  }
+  if (testInfo.title.includes("signs out")) {
+    cookieIndex = 2;
+  }
+  const cookie = cookies[cookieIndex];
   if (!(cookie && baseURL)) {
     throw new Error(
       "Run browser tests through npm run test:e2e to provision real local sessions."
@@ -27,6 +34,10 @@ const VENDOR = /Vendor onboarding/;
 const REFUND = /Customer refunds/;
 const UPDATED = /new events across 6 cases/;
 const EVIDENCE = /Inspect .* source events/;
+
+async function fitGraph(page: Page) {
+  await page.getByRole("button", { name: "Fit View" }).click();
+}
 
 test("opens the dialog, contains focus, and restores it on Escape", async ({
   page,
@@ -71,10 +82,12 @@ test("refreshes persisted simulation results and exposes evidence", async ({
   await expect(cases).toHaveText("30");
   await page.reload();
   await expect(cases).toHaveText("30");
-  await expect(
-    page.getByRole("application", { name: "Process map nodes and edges" })
-  ).toBeVisible();
-  await page.locator(".react-flow__edge-interaction").first().click();
+  await fitGraph(page);
+  await page
+    .locator(".react-flow__node")
+    .filter({ hasText: "Request received" })
+    .first()
+    .click();
   await page.getByRole("button", { name: EVIDENCE }).click();
   await expect(page.locator(".events-panel .event-row").first()).toBeVisible();
   await page
@@ -123,6 +136,79 @@ test("auto-plays the guided demo walkthrough and supports beat jumps", async ({
   await expect(
     page.getByRole("button", { exact: true, name: "Resume walkthrough" })
   ).toBeVisible();
+});
+
+test("edits graph labels inline and creates designed edges by drag", async ({
+  page,
+}) => {
+  await page.goto("/app");
+  await fitGraph(page);
+  const firstNode = page
+    .locator(".react-flow__node")
+    .filter({
+      hasText: "Request received",
+    })
+    .first();
+  await firstNode.click();
+  await page.getByRole("button", { name: "Rename node" }).click();
+  await page
+    .locator('.node-rename-form input[aria-label="Node label"]')
+    .fill("Intake captured");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Node label updated.")).toBeVisible();
+  await expect(
+    page.locator(".react-flow__node").filter({ hasText: "Intake captured" })
+  ).toBeVisible();
+  await page.reload();
+  await fitGraph(page);
+  await expect(
+    page.locator(".react-flow__node").filter({ hasText: "Intake captured" })
+  ).toBeVisible();
+
+  const source = page
+    .locator(".react-flow__node")
+    .filter({ hasText: "Contract signed" })
+    .first()
+    .locator(".node-source-handle");
+  const target = page
+    .locator(".react-flow__node")
+    .filter({ hasText: "Approved" })
+    .first()
+    .locator(".node-target-handle");
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+  expect(sourceBox).toBeTruthy();
+  expect(targetBox).toBeTruthy();
+  if (!(sourceBox && targetBox)) {
+    return;
+  }
+  await page.mouse.move(
+    sourceBox.x + sourceBox.width / 2,
+    sourceBox.y + sourceBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    targetBox.x + targetBox.width / 2,
+    targetBox.y + targetBox.height / 2,
+    { steps: 8 }
+  );
+  await page.mouse.up();
+  await expect(
+    page.getByText("Designed edge added to this process map.")
+  ).toBeVisible();
+  await page.reload();
+  const modelResponse = await page.request.get("/api/model");
+  expect(modelResponse.ok()).toBe(true);
+  const snapshot = await modelResponse.json();
+  expect(snapshot.model.edges).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        plane: "designed",
+        source: "Contract signed",
+        target: "Approved",
+      }),
+    ])
+  );
 });
 
 test("exposes shell navigation, project switching, and mobile layout", async ({

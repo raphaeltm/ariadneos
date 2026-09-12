@@ -887,12 +887,6 @@ h1 {
   border: 1px solid #e4eadc;
   border-radius: 5px;
   box-shadow: 0 2px 8px #20341812;
-  opacity: 0;
-  transition: opacity 160ms ease;
-}
-.react-flow__edge:hover + .edge-curation-label,
-.edge-curation-label.selected {
-  opacity: 1;
 }
 .edge-curation-label.selected {
   color: #7a542c;

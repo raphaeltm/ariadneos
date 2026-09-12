@@ -106,20 +106,36 @@ async function eventsFor(db: D1Database, workflow: string, session: string) {
   return rows.results.map((r) => JSON.parse(r.payload) as ActivityEvent);
 }
 async function editsFor(db: D1Database, workflow: WorkflowId, session: string) {
-  const rows = await db
-    .prepare(
-      "SELECT id,workflow,action,payload,actor,created_at,undone FROM edits WHERE session_id = ? AND workflow = ? ORDER BY created_at,id LIMIT 500"
-    )
-    .bind(session, workflow)
-    .all<{
-      action: GraphEditAction;
-      actor: string;
-      created_at: number;
-      id: string;
-      payload: string;
-      undone: number;
-      workflow: WorkflowId;
-    }>();
+  let rows: D1Result<{
+    action: GraphEditAction;
+    actor: string;
+    created_at: number;
+    id: string;
+    payload: string;
+    undone: number;
+    workflow: WorkflowId;
+  }>;
+  try {
+    rows = await db
+      .prepare(
+        "SELECT id,workflow,action,payload,actor,created_at,undone FROM edits WHERE session_id = ? AND workflow = ? ORDER BY created_at,id LIMIT 500"
+      )
+      .bind(session, workflow)
+      .all<{
+        action: GraphEditAction;
+        actor: string;
+        created_at: number;
+        id: string;
+        payload: string;
+        undone: number;
+        workflow: WorkflowId;
+      }>();
+  } catch (error) {
+    if ((error as Error).message.includes("no such table: edits")) {
+      return [];
+    }
+    throw error;
+  }
   return rows.results.map((row) => ({
     action: row.action,
     actor: row.actor,

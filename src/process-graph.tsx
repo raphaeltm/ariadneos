@@ -270,9 +270,11 @@ export default function ProcessGraph({
       graph.setEdge(e.source, e.target);
     }
     dagre.layout(graph);
+    const edgeRank = (edge: ProcessModel["edges"][number]) =>
+      graph.node(edge.source)?.y ?? 0;
     return {
       edges: [...model.edges]
-        .sort((a, b) => edgeRank(graph, a) - edgeRank(graph, b))
+        .sort((a, b) => edgeRank(a) - edgeRank(b))
         .map((e) => {
           const edgeDecoration = curation?.edgeDecorations[e.id];
           return {
@@ -283,7 +285,6 @@ export default function ProcessGraph({
               label: `${e.count} · ${Math.round(e.probability * 100)}%`,
               legalActions: ["confirm", "reject", "split"],
               onCurate,
-              onEdit: onEdit ?? noopEdit,
               pending: edgeDecoration?.persistence === "pending",
             },
             id: e.id,
@@ -660,13 +661,6 @@ function CurationToolbar({
       ))}
     </div>
   );
-}
-
-function edgeRank(
-  graph: { node: (id: string) => { y?: number } | undefined },
-  edge: ProcessModel["edges"][number]
-) {
-  return graph.node(edge.source)?.y ?? 0;
 }
 
 function handleConnect(

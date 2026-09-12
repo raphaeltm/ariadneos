@@ -406,12 +406,14 @@ export interface WorkflowConformance
 
 export interface GraphDelta {
   base_revision: number;
+  conformance?: WorkflowConformance | null;
   edges_added: GraphEdge[];
   edges_removed: GraphEdgeId[];
   edges_updated: GraphEdge[];
   nodes_added: GraphNode[];
   nodes_removed: Array<ActivityId | StepId>;
   nodes_updated: GraphNode[];
+  replace?: boolean;
   revision: number;
   view_key: string;
 }

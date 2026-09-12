@@ -150,6 +150,58 @@ export interface StepStatusRequest {
   step_id: StepId;
 }
 
+export type ModelEditAction =
+  | "add_edge"
+  | "add_node"
+  | "merge"
+  | "merge_nodes"
+  | "promote"
+  | "remove_edge"
+  | "remove_node"
+  | "rename"
+  | "rename_node"
+  | "require"
+  | "retire";
+
+export interface ModelEditRevision {
+  action: string;
+  actor: string;
+  base_revision: number;
+  created_at: string;
+  id: string;
+  payload: Record<string, unknown>;
+  request_id: string | null;
+  revision: number;
+  target_edit_id: string | null;
+  undone: boolean;
+  workflow: WorkflowId;
+}
+
+export interface ModelEditRequest {
+  action: ModelEditAction;
+  base_revision?: number;
+  payload: Record<string, boolean | number | string | string[]>;
+  request_id: string;
+  scope: ConnectionScope;
+}
+
+export interface ModelEditResponse {
+  designed: {
+    edges: Array<{ from: ActivityId; probability: number; to: ActivityId }>;
+    nodes: Array<{
+      id: ActivityId;
+      label: string;
+      role_expected: string | null;
+      slug: string;
+    }>;
+    workflow_id: WorkflowId;
+  };
+  edit: ModelEditRevision;
+  graph: GraphView;
+  graph_revision: number;
+  revision: number;
+}
+
 export interface SimulationRequest {
   request_id: string;
   scenario_id: string;
@@ -162,6 +214,7 @@ export interface SimulationResponse {
 }
 
 export interface ApiAdapter {
+  applyModelEdit: (request: ModelEditRequest) => Promise<ModelEditResponse>;
   ask: (request: AskRequest, signal?: AbortSignal) => Promise<RagAnswer>;
   buildStreamUrl: (scope: ConnectionScope, after?: JournalId) => string;
   fetchSnapshot: (request: SnapshotRequest) => Promise<Snapshot>;
@@ -241,6 +294,14 @@ export function createProductionApiAdapter(
       method: "POST",
     });
   return {
+    applyModelEdit: ({ action, payload, request_id, scope }) =>
+      post<ModelEditResponse>("/api/model/edit", {
+        action,
+        payload,
+        project_id: scope.project_id,
+        request_id,
+        workflow_id: scope.workflow_id,
+      }),
     ask: (body, signal) =>
       request<RagAnswer>(
         "/api/ask",
@@ -308,6 +369,38 @@ export function createFixtureApiAdapter(
   fixtures = createClientFixtures()
 ): ApiAdapter {
   return {
+    applyModelEdit: ({ action, payload, request_id, scope }) => {
+      const { graph } = fixtures.finalSnapshot;
+      const node = graph.nodes.find(
+        (item) =>
+          item.activity.slug === payload.slug ||
+          item.activity.id === payload.activity_id
+      );
+      return Promise.resolve({
+        conformance: graph.conformance,
+        designed: {
+          edges: [],
+          nodes: [],
+          workflow_id: scope.workflow_id ?? "wf_p1_incident",
+        },
+        edit: {
+          action,
+          actor: "fixture",
+          base_revision: graph.revision - 1,
+          created_at: "2026-09-12T00:00:00.000Z",
+          id: `edt_${request_id.replaceAll("-", "_")}`,
+          payload,
+          request_id,
+          revision: graph.revision,
+          target_edit_id: null,
+          undone: false,
+          workflow: scope.workflow_id ?? "wf_p1_incident",
+        },
+        graph: node ? graph : fixtures.baseSnapshot.graph,
+        graph_revision: graph.revision,
+        revision: graph.revision,
+      });
+    },
     ask: async (request) => ({
       answer: `Fixture answer for ${request.project_id}.`,
       citations: [{ id: "pol_sec_review", kind: "kb" }],

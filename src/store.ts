@@ -369,7 +369,32 @@ function appendApplied(appliedEventIds: JournalId[], id: JournalId) {
 
 function applyGraphDelta(state: AppState, delta: GraphDelta): ApplyResult {
   const graphView = state.graphs[delta.view_key];
-  if (!graphView || graphView.revision !== delta.base_revision) {
+  if (!graphView) {
+    return {
+      effect: {
+        kind: "snapshot_required",
+        reason: "revision_mismatch",
+      },
+      state: {
+        ...state,
+        connection: {
+          ...state.connection,
+          resetReason: "revision_mismatch",
+          status: "resyncing",
+        },
+      },
+    };
+  }
+  if (delta.replace) {
+    return storeNextGraph(state, {
+      ...graphView,
+      conformance: delta.conformance ?? graphView.conformance,
+      edges: dedupeBy(delta.edges_added, (edgeItem) => edgeItem.id),
+      nodes: dedupeBy(delta.nodes_added, (nodeItem) => nodeItem.id),
+      revision: delta.revision,
+    });
+  }
+  if (graphView.revision !== delta.base_revision) {
     return {
       effect: {
         kind: "snapshot_required",
@@ -412,12 +437,15 @@ function applyGraphDelta(state: AppState, delta: GraphDelta): ApplyResult {
       .map((nodeItem) => nodeUpdates.get(nodeItem.id) ?? nodeItem),
     ...delta.nodes_added.filter((nodeItem) => !removedNodes.has(nodeItem.id)),
   ];
-  const nextGraph = {
+  return storeNextGraph(state, {
     ...graphView,
     edges: dedupeBy(edges, (edgeItem) => edgeItem.id),
     nodes: dedupeBy(nodes, (nodeItem) => nodeItem.id),
     revision: delta.revision,
-  };
+  });
+}
+
+function storeNextGraph(state: AppState, nextGraph: GraphView): ApplyResult {
   return {
     effect: { kind: "none" },
     state: {

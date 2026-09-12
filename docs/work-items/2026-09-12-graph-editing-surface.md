@@ -1,6 +1,6 @@
 # Graph editing surface
 
-Status: in-progress
+Status: in-review
 Owner: Codex agent for SAM task 01M2AXMBY2A3R09R0TK6B16CWP
 Source: GitHub issue #32 as directed by the user in-session: implement graph editing operations for add/remove/merge nodes and edges, editing-surface integration with the canvas, revision tracking, and undo/redo support. The issue body on GitHub appears stale/reused for an older replay task, so this record follows the user-provided scope and docs/specs/09-graph-interaction.md.
 Branch: sam/implement-github-issue-32-b16cwp
@@ -25,7 +25,7 @@ Add a focused graph editing slice to the existing TypeScript/Hono Worker, D1, Re
 ## Changes
 - Added `shared/graph-edits.ts` with base designed models for the existing workflows, active edit projection, conformance recalculation, revision strings, merge rewiring, node/edge hiding, and server-side edit validation.
 - Extended `shared/process.ts` with graph edit action/log metadata and optional snapshot fields for conformance, revision, edit history, and undo/redo availability.
-- Added `migrations/0007_graph_edits.sql` with the session-scoped `edits` table and index.
+- Added `migrations/0008_graph_edits.sql` with the session-scoped `edits` table and index.
 - Updated `server/index.ts` so `/api/model`, `/api/context`, and `/api/ask` use the edited projection; added `GET /api/model/edits`, `POST /api/model/edit`, `POST /api/model/edit/undo`, and `POST /api/model/edit/redo`.
 - Updated `src/process-graph.tsx`, `src/app.tsx`, and `src/style.css` with plane-aware node/edge rendering, node toolbars, inline node add/rename controls, edge creation from handles, merge-on-drag, inspector edit actions, revision display, and undo/redo buttons plus keyboard shortcuts.
 - Added `tests/graph-edits.test.ts` for promotion, add/remove node and edge, merge rewiring, rename, retire, reject, require, undo/redo flags, role-deviation recomputation, and illegal edit rejection.
@@ -34,12 +34,13 @@ Add a focused graph editing slice to the existing TypeScript/Hono Worker, D1, Re
 - `npm ci`: passed.
 - `npm run fix`: passed after formatter/lint-driven refactors; final run reported no fixes applied.
 - `npm exec -- vitest run tests/graph-edits.test.ts tests/request.test.ts tests/auth.test.ts`: passed, 26 tests before later graph-edit coverage expansion.
-- `npm run check`: passed lint, typecheck, fixture validation, 125 coverage tests, guardrail probes, migration smoke with `0007_graph_edits.sql`, and production build.
+- `npm run check`: passed lint, typecheck, fixture validation, 141 coverage tests, guardrail probes, migration smoke with `0008_graph_edits.sql`, and production build.
 - Initial `npm run check:repo` failed because `ruff` was not installed. Installed Ruff 0.16.7 under `/tmp/ariadneos-ruff-0.16.7/ruff-x86_64-unknown-linux-gnu`.
 - Second `npm run check:repo` failed because Playwright Chromium was not installed. Ran `npm exec --no -- playwright install --with-deps chromium`.
-- `PATH="/tmp/ariadneos-ruff-0.16.7/ruff-x86_64-unknown-linux-gnu:$PATH" npm run check:repo`: passed work-item tests, work-item context, Ruff, full app checks, dependency audit, isolated Worker/D1/API smoke, and 5 Chromium browser tests.
-- `PATH="/tmp/ariadneos-ruff-0.16.7/ruff-x86_64-unknown-linux-gnu:$PATH" python3 scripts/check_quality.py`: passed the same full quality suite.
+- `PATH="/tmp/ariadneos-ruff-0.16.7/ruff-x86_64-unknown-linux-gnu:$PATH" npm run check:repo`: passed work-item tests, work-item context, Ruff, full app checks, dependency audit, isolated Worker/D1/API smoke, and 6 Chromium browser tests with `0008_graph_edits.sql` after the main-branch graph KB migration.
+- `PATH="/tmp/ariadneos-ruff-0.16.7/ruff-x86_64-unknown-linux-gnu:$PATH" python3 scripts/check_quality.py`: passed the same full quality suite after the rebase and migration rename.
 - `python3 scripts/check_work_items.py --base origin/main`: passed after staging; first attempt failed because the new work item had not been staged yet.
+- `git diff --check`: passed after the rebase and migration rename.
 - Staging verification skipped per the user's explicit time-critical instruction.
 
 ## Risks and rollback
@@ -49,3 +50,8 @@ Add a focused graph editing slice to the existing TypeScript/Hono Worker, D1, Re
 
 ## Next steps
 - Monitor PR #69 CI and merge only when required checks are green. Staging verification is intentionally skipped for this task per user instruction.
+
+## Post-rebase update
+- Rebased onto current `origin/main` after main advanced with graph KB persistence work. Renamed this task's migration from `0007_graph_edits.sql` to `0008_graph_edits.sql` so the migration order remains unique.
+- Refactored `src/app.tsx` shell helpers and simulation runner after the rebase to stay within the repository cognitive-complexity gate.
+- Re-ran the required quality commands after the rebase and migration rename before pushing the PR branch.

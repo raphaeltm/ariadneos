@@ -24,6 +24,8 @@ The AI binding calls Cloudflare even during local development. Authenticate Wran
 
 ## Deploy
 
+For automatic deployment on merge, staging, GitHub secrets, and rollback, see [Cloudflare deployments](deployment.md).
+
 The checked-in Wrangler configuration targets the `ariadneos-demo` Worker and D1 database. For another account, create your own D1 database and replace `database_id` in `wrangler.jsonc`. Ensure the account has a workers.dev subdomain. Supply account credentials through your shell or secret manager, then:
 
 ```sh

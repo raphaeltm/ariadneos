@@ -118,3 +118,7 @@ A realistic hackathon demo would be:
 4. Visualize the inferred process graph.
 5. Give an agent access to the discovered model.
 6. Have the agent explain or reproduce one workflow.
+
+## Development workflow
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for PR checks, review gates, and deployment evidence. Humans and agents keep decisions, validation, and handoffs in [work items](docs/work-items/README.md); agents start with [AGENTS.md](AGENTS.md).

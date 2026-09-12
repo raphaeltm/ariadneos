@@ -399,7 +399,7 @@ export function WorkflowCanvas({
           edgesReconnectable={canEdit}
           edgeTypes={edgeTypes}
           fitView
-          fitViewOptions={{ padding: 0.25 }}
+          fitViewOptions={{ padding: 0.5 }}
           maxZoom={1.5}
           minZoom={0.3}
           nodes={nodes}
@@ -427,7 +427,7 @@ export function WorkflowCanvas({
             }
           }}
           onInit={setFlow}
-          onKeyDown={handleCanvasKeyDown}
+          onKeyDownCapture={handleCanvasKeyDown}
           onNodeClick={(_, node) => {
             rememberSelection();
             onSelectionChange?.(

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { createHmac, randomUUID } from "node:crypto";
 
-// Read-only checks: production verification never creates simulation data or calls AI.
+// Read-only checks: production verification never creates simulation data.
+// The staging agent smoke path may call the configured model until its shared budget is exhausted.
 const [base, environment, revision] = process.argv.slice(2);
 assert.ok(
   base && ["staging", "production"].includes(environment),
@@ -15,6 +16,7 @@ assert.equal(
 const APP_NAME = /AriadneOS/;
 const SCRIPT = /src="([^"]+\.js)"/;
 const JAVASCRIPT = /javascript/;
+const BUDGET = /budget/i;
 async function check() {
   const response = await fetch(`${base}/api/health`, {
     cache: "no-store",
@@ -130,15 +132,24 @@ async function check() {
       method: "POST",
       signal: AbortSignal.timeout(30_000),
     });
-    assert.equal(smokeResponse.status, 200, "Agent smoke must succeed");
     const smoke = await smokeResponse.json();
-    assert.equal(smoke.ok, true);
-    assert.equal(smoke.status, "ok");
-    assert.ok(
-      ["mastra-embedded", "typed-fetch"].includes(smoke.executor),
-      "Smoke response must report the executor that passed"
-    );
-    assert.equal(smoke.model, agentStatus.config.models.answer);
+    if (smokeResponse.status === 429) {
+      assert.equal(
+        smoke.status,
+        "budget_exhausted",
+        "Agent smoke 429 must be the shared budget guard"
+      );
+      assert.match(smoke.error ?? "", BUDGET);
+    } else {
+      assert.equal(smokeResponse.status, 200, "Agent smoke must succeed");
+      assert.equal(smoke.ok, true);
+      assert.equal(smoke.status, "ok");
+      assert.ok(
+        ["mastra-embedded", "typed-fetch"].includes(smoke.executor),
+        "Smoke response must report the executor that passed"
+      );
+      assert.equal(smoke.model, agentStatus.config.models.answer);
+    }
   }
   console.log(
     `PASS: ${base} serves ${environment} ${health.revision}; TLS, D1, app bundle, auth availability, Slack webhook signing, anonymous data protection, and agent runtime status verified.`

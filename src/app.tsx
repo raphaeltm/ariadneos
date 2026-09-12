@@ -1,83 +1,53 @@
-import { AccountMenu } from "./auth-gate.tsx";
-import "@xyflow/react/dist/style.css";
 import {
   Activity,
   ArrowDownToLine,
-  ArrowRight,
   ArrowUpRight,
   Check,
   ChevronLeft,
   ChevronRight,
-  Clock3,
   Cloud,
-  ExternalLink,
   GitBranch,
   Layers3,
-  Link2,
   LoaderCircle,
   MonitorPlay,
   Pause,
   Play,
-  Plus,
-  Redo2,
   RefreshCw,
   RotateCcw,
   Search,
+  Send,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Square,
-  Trash2,
-  Undo2,
-  Unlink,
-  Waypoints,
   X,
 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+  Message,
+  ProcessSession,
+  ProjectId,
+  StepId,
+  WorkflowId,
+} from "../shared/contracts.ts";
 import {
-  type Dispatch,
-  type RefObject,
-  type SetStateAction,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import {
-  type ActivityEvent,
-  duration,
-  type GraphCanvasEditAction,
-  type GraphCanvasEditPayload,
-  type GraphEditAction,
-  type ProcessModel,
-  type Snapshot,
-  type WorkflowId,
-  workflows,
-} from "../shared/process.ts";
-import {
-  type WorkflowId as ContractWorkflowId,
+  type ApiAdapter,
+  type ConnectionScope,
   createProductionApiAdapter,
-  type ProjectId,
-  type RagAnswer,
+  type ModelEditAction,
 } from "./api.ts";
+import { AccountMenu } from "./auth-gate.tsx";
 import { AgentChatPanel } from "./components/agent-chat/agent-chat-panel.tsx";
 import AppShell, {
   type AppShellView,
 } from "./components/app-shell/app-shell.tsx";
-import { buildLegacyInspectorDetails } from "./components/inspector/inspector-data.ts";
-import { ProcessInspector } from "./components/inspector/process-inspector.tsx";
-import { WorkflowCanvas } from "./components/process-canvas/workflow-canvas.tsx";
 import {
-  applyCurationEdits,
-  type CurationAction,
-  type CurationDraft,
-  createCurationDraft,
-  curationSummary,
-  persistCurationDraft,
-  persistCurationUndo,
-  undoLastCurationDraft,
-  updateCurationDraft,
-} from "./curation.ts";
+  buildContractInspectorDetails,
+  type InspectorCurationItem,
+} from "./components/inspector/inspector-data.ts";
+import { ProcessInspector } from "./components/inspector/process-inspector.tsx";
+import type { GraphEditHandler } from "./components/process-canvas/types.ts";
+import { WorkflowCanvas } from "./components/process-canvas/workflow-canvas.tsx";
 import {
   clampDemoStepIndex,
   type DemoPlaybackState,
@@ -88,18 +58,20 @@ import {
   firstDemoWalkthroughStep,
   nextDemoStepIndex,
 } from "./demo-walkthrough.ts";
+import { createSseClient } from "./sse.ts";
 import {
-  canvasSelectionFromLegacy,
-  legacyActivityId,
-  legacyEdgeId,
-  legacyProcessToGraphView,
-  legacySelectionFromCanvas,
-} from "./legacy-canvas-bridge.ts";
+  type AppSelection,
+  type AppState,
+  applyJournalEvent,
+  applySnapshot,
+  beginSnapshotLoad,
+  createInitialState,
+  failSnapshotLoad,
+  scopeKey,
+  selectCurrentGraph,
+  selectProject,
+} from "./store.ts";
 
-interface Selection {
-  id: string;
-  kind: "node" | "edge";
-}
 interface WorkspaceSettings {
   auth: {
     provider: string;
@@ -132,223 +104,385 @@ interface WorkspaceSettings {
   };
 }
 
-interface GraphEditing {
-  addLabel: string;
-  editBusy: boolean;
-  editGraph: (
-    action: GraphEditAction,
-    payload: Record<string, string>
-  ) => Promise<void>;
-  redoGraphEdit: () => Promise<void>;
-  setAddLabel: (value: string) => void;
-  submitAddNode: (event: { preventDefault: () => void }) => Promise<void>;
-  undoGraphEdit: () => Promise<void>;
+interface AskAnswer {
+  answer: string;
+  evidence?: string[];
+  mode?: "ai" | "summary";
+  notice?: string;
 }
 
-interface GraphCanvasEditResponse {
-  model: ProcessModel;
-}
-
-async function api<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(
-    path,
-    body
-      ? {
-          body: JSON.stringify(body),
-          headers: { "Content-Type": "application/json" },
-          method: "POST",
-        }
-      : undefined
-  );
-  const json = (await response.json()) as T & { error?: string };
-  if (!response.ok) {
-    throw new Error(json.error ?? "Unable to reach AriadneOS.");
-  }
-  return json;
-}
-const initials = (name: string) =>
-  name
-    .split(" ")
-    .map((n) => n[0])
-    .join("");
-const time = (date: string) =>
-  new Date(date).toLocaleString(undefined, {
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    month: "short",
-  });
-const explorerTabs = [
-  ["map", "Process map", Waypoints],
-  ["variants", "Variants", GitBranch],
-  ["events", "Event log", Activity],
-] as const;
-
-function useGraphEditing({
-  currentWorkflow,
-  setCurationEdits,
-  setData,
-  setError,
-  setNotice,
-  workflow,
-}: {
-  currentWorkflow: RefObject<WorkflowId>;
-  setCurationEdits: Dispatch<SetStateAction<CurationDraft[]>>;
-  setData: Dispatch<SetStateAction<Snapshot | null>>;
-  setError: (value: string) => void;
-  setNotice: (value: string) => void;
-  workflow: WorkflowId;
-}): GraphEditing {
-  const [editBusy, setEditBusy] = useState(false);
-  const [addLabel, setAddLabel] = useState("");
-  async function postEdit(path: string, body: unknown, notice: string) {
-    setEditBusy(true);
-    setError("");
-    try {
-      const result = await api<Snapshot>(path, body);
-      if (currentWorkflow.current === workflow) {
-        setCurationEdits([]);
-        setData(result);
-        setNotice(notice);
-      }
-    } catch (error) {
-      setError((error as Error).message);
-    } finally {
-      setEditBusy(false);
-    }
-  }
-  async function editGraph(
-    action: GraphEditAction,
-    payload: Record<string, string>
-  ) {
-    await postEdit(
-      "/api/model/edit",
-      { action, payload, workflow },
-      editNotice(action)
-    );
-  }
-  const undoGraphEdit = () =>
-    postEdit("/api/model/edit/undo", { workflow }, "Graph edit undone.");
-  const redoGraphEdit = () =>
-    postEdit("/api/model/edit/redo", { workflow }, "Graph edit redone.");
-  async function submitAddNode(event: { preventDefault: () => void }) {
-    event.preventDefault();
-    const label = addLabel.trim();
-    if (!label) {
-      return;
-    }
-    setAddLabel("");
-    await editGraph("add_node", { label });
-  }
-  return {
-    addLabel,
-    editBusy,
-    editGraph,
-    redoGraphEdit,
-    setAddLabel,
-    submitAddNode,
-    undoGraphEdit,
-  };
-}
-
-const chatScopes: Record<
-  WorkflowId,
-  { projectId: ProjectId; workflowId: ContractWorkflowId }
-> = {
-  access: { projectId: "proj_atlas", workflowId: "wf_access" },
-  refund: { projectId: "proj_helios", workflowId: "wf_refund" },
-  vendor: { projectId: "proj_helios", workflowId: "wf_vendor" },
+const defaultScope: ConnectionScope = {
+  channel: "",
+  min_support: 1,
+  project_id: "proj_helios",
+  view: "overlay",
+  workflow_id: "wf_p1_incident",
+  workspace_id: "",
 };
 
+const projectFallbacks = [
+  {
+    id: "proj_helios" as ProjectId,
+    label: "Helios Payments",
+    workflowId: "wf_p1_incident" as WorkflowId,
+  },
+  {
+    id: "proj_atlas" as ProjectId,
+    label: "Atlas Self-Serve Billing",
+    workflowId: "wf_feature_intake" as WorkflowId,
+  },
+];
+
+const legacyAskWorkflow: Record<string, string> = {
+  wf_feature_intake: "refund",
+  wf_p1_incident: "vendor",
+};
+
+const activityIdPrefixPattern = /^act_/;
 const demoStepKeyPattern = /^[1-6]$/;
 
-function chatScopeForWorkflow(workflow: WorkflowId) {
-  return chatScopes[workflow];
+function isTextEntryTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement
+    ? target.matches("input, textarea, select, [contenteditable='true']")
+    : false;
 }
 
-interface DemoControllerInput {
-  busy: boolean;
-  data: Snapshot | null;
-  loading: boolean;
-  model: Snapshot["model"] | undefined;
-  run: () => Promise<void>;
-  setCaseId: Dispatch<SetStateAction<string | undefined>>;
-  setNotice: Dispatch<SetStateAction<string>>;
-  setSearch: Dispatch<SetStateAction<string>>;
-  setSelection: Dispatch<SetStateAction<Selection | undefined>>;
-  setShellView: Dispatch<SetStateAction<AppShellView>>;
-  setTab: Dispatch<SetStateAction<string>>;
-  workflow: WorkflowId;
+function isCanvasClearKey(key: string) {
+  return key === "backspace" || key === "delete" || key === "escape";
 }
 
-function useDemoWalkthroughController({
-  busy,
-  data,
-  loading,
-  model,
-  run,
-  setCaseId,
-  setNotice,
-  setSearch,
-  setSelection,
-  setShellView,
-  setTab,
-  workflow,
-}: DemoControllerInput) {
+function isUndoShortcut(event: KeyboardEvent, key: string) {
+  return (event.metaKey || event.ctrlKey) && key === "z";
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: The route component coordinates the app shell, snapshot/SSE lifecycle, simulator, curation and agent controls.
+export default function App() {
+  const adapter = useMemo(() => createProductionApiAdapter(), []);
+  const [state, setState] = useState(() => createInitialState(defaultScope));
+  const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsError, setSettingsError] = useState("");
+  const [settingsRefresh, setSettingsRefresh] = useState(0);
+  const [reloadToken, setReloadToken] = useState(0);
+  const [shellView, setShellView] = useState<AppShellView>("graph");
+  const [notice, setNotice] = useState("");
+  const [simulating, setSimulating] = useState(false);
+  const [modelEditing, setModelEditing] = useState(false);
+  const [addNodeLabel, setAddNodeLabel] = useState("");
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [answer, setAnswer] = useState<AskAnswer | null>(null);
   const [demoMode, setDemoMode] = useState<DemoPlaybackState>("idle");
   const [demoStepIndex, setDemoStepIndex] = useState(0);
   const demoRunStarted = useRef(false);
-  const currentDemoWorkflow = useRef(workflow);
+  const lastCanvasSelection = useRef<AppSelection | null>(null);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const { scope: snapshotScope } = state;
+
+  useEffect(() => {
+    let active = true;
+    setSettingsLoading(true);
+    setSettingsError("");
+    fetch(`/api/settings?refresh=${settingsRefresh}`)
+      .then(async (response) => {
+        const payload = (await response.json()) as
+          | WorkspaceSettings
+          | { error?: string };
+        if (!response.ok) {
+          throw new Error(
+            "error" in payload && payload.error
+              ? payload.error
+              : "Unable to load settings."
+          );
+        }
+        return payload as WorkspaceSettings;
+      })
+      .then((payload) => {
+        if (!active) {
+          return;
+        }
+        const scoped = {
+          ...stateRef.current.scope,
+          channel: payload.slack.channel ?? "",
+          workspace_id: payload.slack.workspaceId ?? "",
+        };
+        setSettings(payload);
+        setState((current) => ({
+          ...current,
+          scope: scoped,
+          scopeKey: scopeKey(scoped),
+        }));
+      })
+      .catch((caught) => {
+        if (active) {
+          setSettingsError((caught as Error).message);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setSettingsLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [settingsRefresh]);
+
+  useEffect(() => {
+    const scope = snapshotScope;
+    if (!(scope.project_id && scope.workflow_id)) {
+      return;
+    }
+    const controller = new AbortController();
+    const requestId = `${reloadToken}:${crypto.randomUUID()}`;
+    setState((current) => beginSnapshotLoad(current, scope, requestId));
+    adapter
+      .fetchSnapshot({ scope, signal: controller.signal })
+      .then((snapshot) => {
+        setState((current) =>
+          applySnapshot(current, snapshot, scope, requestId)
+        );
+      })
+      .catch((caught) => {
+        if (!controller.signal.aborted) {
+          setState((current) =>
+            failSnapshotLoad(current, requestId, caught as Error)
+          );
+        }
+      });
+    return () => controller.abort();
+  }, [adapter, snapshotScope, reloadToken]);
+
+  const graph = selectCurrentGraph(state);
+
+  useEffect(() => {
+    if (!graph) {
+      return;
+    }
+    const client = createSseClient({
+      adapter,
+      after: state.connection.lastEventId ?? undefined,
+      document,
+      onEvent: (event) => {
+        setState((current) => {
+          const result = applyJournalEvent(current, event);
+          if (result.effect.kind === "snapshot_required") {
+            setReloadToken((value) => value + 1);
+          }
+          return result.state;
+        });
+      },
+      onSnapshotRequired: () => setReloadToken((value) => value + 1),
+      scope: state.scope,
+    });
+    try {
+      client.start();
+    } catch {
+      return;
+    }
+    return () => client.stop();
+  }, [adapter, graph, state.connection.lastEventId, state.scope]);
+
+  const projectOptions = useMemo(() => {
+    const projects =
+      state.kb?.projects.map((project) => ({
+        id: project.id,
+        label: project.name,
+        workflowId: project.workflow_id,
+      })) ?? projectFallbacks;
+    return projects.map((project) => ({
+      id: project.id,
+      label: project.label,
+      workflowId: project.workflowId,
+    }));
+  }, [state.kb]);
+  const activeProject = projectOptions.find(
+    (project) => project.id === state.scope.project_id
+  );
+  const sessions = useMemo(
+    () =>
+      Object.values(state.sessions)
+        .filter((session) => session.project_id === state.scope.project_id)
+        .sort((a, b) => b.started_ts.localeCompare(a.started_ts)),
+    [state.scope.project_id, state.sessions]
+  );
+  const messages = useMemo(
+    () =>
+      Object.values(state.messages).sort((a, b) =>
+        b.received_at.localeCompare(a.received_at)
+      ),
+    [state.messages]
+  );
+  const selectedSession = state.selection.case_id
+    ? state.sessions[state.selection.case_id]
+    : undefined;
+  const inspectorDetails = useMemo(
+    () =>
+      buildContractInspectorDetails({
+        conformance: Object.values(state.conformance),
+        graph,
+        kb: state.kb,
+        messages: state.messages,
+        selection: state.selection,
+        sessions: state.sessions,
+        steps: state.steps,
+      }),
+    [graph, state]
+  );
+
+  const chooseProject = (projectId: string) => {
+    const project = projectOptions.find((item) => item.id === projectId);
+    if (!project) {
+      return;
+    }
+    setAnswer(null);
+    setNotice("");
+    setShellView("graph");
+    setState((current) =>
+      selectProject(current, project.id, project.workflowId)
+    );
+  };
+
+  const select = (selection: AppSelection) => {
+    const opensInspectorView = Boolean(
+      selection.case_id || selection.message_id
+    );
+    setShellView(opensInspectorView ? "inspector" : "graph");
+    setState((current) => ({
+      ...current,
+      selection: {
+        ...selection,
+        workflow_id: selection.workflow_id ?? current.scope.workflow_id,
+      },
+    }));
+  };
+
+  const clearSelection = useCallback(() => {
+    setState((current) => ({
+      ...current,
+      selection: { workflow_id: current.scope.workflow_id },
+    }));
+  }, []);
+
+  const hasActiveCanvasSelection = useCallback(
+    () =>
+      Boolean(
+        stateRef.current.selection.edge_id || stateRef.current.selection.node_id
+      ),
+    []
+  );
+
+  const restoreLastCanvasSelection = useCallback((event: KeyboardEvent) => {
+    const previous = lastCanvasSelection.current;
+    if (!previous) {
+      return;
+    }
+    event.preventDefault();
+    setState((current) => ({
+      ...current,
+      selection: {
+        ...previous,
+        workflow_id: previous.workflow_id ?? current.scope.workflow_id,
+      },
+    }));
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isTextEntryTarget(event.target) || shellView !== "graph") {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (isUndoShortcut(event, key)) {
+        restoreLastCanvasSelection(event);
+        return;
+      }
+      if (hasActiveCanvasSelection() && isCanvasClearKey(key)) {
+        event.preventDefault();
+        clearSelection();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", onKeyDown, { capture: true });
+  }, [
+    clearSelection,
+    hasActiveCanvasSelection,
+    restoreLastCanvasSelection,
+    shellView,
+  ]);
+
+  const runSimulation = async () => {
+    setSimulating(true);
+    setNotice("");
+    try {
+      const scenario =
+        state.scope.project_id === "proj_atlas"
+          ? {
+              id: "atlas_feature",
+              variant: "v2_roadmap_bypass",
+            }
+          : {
+              id: "helios_p1",
+              variant: "v2_skip_review",
+            };
+      const result = await adapter.runSimulation({
+        request_id: crypto.randomUUID(),
+        scenario_id: scenario.id,
+        scope: state.scope,
+        variant: scenario.variant,
+      });
+      setNotice(`Demo simulation persisted as ${result.session_id}.`);
+      setReloadToken((value) => value + 1);
+    } catch (caught) {
+      setNotice((caught as Error).message);
+    } finally {
+      setSimulating(false);
+    }
+  };
+
   const demoStep: DemoWalkthroughStep =
     demoWalkthroughSteps[demoStepIndex] ?? firstDemoWalkthroughStep;
   const activeDemoTarget = demoMode === "idle" ? undefined : demoStep.target;
-  const canRunSimulation =
-    !(busy || loading) && data !== null && data.remainingRuns !== 0;
-  const isDemoActive = (target: DemoTarget) => activeDemoTarget === target;
+  const canRunDemo =
+    !simulating &&
+    state.loading.requestId === null &&
+    state.scope.project_id === "proj_helios";
   const isDemoTarget = (target: DemoTarget) =>
-    isDemoActive(target) ? "is-demo-focus" : "";
+    activeDemoTarget === target ? "is-demo-focus" : "";
   const goToDemoStep = useCallback((index: number) => {
     setDemoStepIndex(clampDemoStepIndex(index));
-    setDemoMode((current) => (current === "idle" ? "paused" : current));
+    setDemoMode((current) => (current === "idle" ? "playing" : current));
   }, []);
   const advanceDemoStep = useCallback((direction: -1 | 1) => {
     setDemoStepIndex((current) => nextDemoStepIndex(current, direction));
-    setDemoMode((current) => (current === "idle" ? "paused" : current));
+    setDemoMode((current) => (current === "idle" ? "playing" : current));
   }, []);
   const stopDemo = useCallback(() => {
     setDemoMode("idle");
     setDemoStepIndex(0);
-    setSelection(undefined);
-    setCaseId(undefined);
-    setNotice("");
-  }, [setCaseId, setNotice, setSelection]);
-  const restartDemo = useCallback(() => {
     demoRunStarted.current = false;
+    clearSelection();
+    setNotice("");
+  }, [clearSelection]);
+  const restartDemo = useCallback(() => {
     setDemoStepIndex(0);
+    demoRunStarted.current = false;
     setDemoMode("playing");
-    setSelection(undefined);
-    setCaseId(undefined);
-    setSearch("");
-    setTab("map");
     setShellView("graph");
-  }, [setCaseId, setSearch, setSelection, setShellView, setTab]);
-  const toggleDemoPlayback = useCallback(() => {
-    setDemoMode((current) => {
-      if (current === "playing") {
-        return "paused";
-      }
-      return "playing";
-    });
-  }, []);
-  useEffect(() => {
-    if (currentDemoWorkflow.current === workflow) {
+    clearSelection();
+    setNotice("");
+  }, [clearSelection]);
+  const toggleDemo = useCallback(() => {
+    if (demoMode === "idle") {
+      restartDemo();
       return;
     }
-    currentDemoWorkflow.current = workflow;
-    demoRunStarted.current = false;
-    setDemoMode("idle");
-    setDemoStepIndex(0);
-  });
+    setDemoMode((current) => (current === "playing" ? "paused" : "playing"));
+  }, [demoMode, restartDemo]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Walkthrough effects intentionally react to the visible step and live graph state while using stable app actions.
   useEffect(() => {
     if (demoMode === "idle") {
       return;
@@ -356,103 +490,89 @@ function useDemoWalkthroughController({
     switch (demoStep.action) {
       case "ask":
         setShellView("chat");
-        setTab("map");
         break;
       case "events":
-        setShellView("graph");
-        setTab("events");
-        setSelection(undefined);
-        setCaseId(undefined);
+        setShellView("activity");
         break;
       case "graph":
         setShellView("graph");
-        setTab("map");
-        setSelection(undefined);
-        setCaseId(undefined);
         break;
       case "run":
         setShellView("graph");
-        setTab("map");
-        setSelection(undefined);
-        setCaseId(undefined);
-        if (!(demoRunStarted.current || !canRunSimulation)) {
+        if (!(demoRunStarted.current || !canRunDemo)) {
           demoRunStarted.current = true;
-          run().catch((error: unknown) => {
-            setNotice((error as Error).message);
-          });
+          runSimulation().catch(() => undefined);
         }
         break;
       case "select-edge": {
-        setShellView("inspector");
-        setTab("map");
-        const edge = model?.edges.find((item) => item.evidence.length > 0);
+        const edge = graph?.edges[0];
         if (edge) {
-          setSelection((current) =>
-            current?.id === edge.id && current.kind === "edge"
-              ? current
-              : { id: edge.id, kind: "edge" }
-          );
+          setShellView("inspector");
+          setState((current) => ({
+            ...current,
+            selection: {
+              edge_id: edge.id,
+              workflow_id: current.scope.workflow_id,
+            },
+          }));
         }
         break;
       }
       case "select-node": {
-        setShellView("inspector");
-        setTab("map");
         const node =
-          model?.nodes.find((item) => item.count > 1 && !item.terminal) ??
-          model?.nodes[0];
+          graph?.nodes.find((item) =>
+            item.activity.label.toLowerCase().includes("root cause")
+          ) ?? graph?.nodes[0];
         if (node) {
-          setSelection((current) =>
-            current?.id === node.id && current.kind === "node"
-              ? current
-              : { id: node.id, kind: "node" }
-          );
+          setShellView("inspector");
+          setState((current) => ({
+            ...current,
+            selection: {
+              node_id: node.id,
+              workflow_id: current.scope.workflow_id,
+            },
+          }));
         }
         break;
       }
       case "variants":
         setShellView("graph");
-        setTab("variants");
-        setSelection(undefined);
-        setCaseId(undefined);
         break;
       default:
         break;
     }
-  }, [
-    canRunSimulation,
-    demoMode,
-    demoStep.action,
-    model,
-    run,
-    setCaseId,
-    setNotice,
-    setSelection,
-    setShellView,
-    setTab,
-  ]);
+  }, [canRunDemo, demoMode, demoStep.action, graph]);
+
   useEffect(() => {
-    if (demoMode !== "playing" || loading || busy) {
+    if (demoMode !== "playing") {
       return;
     }
-    if (demoStepIndex === demoWalkthroughSteps.length - 1) {
-      const timeout = window.setTimeout(() => setDemoMode("paused"), 1600);
-      return () => window.clearTimeout(timeout);
-    }
-    const timeout = window.setTimeout(
-      () => setDemoStepIndex((current) => nextDemoStepIndex(current, 1)),
-      demoStep.durationMs
-    );
-    return () => window.clearTimeout(timeout);
-  }, [busy, demoMode, demoStep.durationMs, demoStepIndex, loading]);
+    const timer = window.setTimeout(() => {
+      setDemoStepIndex((current) => {
+        if (current === demoWalkthroughSteps.length - 1) {
+          setDemoMode("paused");
+          return current;
+        }
+        return nextDemoStepIndex(current, 1);
+      });
+    }, demoStep.durationMs);
+    return () => window.clearTimeout(timer);
+  }, [demoMode, demoStep.durationMs]);
+
   useEffect(() => {
+    if (demoMode === "idle") {
+      return;
+    }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || shouldIgnoreShortcut(event)) {
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.matches("input, textarea, select, [contenteditable='true']")
+      ) {
         return;
       }
-      if (event.code === "Space") {
+      if (demoStepKeyPattern.test(event.key)) {
         event.preventDefault();
-        toggleDemoPlayback();
+        goToDemoStep(Number(event.key) - 1);
         return;
       }
       if (event.key === "ArrowRight") {
@@ -465,308 +585,191 @@ function useDemoWalkthroughController({
         advanceDemoStep(-1);
         return;
       }
-      if (demoStepKeyPattern.test(event.key)) {
+      if (event.key === " ") {
         event.preventDefault();
-        goToDemoStep(Number(event.key) - 1);
+        toggleDemo();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [advanceDemoStep, goToDemoStep, toggleDemoPlayback]);
-  return {
-    advanceDemoStep,
-    demoMode,
-    demoStepIndex,
-    goToDemoStep,
-    isDemoActive,
-    isDemoTarget,
-    restartDemo,
-    stopDemo,
-    toggleDemoPlayback,
-  };
-}
+  }, [demoMode, goToDemoStep, advanceDemoStep, toggleDemo]);
 
-function activeShellView(tab: string, shellView: AppShellView) {
-  if (tab === "settings") {
-    return "settings";
-  }
-  return shellView;
-}
-export default function App() {
-  const [workflow, setWorkflow] = useState<WorkflowId>("vendor");
-  const [data, setData] = useState<Snapshot | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
-  const [tab, setTab] = useState("map");
-  const [shellView, setShellView] = useState<AppShellView>("graph");
-  const [workspace, setWorkspace] = useState("demo");
-  const [selection, setSelection] = useState<Selection>();
-  const [caseId, setCaseId] = useState<string>();
-  const [search, setSearch] = useState("");
-  const [info, setInfo] = useState(false);
-  const [refresh, setRefresh] = useState(0);
-  const [curationEdits, setCurationEdits] = useState<CurationDraft[]>([]);
-  const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
-  const [settingsLoading, setSettingsLoading] = useState(true);
-  const [settingsError, setSettingsError] = useState("");
-  const [settingsRefresh, setSettingsRefresh] = useState(0);
-  const currentWorkflow = useRef(workflow);
-  currentWorkflow.current = workflow;
-  const graphEditing = useGraphEditing({
-    currentWorkflow,
-    setCurationEdits,
-    setData,
-    setError,
-    setNotice,
-    workflow,
-  });
-  const agentApi = useMemo(() => createProductionApiAdapter(), []);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Refresh intentionally invalidates this request after a simulation.
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    setData(null);
-    setError("");
-    setSelection(undefined);
-    setCaseId(undefined);
-    setSearch("");
-    setCurationEdits([]);
-    api<Snapshot>(`/api/model?workflow=${workflow}`)
-      .then((d) => {
-        if (active) {
-          setData(d);
-        }
-      })
-      .catch((e) => {
-        if (active) {
-          setError(e.message);
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setLoading(false);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [workflow, refresh]);
-  useEffect(() => {
-    let active = true;
-    setSettingsLoading(true);
-    setSettingsError("");
-    api<WorkspaceSettings>(`/api/settings?refresh=${settingsRefresh}`)
-      .then((result) => {
-        if (active) {
-          setSettings(result);
-        }
-      })
-      .catch((e) => {
-        if (active) {
-          setSettingsError((e as Error).message);
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setSettingsLoading(false);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [settingsRefresh]);
-  const run = useCallback(async () => {
-    setBusy(true);
-    setError("");
-    try {
-      const result = await api<{ addedCases: number; addedEvents: number }>(
-        "/api/simulate",
-        { workflow }
-      );
-      setNotice(
-        `Observed ${result.addedEvents} new events across ${result.addedCases} cases. Process model updated.`
-      );
-      setCurationEdits([]);
-      setRefresh((x) => x + 1);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }, [workflow]);
-  async function askAgent(
-    question: string,
-    signal: AbortSignal
-  ): Promise<RagAnswer> {
-    const scope = chatScopeForWorkflow(workflow);
-    return await agentApi.ask(
-      {
-        project_id: scope.projectId,
-        question,
-        workflow_id: scope.workflowId,
-      },
-      signal
+  const curate = async (
+    item: InspectorCurationItem,
+    status: "confirmed" | "rejected"
+  ) => {
+    await adapter.updateStepStatus({
+      request_id: crypto.randomUUID(),
+      scope: state.scope,
+      status,
+      step_id: item.id as StepId,
+    });
+    setNotice(
+      `${status === "confirmed" ? "Accepted" : "Rejected"} ${item.label}.`
     );
-  }
-  function exportModel() {
-    if (!data) {
+    setReloadToken((value) => value + 1);
+  };
+
+  const askAgent = useCallback(
+    (prompt: string, signal: AbortSignal) =>
+      adapter.ask(
+        {
+          project_id: state.scope.project_id,
+          question: prompt,
+          workflow_id: state.scope.workflow_id,
+        },
+        signal
+      ),
+    [adapter, state.scope.project_id, state.scope.workflow_id]
+  );
+
+  const editGraph = useCallback<GraphEditHandler>(
+    async (action, payload) => {
+      const { current } = stateRef;
+      const currentGraph = selectCurrentGraph(current);
+      const edit = normalizeGraphEdit(action, payload, currentGraph);
+      if (!edit) {
+        setNotice("This graph edit is not supported for the live model yet.");
+        return;
+      }
+      setModelEditing(true);
+      setNotice("");
+      try {
+        await adapter.applyModelEdit({
+          action: edit.action,
+          payload: edit.payload,
+          request_id: crypto.randomUUID(),
+          scope: current.scope,
+        });
+        setNotice("Graph model edit saved. Recalculating conformance...");
+        setReloadToken((value) => value + 1);
+      } catch (caught) {
+        setNotice((caught as Error).message);
+      } finally {
+        setModelEditing(false);
+      }
+    },
+    [adapter]
+  );
+
+  const submitAddNode = async (event: { preventDefault: () => void }) => {
+    event.preventDefault();
+    const label = addNodeLabel.trim();
+    if (!label) {
       return;
     }
-    const url = URL.createObjectURL(
-      new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })
-    );
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `ariadneos-${workflow}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+    setAddNodeLabel("");
+    await editGraph("add_node", { label, slug: slugifyGraphLabel(label) });
+  };
 
-  async function saveGraphCanvasEdit(
-    action: GraphCanvasEditAction,
-    payload: GraphCanvasEditPayload,
-    message: string
-  ) {
-    setError("");
-    try {
-      const result = await api<GraphCanvasEditResponse>(
-        "/api/model/canvas-edit",
-        { action, payload, workflow }
-      );
-      setCurationEdits([]);
-      setData((current) =>
-        current && current.workflow.id === workflow
-          ? {
-              ...current,
-              generatedAt: new Date().toISOString(),
-              model: result.model,
-            }
-          : current
-      );
-      setNotice(message);
-    } catch (caught) {
-      setError((caught as Error).message);
+  const ask = async (text = question) => {
+    const prompt = text.trim();
+    if (!prompt || asking) {
+      return;
     }
-  }
-  const model = data?.model;
-  const curationProjection = useMemo(
-    () => (model ? applyCurationEdits(model, curationEdits) : undefined),
-    [curationEdits, model]
-  );
-  const visibleModel = curationProjection?.model ?? model;
-  const canvasGraph = useMemo(
-    () =>
-      visibleModel && data
-        ? legacyProcessToGraphView(visibleModel, workflow, data.generatedAt)
-        : undefined,
-    [data, visibleModel, workflow]
-  );
-  const curationStats = useMemo(
-    () => curationSummary(curationEdits),
-    [curationEdits]
-  );
-  const { selectedNode, selectedEdge, evidenceIds } = selectionEvidence(
-    visibleModel,
-    selection
-  );
-  const events = filterEvents(
-    data?.events ?? [],
-    caseId,
-    selectedNode?.id,
-    evidenceIds,
-    selection?.kind === "edge",
-    search
-  );
-  const { handleCurationAction, handleUndoCuration } = useGraphCuration({
-    curationEdits,
-    setCurationEdits,
-    setNotice,
-    visibleModel,
-    workflow,
-  });
-  useCurationShortcuts({
-    handleCurationAction,
-    handleUndoCuration,
-    selection,
-    visibleModel,
-  });
-  const {
-    advanceDemoStep,
-    demoMode,
-    demoStepIndex,
-    goToDemoStep,
-    isDemoActive,
-    isDemoTarget,
-    restartDemo,
-    stopDemo,
-    toggleDemoPlayback,
-  } = useDemoWalkthroughController({
-    busy,
-    data,
-    loading,
-    model: visibleModel,
-    run,
-    setCaseId,
-    setNotice,
-    setSearch,
-    setSelection,
-    setShellView,
-    setTab,
-    workflow,
-  });
-  function chooseWorkflow(id: WorkflowId) {
-    setWorkflow(id);
-    setTab("map");
-    setShellView("graph");
-    setNotice("");
-    setCurationEdits([]);
-  }
-  function navigateShell(view: AppShellView) {
-    setShellView(view);
-    setTab(view === "settings" ? "settings" : "map");
-  }
-  const projectOptions = workflows.map((item) => ({
-    id: item.id,
-    label: item.name,
-  }));
-  const workspaceOptions = [
-    {
-      detail: "Demo workspace",
-      id: "demo",
-      label: "Acme Studio",
-    },
-  ];
+    setQuestion(prompt);
+    setAsking(true);
+    setAnswer(null);
+    try {
+      const response = await fetch("/api/ask", {
+        body: JSON.stringify({
+          question: prompt,
+          thread_id: `${state.scope.project_id.slice(5)}-app`,
+          workflow:
+            legacyAskWorkflow[state.scope.workflow_id ?? ""] ?? "vendor",
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      const payload = (await response.json()) as AskAnswer | { error?: string };
+      if (!response.ok) {
+        throw new Error(
+          "error" in payload && payload.error
+            ? payload.error
+            : "Unable to ask Ariadne."
+        );
+      }
+      setAnswer(payload as AskAnswer);
+    } catch (caught) {
+      setAnswer({
+        answer: (caught as Error).message,
+        evidence: [],
+        mode: "summary",
+        notice: "Request failed.",
+      });
+    } finally {
+      setAsking(false);
+    }
+  };
+
+  const exportSnapshot = () => {
+    const payload = {
+      conformance: Object.values(state.conformance),
+      graph,
+      messages: Object.values(state.messages),
+      sessions: Object.values(state.sessions),
+      steps: Object.values(state.steps),
+    };
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `ariadneos-${state.scope.project_id}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <AppShell
       accountMenu={<AccountMenu />}
-      activeProjectId={workflow}
-      activeView={activeShellView(tab, shellView)}
-      activeWorkspaceId={workspace}
-      connectionLabel="Demo environment"
-      onAbout={() => setInfo(true)}
-      onNavigate={navigateShell}
-      onProjectChange={(id) => chooseWorkflow(id as WorkflowId)}
-      onWorkspaceChange={setWorkspace}
+      activeProjectId={state.scope.project_id}
+      activeView={shellView}
+      activeWorkspaceId="configured"
+      connectionLabel={connectionLabel(state, settings)}
+      onAbout={() => setShellView("settings")}
+      onNavigate={setShellView}
+      onProjectChange={chooseProject}
+      onWorkspaceChange={() => undefined}
       primaryAction={
-        <CompactRunButton
-          busy={busy}
-          loading={loading}
-          onRun={run}
-          remainingRuns={data?.remainingRuns}
-        />
+        <button
+          className="button topbar-action"
+          disabled={simulating || state.loading.requestId !== null}
+          onClick={runSimulation}
+          type="button"
+        >
+          {simulating ? (
+            <LoaderCircle className="spin" size={16} />
+          ) : (
+            <Play fill="currentColor" size={13} />
+          )}
+          Run
+        </button>
       }
       projectOptions={projectOptions}
       sidebarAction={
-        <SidebarRunCard
-          busy={busy}
-          loading={loading}
-          onRun={run}
-          remainingRuns={data?.remainingRuns}
-        />
+        <div className="demo-note">
+          <span className="demo-orbit">
+            <Sparkles size={19} />
+          </span>
+          <strong>Real pipeline demo</strong>
+          <p>Generate Slack-like work and persist it through D1.</p>
+          <button
+            disabled={simulating || state.loading.requestId !== null}
+            onClick={runSimulation}
+            type="button"
+          >
+            Run simulator <ArrowUpRight size={15} />
+          </button>
+        </div>
       }
-      workspaceOptions={workspaceOptions}
+      workspaceOptions={[
+        {
+          detail: settings?.slack.channel ?? "Configured server scope",
+          id: "configured",
+          label: settings?.slack.workspaceId ?? "Workspace",
+        },
+      ]}
     >
       <main className={demoMode === "idle" ? "" : "demo-active"}>
         <div
@@ -776,48 +779,61 @@ export default function App() {
           <div>
             <div className="eyebrow">
               <span />
-              PROCESS INTELLIGENCE
+              LIVE PROCESS INTELLIGENCE
             </div>
-            <h1>Follow the work.</h1>
+            <h1>{activeProject?.label ?? "Process workspace"}</h1>
             <p>
-              Your organization’s activity, connected into a living process.
+              D1-backed graph, evidence, curation, conformance, and simulator
+              data from the process API.
             </p>
           </div>
           <div className="heading-actions">
             <button
               className="button secondary"
-              disabled={!data || loading}
-              onClick={exportModel}
+              disabled={!graph}
+              onClick={exportSnapshot}
               type="button"
             >
               <ArrowDownToLine size={16} />
-              Export model
+              Export snapshot
             </button>
             <button
-              className="button primary"
+              className={`button primary ${isDemoTarget("run")}`}
               data-demo-target="run"
-              disabled={busy || loading || data?.remainingRuns === 0}
-              onClick={run}
+              disabled={simulating}
+              onClick={runSimulation}
               type="button"
             >
-              {busy ? (
+              {simulating ? (
                 <LoaderCircle className="spin" size={16} />
               ) : (
                 <Play fill="currentColor" size={14} />
               )}
-              {busy ? "Observing…" : "Simulate activity"}
+              {simulating ? "Running..." : "Run demo mode"}
             </button>
           </div>
         </div>
-        {Boolean(error) && (
+        <DemoWalkthrough
+          advanceDemoStep={advanceDemoStep}
+          goToDemoStep={goToDemoStep}
+          mode={demoMode}
+          restartDemo={restartDemo}
+          stepIndex={demoStepIndex}
+          stopDemo={stopDemo}
+          toggleDemo={toggleDemo}
+        />
+        {state.connection.error ? (
           <div className="banner error" role="alert">
-            {error}
-            <button onClick={() => setRefresh((x) => x + 1)} type="button">
+            {state.connection.error}
+            <button
+              onClick={() => setReloadToken((value) => value + 1)}
+              type="button"
+            >
               Retry
             </button>
           </div>
-        )}
-        {Boolean(notice) && (
+        ) : null}
+        {notice ? (
           <div className="banner success" role="status">
             <Check size={16} />
             {notice}
@@ -829,125 +845,199 @@ export default function App() {
               <X size={14} />
             </button>
           </div>
-        )}
-        <WorkspaceStatus
-          loading={loading}
-          onReload={() => setRefresh((x) => x + 1)}
-          ready={Boolean(model && data)}
+        ) : null}
+        <LiveStats
+          focusClass={isDemoTarget("overview")}
+          graph={graph}
+          messages={messages}
+          sessions={sessions}
+          state={state}
         />
-        <DemoWalkthrough
-          busy={busy}
-          mode={demoMode}
-          onBack={() => advanceDemoStep(-1)}
-          onJump={goToDemoStep}
-          onNext={() => advanceDemoStep(1)}
-          onRestart={restartDemo}
-          onStop={stopDemo}
-          onToggle={toggleDemoPlayback}
-          stepIndex={demoStepIndex}
-        />
-        {!loading && model !== undefined && data !== null && (
-          <LoadedWorkspace
-            askAgent={askAgent}
-            canvasGraph={canvasGraph}
-            caseId={caseId}
-            curationProjection={curationProjection}
-            curationStats={curationStats}
-            data={data}
-            demoMode={demoMode}
-            displayModel={visibleModel ?? model}
-            events={events}
-            graphEditing={graphEditing}
-            handleCurationAction={handleCurationAction}
-            handleUndoCuration={handleUndoCuration}
-            isDemoActive={isDemoActive}
-            isDemoTarget={isDemoTarget}
-            model={model}
-            onAbout={() => setInfo(true)}
-            onCreateDesignedEdge={({ source, target }) =>
-              saveGraphCanvasEdit(
-                "create_edge",
-                { source, target },
-                "Designed edge added to this process map."
-              )
-            }
-            onExport={exportModel}
-            onGraphSelect={(selected) => {
-              setSelection(selected);
-              setCaseId(undefined);
-              setShellView("inspector");
-            }}
-            onMoveDesignedEdge={({ edgeId, source, target }) =>
-              saveGraphCanvasEdit(
-                "move_edge",
-                { edgeId, source, target },
-                "Designed edge moved."
-              )
-            }
-            onRefreshSettings={() => setSettingsRefresh((x) => x + 1)}
-            onReload={() => setRefresh((x) => x + 1)}
-            onRenameEdge={({ edgeId, label }) =>
-              saveGraphCanvasEdit(
-                "rename_edge",
-                { edgeId, label },
-                "Edge label updated."
-              )
-            }
-            onRenameNode={({ label, nodeId }) =>
-              saveGraphCanvasEdit(
-                "rename_node",
-                { label, nodeId },
-                "Node label updated."
-              )
-            }
-            search={search}
-            selectedEdge={selectedEdge}
-            selectedNode={selectedNode}
-            selection={selection}
-            setCaseId={setCaseId}
-            setSearch={setSearch}
-            setSelection={setSelection}
-            setShellView={setShellView}
-            setTab={setTab}
+        {state.loading.requestId && !graph ? (
+          <div className="loading-state">
+            <LoaderCircle className="spin" />
+            <p>Loading process snapshot...</p>
+          </div>
+        ) : null}
+        {shellView === "settings" ? (
+          <SettingsPanel
+            adapter={adapter}
+            graphReady={Boolean(graph)}
+            onExport={exportSnapshot}
+            onRefreshRuntime={() => setSettingsRefresh((value) => value + 1)}
+            onReload={() => setReloadToken((value) => value + 1)}
             settings={settings}
             settingsError={settingsError}
             settingsLoading={settingsLoading}
-            shellView={shellView}
-            tab={tab}
-            workflow={workflow}
-            workspace={workspace}
+            state={state}
           />
+        ) : (
+          <section className="explorer live-explorer">
+            <div className="explorer-header">
+              <div className="process-title">
+                <span className="process-icon">
+                  <GitBranch size={20} />
+                </span>
+                <div>
+                  <h2>{graph?.workflow_id ?? state.scope.workflow_id}</h2>
+                  <p>
+                    {graph
+                      ? `${graph.nodes.length} activities, ${graph.edges.length} transitions, revision ${graph.revision}`
+                      : "Waiting for a process snapshot."}
+                  </p>
+                </div>
+              </div>
+              <span className="source-chip">
+                <span className="online-dot" />
+                {state.connection.status}
+              </span>
+            </div>
+            <div className="explorer-body">
+              <div className="main-panel">
+                {shellView === "graph" ? (
+                  <MapPanel
+                    addNodeLabel={addNodeLabel}
+                    canEdit={!modelEditing}
+                    focusClass={isDemoTarget("graph")}
+                    graph={graph}
+                    modelEditing={modelEditing}
+                    onAddNodeLabelChange={setAddNodeLabel}
+                    onEdit={editGraph}
+                    onModeChange={(view) =>
+                      setState((current) => {
+                        const scope = { ...current.scope, view };
+                        return {
+                          ...current,
+                          scope,
+                          scopeKey: scopeKey(scope),
+                        };
+                      })
+                    }
+                    onReload={() => setReloadToken((value) => value + 1)}
+                    onSelect={select}
+                    onSubmitAddNode={submitAddNode}
+                    selection={state.selection}
+                  />
+                ) : null}
+                {shellView === "inspector" ? (
+                  <div className="embedded-inspector">
+                    <ProcessInspector
+                      details={inspectorDetails}
+                      onClearSelection={clearSelection}
+                      onCuration={curate}
+                      onInspectSources={() => setShellView("activity")}
+                    />
+                  </div>
+                ) : null}
+                {shellView === "chat" ? (
+                  <AgentChatPanel
+                    ask={askAgent}
+                    className={isDemoTarget("conversation")}
+                    disabled={state.loading.requestId !== null}
+                    onInspectEvidence={() => setShellView("activity")}
+                    scopeLabel={activeProject?.label ?? "Current process"}
+                  />
+                ) : null}
+                {shellView === "activity" ? (
+                  <ActivityPanel
+                    focusClass={isDemoTarget("conversation")}
+                    messages={messages}
+                    onSearchMessage={(message) =>
+                      select({
+                        case_id: message.session_id,
+                        message_id: message.id,
+                        workflow_id: state.scope.workflow_id,
+                      })
+                    }
+                    selectedSession={selectedSession}
+                    sessions={sessions}
+                    setSelectedSession={(session) =>
+                      setState((current) => ({
+                        ...current,
+                        selection: {
+                          case_id: session?.id,
+                          workflow_id: current.scope.workflow_id,
+                        },
+                      }))
+                    }
+                  />
+                ) : null}
+              </div>
+              <div
+                className={isDemoTarget("inspector")}
+                data-demo-target="inspector"
+              >
+                <ProcessInspector
+                  details={inspectorDetails}
+                  onClearSelection={clearSelection}
+                  onCuration={curate}
+                  onInspectSources={() => setShellView("activity")}
+                  onOpenContext={() => setShellView("activity")}
+                />
+              </div>
+            </div>
+          </section>
         )}
+        {shellView === "settings" ? null : (
+          <div className="bottom-grid">
+            <RecentEvidence
+              focusClass={isDemoTarget("conversation")}
+              messages={messages}
+              onSelect={select}
+            />
+            {shellView === "chat" ? null : (
+              <AssistantPanel
+                answer={answer}
+                ask={ask}
+                asking={asking}
+                question={question}
+                setQuestion={setQuestion}
+              />
+            )}
+            <VariantSummary
+              focusClass={isDemoTarget("variants")}
+              graph={graph}
+            />
+          </div>
+        )}
+        <footer>
+          <span>
+            <span className="online-dot" />
+            Snapshot cursor {state.connection.lastEventId ?? "n/a"}
+          </span>
+          <span>
+            AriadneOS app <span>·</span> {sessions.length} D1 process sessions
+          </span>
+        </footer>
       </main>
-      {info ? <AboutDialog onClose={() => setInfo(false)} /> : null}
     </AppShell>
   );
 }
 
 function DemoWalkthrough({
-  busy,
+  advanceDemoStep,
+  goToDemoStep,
   mode,
-  onBack,
-  onJump,
-  onNext,
-  onRestart,
-  onStop,
-  onToggle,
+  restartDemo,
   stepIndex,
+  stopDemo,
+  toggleDemo,
 }: {
-  busy: boolean;
+  advanceDemoStep: (direction: -1 | 1) => void;
+  goToDemoStep: (index: number) => void;
   mode: DemoPlaybackState;
-  onBack: () => void;
-  onJump: (index: number) => void;
-  onNext: () => void;
-  onRestart: () => void;
-  onStop: () => void;
-  onToggle: () => void;
+  restartDemo: () => void;
   stepIndex: number;
+  stopDemo: () => void;
+  toggleDemo: () => void;
 }) {
   const step = demoWalkthroughSteps[stepIndex] ?? firstDemoWalkthroughStep;
-  const running = mode === "playing";
-  const toggleLabel = playbackButtonLabel(mode);
+  let toggleLabel = "Resume";
+  if (mode === "idle") {
+    toggleLabel = "Start";
+  } else if (mode === "playing") {
+    toggleLabel = "Pause";
+  }
   return (
     <section
       aria-label="Demo auto-play walkthrough"
@@ -967,33 +1057,30 @@ function DemoWalkthrough({
         <button
           aria-label={`${toggleLabel} walkthrough`}
           className="button primary"
-          disabled={busy}
-          onClick={onToggle}
+          onClick={toggleDemo}
           type="button"
         >
-          {running ? (
-            <Pause size={15} />
-          ) : (
-            <Play fill="currentColor" size={14} />
-          )}
-          {toggleLabel}
+          {mode === "playing" ? <Pause size={14} /> : <Play size={14} />}
+          {toggleLabel} walkthrough
         </button>
         <button
           aria-label="Restart walkthrough"
-          className="icon-button"
-          onClick={onRestart}
+          className="button secondary"
+          onClick={restartDemo}
           type="button"
         >
-          <RotateCcw size={17} />
+          <RotateCcw size={14} />
+          Restart
         </button>
         <button
           aria-label="Stop walkthrough"
-          className="icon-button"
+          className="button secondary"
           disabled={mode === "idle"}
-          onClick={onStop}
+          onClick={stopDemo}
           type="button"
         >
-          <Square size={15} />
+          <Square size={14} />
+          Stop
         </button>
       </div>
       {mode === "idle" ? null : (
@@ -1009,7 +1096,7 @@ function DemoWalkthrough({
             <button
               aria-label="Previous walkthrough step"
               disabled={stepIndex === 0}
-              onClick={onBack}
+              onClick={() => advanceDemoStep(-1)}
               type="button"
             >
               <ChevronLeft size={15} />
@@ -1017,21 +1104,20 @@ function DemoWalkthrough({
             <div className="demo-beats">
               {demoWalkthroughSteps.map((item, index) => (
                 <button
-                  aria-current={index === stepIndex ? "step" : undefined}
-                  className={index === stepIndex ? "current" : ""}
+                  aria-label={`Jump to ${item.label}`}
+                  aria-pressed={index === stepIndex}
                   key={item.id}
-                  onClick={() => onJump(index)}
+                  onClick={() => goToDemoStep(index)}
                   type="button"
                 >
-                  <i />
-                  <span>{item.label}</span>
+                  {demoStepLabel(index)}
                 </button>
               ))}
             </div>
             <button
               aria-label="Next walkthrough step"
               disabled={stepIndex === demoWalkthroughSteps.length - 1}
-              onClick={onNext}
+              onClick={() => advanceDemoStep(1)}
               type="button"
             >
               <ChevronRight size={15} />
@@ -1043,1103 +1129,539 @@ function DemoWalkthrough({
   );
 }
 
-function playbackButtonLabel(mode: DemoPlaybackState) {
-  if (mode === "idle") {
-    return "Start";
-  }
-  if (mode === "playing") {
-    return "Pause";
-  }
-  return "Resume";
-}
-
-function ProcessCanvasPanel({
-  canvasGraph,
-  curationStats,
+function VariantSummary({
   focusClass,
-  graphEditing,
-  onCreateDesignedEdge,
-  onMoveDesignedEdge,
-  onRenameEdge,
-  onRenameNode,
-  selection,
-  setCaseId,
-  setSelection,
-  setShellView,
+  graph,
 }: {
-  canvasGraph: ReturnType<typeof legacyProcessToGraphView> | undefined;
-  curationStats: ReturnType<typeof curationSummary>;
-  focusClass: string;
-  graphEditing: GraphEditing;
-  onCreateDesignedEdge: (value: { source: string; target: string }) => void;
-  onMoveDesignedEdge: (value: {
-    edgeId: string;
-    source: string;
-    target: string;
-  }) => void;
-  onRenameEdge: (value: { edgeId: string; label: string }) => void;
-  onRenameNode: (value: { label: string; nodeId: string }) => void;
-  selection: Selection | undefined;
-  setCaseId: (value: string | undefined) => void;
-  setSelection: (value: Selection | undefined) => void;
-  setShellView: Dispatch<SetStateAction<AppShellView>>;
+  focusClass?: string;
+  graph: ReturnType<typeof selectCurrentGraph>;
 }) {
-  return (
-    <>
-      <div className={`graph-hint ${focusClass}`} data-demo-target="graph">
-        <span className="tiny-dot" />
-        Discovered from observed activity
-        <span>
-          {curationStats.active
-            ? graphCurationHint(curationStats)
-            : "Click a step or connection to see its evidence"}
-        </span>
-      </div>
-      <div className={`graph-canvas ${focusClass}`} data-demo-target="graph">
-        {canvasGraph ? (
-          <WorkflowCanvas
-            canEdit={!graphEditing.editBusy}
-            graph={canvasGraph}
-            onCreateDesignedEdge={({ source, target }) =>
-              onCreateDesignedEdge({
-                source: legacyActivityId(source),
-                target: legacyActivityId(target),
-              })
-            }
-            onEdit={(
-              action: GraphEditAction,
-              payload: Record<string, string>
-            ) =>
-              graphEditing.editGraph(
-                action,
-                normalizeCanvasGraphEditPayload(payload)
-              )
-            }
-            onMoveDesignedEdge={({ edgeId, source, target }) =>
-              onMoveDesignedEdge({
-                edgeId: legacyEdgeId(edgeId),
-                source: legacyActivityId(source),
-                target: legacyActivityId(target),
-              })
-            }
-            onRenameEdge={({ edgeId, label }) =>
-              onRenameEdge({ edgeId: legacyEdgeId(edgeId), label })
-            }
-            onRenameNode={({ label, nodeId }) =>
-              onRenameNode({ label, nodeId: legacyActivityId(nodeId) })
-            }
-            onSelectionChange={(nextSelection) => {
-              const next = legacySelectionFromCanvas(nextSelection);
-              setSelection(next);
-              setCaseId(undefined);
-              setShellView(next ? "inspector" : "graph");
-            }}
-            selection={canvasSelectionFromLegacy(selection)}
-          />
-        ) : null}
-      </div>
-      <div className="graph-legend">
-        <span>
-          <i className="legend-line" />
-          Common transition
-        </span>
-        <span>
-          <i className="legend-line dashed" />
-          Less frequent path
-        </span>
-        <span className="legend-right">Count · transition probability</span>
-      </div>
-    </>
+  const nodeLabel = new Map(
+    (graph?.nodes ?? []).map((node) => [node.id, node.activity.label])
   );
-}
-
-function CompactRunButton({
-  busy,
-  loading,
-  onRun,
-  remainingRuns,
-}: {
-  busy: boolean;
-  loading: boolean;
-  onRun: () => void;
-  remainingRuns: number | undefined;
-}) {
+  const variants = (graph?.edges ?? [])
+    .slice()
+    .sort((a, b) => b.observed_support - a.observed_support)
+    .slice(0, 4);
   return (
-    <button
-      className="button topbar-action"
-      disabled={busy || loading || remainingRuns === 0}
-      onClick={onRun}
-      type="button"
+    <section
+      className={`variants-panel ${focusClass ?? ""}`}
+      data-demo-target="variants"
     >
-      {busy ? (
-        <LoaderCircle className="spin" size={16} />
-      ) : (
-        <Play fill="currentColor" size={13} />
-      )}
-      Run
-    </button>
-  );
-}
-
-function SidebarRunCard({
-  busy,
-  loading,
-  onRun,
-  remainingRuns,
-}: {
-  busy: boolean;
-  loading: boolean;
-  onRun: () => void;
-  remainingRuns: number | undefined;
-}) {
-  return (
-    <div className="demo-note">
-      <span className="demo-orbit">
-        <Sparkles size={19} />
-      </span>
-      <strong>A little work. A bigger picture.</strong>
-      <p>Simulate activity and watch the hidden process emerge.</p>
-      <button
-        disabled={busy || loading || remainingRuns === 0}
-        onClick={onRun}
-        type="button"
-      >
-        Run a simulation <ArrowUpRight size={15} />
-      </button>
-    </div>
-  );
-}
-
-interface CurationTarget {
-  id: string;
-  kind: "edge" | "node";
-}
-
-interface LoadedWorkspaceProps {
-  askAgent: (question: string, signal: AbortSignal) => Promise<RagAnswer>;
-  canvasGraph: ReturnType<typeof legacyProcessToGraphView> | undefined;
-  caseId: string | undefined;
-  curationProjection: ReturnType<typeof applyCurationEdits> | undefined;
-  curationStats: ReturnType<typeof curationSummary>;
-  data: Snapshot;
-  demoMode: DemoPlaybackState;
-  displayModel: ProcessModel;
-  events: ActivityEvent[];
-  graphEditing: GraphEditing;
-  handleCurationAction: (
-    action: CurationAction,
-    target: CurationTarget
-  ) => void;
-  handleUndoCuration: () => void;
-  isDemoActive: (target: DemoTarget) => boolean;
-  isDemoTarget: (target: DemoTarget) => string;
-  model: ProcessModel;
-  onAbout: () => void;
-  onCreateDesignedEdge: (value: { source: string; target: string }) => void;
-  onExport: () => void;
-  onGraphSelect: (selection: Selection | undefined) => void;
-  onMoveDesignedEdge: (value: {
-    edgeId: string;
-    source: string;
-    target: string;
-  }) => void;
-  onRefreshSettings: () => void;
-  onReload: () => void;
-  onRenameEdge: (value: { edgeId: string; label: string }) => void;
-  onRenameNode: (value: { label: string; nodeId: string }) => void;
-  search: string;
-  selectedEdge: Snapshot["model"]["edges"][number] | undefined;
-  selectedNode: Snapshot["model"]["nodes"][number] | undefined;
-  selection: Selection | undefined;
-  setCaseId: (value: string | undefined) => void;
-  setSearch: (value: string) => void;
-  setSelection: (value: Selection | undefined) => void;
-  setShellView: Dispatch<SetStateAction<AppShellView>>;
-  setTab: (value: string) => void;
-  settings: WorkspaceSettings | null;
-  settingsError: string;
-  settingsLoading: boolean;
-  shellView: AppShellView;
-  tab: string;
-  workflow: WorkflowId;
-  workspace: string;
-}
-
-function LoadedWorkspace(props: LoadedWorkspaceProps) {
-  return (
-    <>
-      <WorkspaceStats
-        focusClass={props.isDemoTarget("overview")}
-        model={props.model}
-      />
-      {props.tab === "settings" ? (
-        <SettingsPanel
-          data={props.data}
-          onAbout={props.onAbout}
-          onExport={props.onExport}
-          onRefreshSettings={props.onRefreshSettings}
-          onReload={props.onReload}
-          settings={props.settings}
-          settingsError={props.settingsError}
-          settingsLoading={props.settingsLoading}
-          workflow={props.workflow}
-          workspace={props.workspace}
-        />
-      ) : (
-        <ProcessExplorer {...props} />
-      )}
-      {props.tab !== "settings" && props.shellView !== "chat" && (
-        <RecentObservationsGrid {...props} />
-      )}
-      <WorkspaceFooter remainingRuns={props.data.remainingRuns} />
-    </>
-  );
-}
-
-function WorkspaceStats({
-  focusClass,
-  model,
-}: {
-  focusClass: string;
-  model: ProcessModel;
-}) {
-  return (
-    <div className={`stats-row ${focusClass}`} data-demo-target="overview">
-      <Stat
-        icon={<Activity size={17} />}
-        label="Observed events"
-        sub="Every action, accounted for"
-        value={model.stats.events.toLocaleString()}
-      />
-      <Stat
-        icon={<Layers3 size={17} />}
-        label="Process cases"
-        sub="Individual workflow journeys"
-        value={String(model.stats.cases)}
-      />
-      <Stat
-        icon={<GitBranch size={17} />}
-        label="Discovered variants"
-        sub="Different paths through the work"
-        value={String(model.stats.variants).padStart(2, "0")}
-      />
-      <Stat
-        icon={<Clock3 size={17} />}
-        label="Median cycle time"
-        sub="First observation to last"
-        value={duration(model.stats.medianMinutes)}
-      />
-    </div>
-  );
-}
-
-function ProcessExplorer(props: LoadedWorkspaceProps) {
-  return (
-    <section className="explorer">
-      <div className="explorer-header">
-        <div className="process-title">
-          <span className="process-icon">
-            <GitBranch size={20} />
-          </span>
-          <div>
-            <h2>{props.data.workflow.name}</h2>
-            <p>{props.data.workflow.description}</p>
-          </div>
-        </div>
-        <span className="source-chip">
-          <span className="online-dot" />
-          Synthetic observations
-        </span>
+      <div className="card-heading">
+        <h2>
+          <GitBranch size={17} />
+          The ways this process unfolds
+        </h2>
       </div>
-      <ExplorerToolbar
-        data={props.data}
-        graphEditing={props.graphEditing}
-        model={props.model}
-        setShellView={props.setShellView}
-        setTab={props.setTab}
-        tab={props.tab}
-      />
-      {props.shellView === "chat" ? (
-        <AgentChatPanel
-          ask={props.askAgent}
-          className={`agent-chat-page ${
-            props.isDemoActive("assistant") ? "is-demo-focus" : ""
-          }`}
-          onInspectEvidence={() => {
-            props.setTab("events");
-            props.setShellView("graph");
-            props.setSelection(undefined);
-            props.setCaseId(undefined);
-          }}
-          scopeLabel={`${props.data.workflow.name} · ${props.data.events.length} observations`}
-        />
-      ) : (
-        <div className="explorer-body">
-          <div className="main-panel">
-            <MapPanel {...props} />
-            {props.tab === "variants" && (
-              <VariantsPanel
-                highlighted={props.isDemoActive("variants")}
-                model={props.model}
-                setCaseId={props.setCaseId}
-                setSelection={props.setSelection}
-                setTab={props.setTab}
-              />
-            )}
-            <EventsTabPanel {...props} />
-          </div>
-          <Inspector
-            editBusy={props.graphEditing.editBusy}
-            events={props.events}
-            highlighted={props.isDemoActive("inspector")}
-            model={props.displayModel}
-            onEdit={props.graphEditing.editGraph}
-            selectedEdge={props.selectedEdge}
-            selectedNode={props.selectedNode}
-            selection={props.selection}
-            setCaseId={props.setCaseId}
-            setSelection={props.setSelection}
-            setTab={props.setTab}
-            workflow={props.workflow}
-          />
-        </div>
-      )}
+      <div className="variant-list">
+        {variants.length ? (
+          variants.map((edge) => {
+            const from = nodeLabel.get(edge.from) ?? edge.from;
+            const to = nodeLabel.get(edge.to) ?? edge.to;
+            return (
+              <article className="variant-row" key={edge.id}>
+                <strong>
+                  {from} → {to}
+                </strong>
+                <span>
+                  {edge.observed_support} observed transition
+                  {edge.observed_support === 1 ? "" : "s"}
+                </span>
+              </article>
+            );
+          })
+        ) : (
+          <div className="empty">Run demo mode to discover variants.</div>
+        )}
+      </div>
     </section>
   );
 }
 
-function ExplorerToolbar({
-  data,
-  graphEditing,
-  model,
-  setShellView,
-  setTab,
-  tab,
+function MapPanel({
+  addNodeLabel,
+  canEdit,
+  focusClass,
+  graph,
+  modelEditing,
+  onAddNodeLabelChange,
+  onEdit,
+  onModeChange,
+  onReload,
+  onSelect,
+  onSubmitAddNode,
+  selection,
 }: {
-  data: Snapshot;
-  graphEditing: GraphEditing;
-  model: ProcessModel;
-  setShellView: (value: AppShellView) => void;
-  setTab: (value: string) => void;
-  tab: string;
+  addNodeLabel: string;
+  canEdit: boolean;
+  focusClass?: string;
+  graph: ReturnType<typeof selectCurrentGraph>;
+  modelEditing: boolean;
+  onAddNodeLabelChange: (value: string) => void;
+  onEdit: GraphEditHandler;
+  onModeChange: (view: ConnectionScope["view"]) => void;
+  onReload: () => void;
+  onSelect: (selection: AppSelection) => void;
+  onSubmitAddNode: (event: { preventDefault: () => void }) => void;
+  selection: AppSelection;
 }) {
-  return (
-    <div className="explorer-toolbar">
-      <div className="tabs">
-        {explorerTabs.map(([id, label, Icon]) => (
-          <button
-            className={tab === id ? "selected" : ""}
-            key={id}
-            onClick={() => {
-              setTab(id);
-              setShellView("graph");
-            }}
-            type="button"
-          >
-            <Icon size={15} />
-            <span>{label}</span>
-            {id === "variants" && (
-              <span className="tab-count">{model.stats.variants}</span>
-            )}
-          </button>
-        ))}
+  if (!graph) {
+    return (
+      <div className="loading-state">
+        <p>No process graph is available for this scope yet.</p>
+        <button className="button secondary" onClick={onReload} type="button">
+          Reload snapshot
+        </button>
       </div>
-      <span className="observation-range">
-        {model.stats.cases} completed cases <span>·</span>{" "}
-        {Math.round(model.stats.dominantShare * 100)}% follow the main path
-      </span>
-      <GraphEditStrip data={data} graphEditing={graphEditing} />
-    </div>
-  );
-}
-
-function MapPanel(props: LoadedWorkspaceProps) {
-  if (props.tab !== "map") {
-    return null;
+    );
   }
   return (
     <>
-      <ProcessCanvasPanel
-        canvasGraph={props.canvasGraph}
-        curationStats={props.curationStats}
-        focusClass={props.isDemoTarget("graph")}
-        graphEditing={props.graphEditing}
-        onCreateDesignedEdge={props.onCreateDesignedEdge}
-        onMoveDesignedEdge={props.onMoveDesignedEdge}
-        onRenameEdge={props.onRenameEdge}
-        onRenameNode={props.onRenameNode}
-        selection={props.selection}
-        setCaseId={props.setCaseId}
-        setSelection={props.setSelection}
-        setShellView={props.setShellView}
+      <div
+        className={`graph-hint ${focusClass ?? ""}`}
+        data-demo-target="graph"
+      >
+        <span className="tiny-dot" />
+        Live overlay from /api/snapshot
+        <span>Click a node or edge to inspect evidence and conformance.</span>
+      </div>
+      <GraphEditStrip
+        addNodeLabel={addNodeLabel}
+        canEdit={canEdit}
+        modelEditing={modelEditing}
+        onAddNodeLabelChange={onAddNodeLabelChange}
+        onSubmitAddNode={onSubmitAddNode}
       />
-      <CurationStatusBar
-        onUndo={props.handleUndoCuration}
-        stats={props.curationStats}
-      />
+      <div className={focusClass ?? ""} data-demo-target="graph">
+        <WorkflowCanvas
+          canEdit={canEdit}
+          graph={graph}
+          onEdit={onEdit}
+          onModeChange={onModeChange}
+          onSelectionChange={onSelect}
+          selection={selection}
+        />
+      </div>
     </>
   );
 }
 
-function EventsTabPanel({
-  caseId,
-  events,
-  search,
-  selection,
-  setCaseId,
-  setSearch,
-  setSelection,
-  tab,
-}: LoadedWorkspaceProps) {
-  if (tab !== "events") {
-    return null;
-  }
+function GraphEditStrip({
+  addNodeLabel,
+  canEdit,
+  modelEditing,
+  onAddNodeLabelChange,
+  onSubmitAddNode,
+}: {
+  addNodeLabel: string;
+  canEdit: boolean;
+  modelEditing: boolean;
+  onAddNodeLabelChange: (value: string) => void;
+  onSubmitAddNode: (event: { preventDefault: () => void }) => void;
+}) {
   return (
-    <div className="events-panel">
+    <div className="graph-edit-strip" role="toolbar">
+      <form onSubmit={onSubmitAddNode}>
+        <input
+          aria-label="New graph node label"
+          disabled={!canEdit}
+          maxLength={80}
+          onChange={(event) => onAddNodeLabelChange(event.target.value)}
+          placeholder="Add documented step"
+          value={addNodeLabel}
+        />
+        <button disabled={!(canEdit && addNodeLabel.trim())} type="submit">
+          {modelEditing ? (
+            <LoaderCircle className="spin" size={13} />
+          ) : (
+            <Sparkles size={13} />
+          )}
+          Add
+        </button>
+      </form>
+      <span>
+        Drag to connect, select a node to rename, promote, retire, or reject.
+      </span>
+    </div>
+  );
+}
+
+function normalizeGraphEdit(
+  action: Parameters<GraphEditHandler>[0],
+  payload: Record<string, string>,
+  graph: ReturnType<typeof selectCurrentGraph>
+): {
+  action: ModelEditAction;
+  payload: Record<string, boolean | number | string | string[]>;
+} | null {
+  const slugFor = (value: string | undefined) => {
+    if (!value) {
+      return "";
+    }
+    return (
+      graph?.nodes.find(
+        (node) => node.id === value || node.activity.slug === value
+      )?.activity.slug ?? value.replace(activityIdPrefixPattern, "")
+    );
+  };
+  switch (action) {
+    case "add_node":
+      return {
+        action,
+        payload: {
+          label: payload.label ?? "",
+          slug: payload.slug || slugifyGraphLabel(payload.label ?? ""),
+        },
+      };
+    case "add_edge":
+    case "require":
+      return {
+        action: "add_edge",
+        payload: {
+          from_slug: slugFor(payload.source ?? payload.from),
+          to_slug: slugFor(payload.target ?? payload.to),
+        },
+      };
+    case "merge":
+      return {
+        action,
+        payload: {
+          source_slug: slugFor(payload.source),
+          target_slug: slugFor(payload.target),
+        },
+      };
+    case "rename":
+      return {
+        action,
+        payload: { label: payload.label ?? "", slug: slugFor(payload.id) },
+      };
+    case "retire":
+      return {
+        action,
+        payload: { acknowledged_policy_ids: [], slug: slugFor(payload.id) },
+      };
+    case "promote":
+      return { action, payload: { slug: slugFor(payload.id) } };
+    case "remove_edge":
+      return {
+        action,
+        payload: {
+          from_slug: slugFor(payload.source ?? payload.from),
+          to_slug: slugFor(payload.target ?? payload.to),
+        },
+      };
+    case "remove_node":
+      return {
+        action,
+        payload: { acknowledged_policy_ids: [], slug: slugFor(payload.id) },
+      };
+    default:
+      return null;
+  }
+}
+
+function slugifyGraphLabel(value: string) {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return slug || `step_${Date.now()}`;
+}
+
+function LiveStats({
+  focusClass,
+  graph,
+  messages,
+  sessions,
+  state,
+}: {
+  focusClass?: string;
+  graph: ReturnType<typeof selectCurrentGraph>;
+  messages: Message[];
+  sessions: ProcessSession[];
+  state: AppState;
+}) {
+  const conformance = graph?.conformance;
+  return (
+    <div
+      className={`stats-row ${focusClass ?? ""}`}
+      data-demo-target="overview"
+    >
+      <Stat
+        icon={<Layers3 size={17} />}
+        label="Graph activities"
+        sub="Documented and discovered"
+        value={String(graph?.nodes.length ?? 0)}
+      />
+      <Stat
+        icon={<GitBranch size={17} />}
+        label="Transitions"
+        sub="Directly follows evidence"
+        value={String(graph?.edges.length ?? 0)}
+      />
+      <Stat
+        icon={<Activity size={17} />}
+        label="Evidence messages"
+        sub={`${sessions.length} process sessions`}
+        value={String(messages.length)}
+      />
+      <Stat
+        icon={<ShieldCheck size={17} />}
+        label="Conformance"
+        sub={state.connection.status}
+        value={
+          conformance?.fitness === null || conformance?.fitness === undefined
+            ? "n/a"
+            : `${Math.round(conformance.fitness * 100)}%`
+        }
+      />
+    </div>
+  );
+}
+
+function ActivityPanel({
+  focusClass,
+  messages,
+  onSearchMessage,
+  selectedSession,
+  sessions,
+  setSelectedSession,
+}: {
+  focusClass?: string;
+  messages: Message[];
+  onSearchMessage: (message: Message) => void;
+  selectedSession: ProcessSession | undefined;
+  sessions: ProcessSession[];
+  setSelectedSession: (session: ProcessSession | undefined) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const filtered = messages.filter((message) => {
+    const matchesSession =
+      !selectedSession || message.session_id === selectedSession.id;
+    const haystack =
+      `${message.author_label} ${message.text} ${message.session_id}`.toLowerCase();
+    return matchesSession && haystack.includes(search.toLowerCase());
+  });
+  return (
+    <div
+      className={`events-panel ${focusClass ?? ""}`}
+      data-demo-target="conversation"
+    >
       <div className="event-controls">
         <label>
           <Search size={16} />
           <input
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search events, actors, cases…"
+            placeholder="Search evidence, actors, cases..."
             value={search}
           />
         </label>
-        {Boolean(selection || caseId) && (
-          <button
-            onClick={() => {
-              setSelection(undefined);
-              setCaseId(undefined);
-            }}
-            type="button"
-          >
-            <X size={13} />
-            Clear filters
-          </button>
+        <select
+          aria-label="Filter case"
+          onChange={(event) =>
+            setSelectedSession(
+              sessions.find((session) => session.id === event.target.value)
+            )
+          }
+          value={selectedSession?.id ?? ""}
+        >
+          <option value="">All sessions</option>
+          {sessions.map((session) => (
+            <option key={session.id} value={session.id}>
+              {session.id}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="event-summary">{filtered.length} evidence messages</div>
+      <div className="event-list">
+        {filtered.length ? (
+          filtered.map((message) => (
+            <div className="event-row" key={message.id}>
+              <span className="avatar">{initials(message.author_label)}</span>
+              <div className="event-description">
+                <strong>{message.author_label}</strong>
+                <span>{message.text}</span>
+              </div>
+              <button
+                className="case-link"
+                onClick={() => onSearchMessage(message)}
+                type="button"
+              >
+                {message.session_id}
+                <ArrowUpRight size={11} />
+              </button>
+              <time dateTime={message.received_at}>
+                {formatTime(message.received_at)}
+              </time>
+            </div>
+          ))
+        ) : (
+          <div className="empty">No evidence matches this filter.</div>
         )}
       </div>
-      <div className="event-summary">
-        {caseId ? `Case ${caseId} · ` : ""}
-        {events.length} matching observations
-      </div>
-      <EventList
-        events={events}
-        onCase={(id) => {
-          setSelection(undefined);
-          setCaseId(id);
-        }}
-      />
     </div>
   );
 }
 
-function RecentObservationsGrid({
-  data,
-  isDemoActive,
-  setCaseId,
-  setSelection,
-  setTab,
-}: LoadedWorkspaceProps) {
-  return (
-    <div className="recent-only bottom-grid">
-      <RecentObservations
-        data={data}
-        highlighted={isDemoActive("conversation")}
-        setCaseId={setCaseId}
-        setSelection={setSelection}
-        setTab={setTab}
-      />
-    </div>
-  );
-}
-
-function RecentObservations({
-  data,
-  highlighted,
-  setCaseId,
-  setSelection,
-  setTab,
+function RecentEvidence({
+  focusClass,
+  messages,
+  onSelect,
 }: {
-  data: Snapshot;
-  highlighted: boolean;
-  setCaseId: (value: string | undefined) => void;
-  setSelection: (value: Selection | undefined) => void;
-  setTab: (value: string) => void;
+  focusClass?: string;
+  messages: Message[];
+  onSelect: (selection: AppSelection) => void;
 }) {
   return (
     <section
-      className={`recent-card ${highlighted ? "is-demo-focus" : ""}`}
+      className={`recent-card ${focusClass ?? ""}`}
       data-demo-target="conversation"
     >
       <div className="card-heading">
         <h2>
           <Activity size={17} />
-          Recent observations
+          Recent evidence
         </h2>
-        <button
-          onClick={() => {
-            setSelection(undefined);
-            setCaseId(undefined);
-            setTab("events");
-          }}
-          type="button"
-        >
-          View all <ArrowUpRight size={14} />
-        </button>
       </div>
-      <EventList
-        compact
-        events={[...data.events]
-          .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-          .slice(0, 4)}
-        onCase={(id) => {
-          setSelection(undefined);
-          setCaseId(id);
-          setTab("events");
-        }}
-      />
+      <div className="event-list compact">
+        {messages.slice(0, 4).map((message) => (
+          <div className="event-row" key={message.id}>
+            <span className="avatar tiny">
+              {initials(message.author_label)}
+            </span>
+            <div className="event-description">
+              <strong>{message.author_label}</strong>
+              <span>{message.text}</span>
+            </div>
+            <button
+              className="case-link"
+              onClick={() =>
+                onSelect({
+                  case_id: message.session_id,
+                  message_id: message.id,
+                })
+              }
+              type="button"
+            >
+              Open
+              <ArrowUpRight size={11} />
+            </button>
+          </div>
+        ))}
+        {messages.length ? null : (
+          <div className="empty">Run demo mode to add D1-backed evidence.</div>
+        )}
+      </div>
     </section>
   );
 }
 
-function WorkspaceFooter({ remainingRuns }: { remainingRuns: number }) {
-  return (
-    <footer>
-      <span>
-        <span className="online-dot" />
-        Observed. Connected. Understood.
-      </span>
-      <span>
-        AriadneOS preview <span>·</span> {remainingRuns} simulation runs left
-      </span>
-    </footer>
-  );
-}
-
-function CurationStatusBar({
-  onUndo,
-  stats,
+function AssistantPanel({
+  answer,
+  ask,
+  asking,
+  question,
+  setQuestion,
 }: {
-  onUndo: () => void;
-  stats: ReturnType<typeof curationSummary>;
-}) {
-  if (stats.active === 0) {
-    return null;
-  }
-  return (
-    <div className="curation-status" role="status">
-      <span>
-        {stats.saved} saved · {stats.local} local · {stats.failed} failed
-      </span>
-      <button onClick={onUndo} type="button">
-        Undo last edit
-      </button>
-    </div>
-  );
-}
-
-function GraphEditStrip({
-  data,
-  graphEditing,
-}: {
-  data: Snapshot;
-  graphEditing: GraphEditing;
+  answer: AskAnswer | null;
+  ask: (text?: string) => Promise<void>;
+  asking: boolean;
+  question: string;
+  setQuestion: (value: string) => void;
 }) {
   return (
-    <div className="graph-edit-strip" role="toolbar">
-      <form onSubmit={graphEditing.submitAddNode}>
-        <input
-          aria-label="New graph node label"
-          disabled={graphEditing.editBusy}
-          maxLength={60}
-          onChange={(event) => graphEditing.setAddLabel(event.target.value)}
-          placeholder="Add step"
-          value={graphEditing.addLabel}
-        />
-        <button disabled={graphEditing.editBusy} type="submit">
-          <Plus size={13} />
-          Add
-        </button>
-      </form>
-      <button
-        disabled={graphEditing.editBusy || !data.canUndo}
-        onClick={graphEditing.undoGraphEdit}
-        type="button"
-      >
-        <Undo2 size={13} />
-        Undo
-      </button>
-      <button
-        disabled={graphEditing.editBusy || !data.canRedo}
-        onClick={graphEditing.redoGraphEdit}
-        type="button"
-      >
-        <Redo2 size={13} />
-        Redo
-      </button>
-      <span>Revision {data.revision ?? "base"}</span>
-    </div>
-  );
-}
-
-function useGraphCuration({
-  curationEdits,
-  setCurationEdits,
-  setNotice,
-  visibleModel,
-  workflow,
-}: {
-  curationEdits: CurationDraft[];
-  setCurationEdits: Dispatch<SetStateAction<CurationDraft[]>>;
-  setNotice: (value: string) => void;
-  visibleModel: ProcessModel | undefined;
-  workflow: WorkflowId;
-}) {
-  const handleCurationAction = useCallback(
-    (action: CurationAction, target: CurationTarget) => {
-      if (!visibleModel) {
-        return;
-      }
-      const draft = buildCurationDraft(action, target, visibleModel, setNotice);
-      if (!draft) {
-        return;
-      }
-      setCurationEdits((edits) => [...edits, draft]);
-      setNotice(`${sentenceCase(action)} applied optimistically.`);
-      saveCurationDraft(draft, workflow, setCurationEdits, setNotice);
-    },
-    [setCurationEdits, setNotice, visibleModel, workflow]
-  );
-  const handleUndoCuration = useCallback(() => {
-    const lastEdit = findLastActiveCurationEdit(curationEdits);
-    if (!lastEdit) {
-      return;
-    }
-    setCurationEdits((edits) => undoLastCurationDraft(edits));
-    setNotice("Last curation edit undone.");
-    if (lastEdit.persistence === "saved") {
-      saveCurationUndo(workflow, setNotice);
-    }
-  }, [curationEdits, setCurationEdits, setNotice, workflow]);
-  return { handleCurationAction, handleUndoCuration };
-}
-
-function buildCurationDraft(
-  action: CurationAction,
-  target: CurationTarget,
-  visibleModel: ProcessModel,
-  setNotice: (value: string) => void
-): CurationDraft | undefined {
-  try {
-    return createCurationDraft({
-      action,
-      model: visibleModel,
-      targetId: target.id,
-      targetKind: target.kind,
-    });
-  } catch (caught) {
-    setNotice((caught as Error).message);
-    return undefined;
-  }
-}
-
-function saveCurationDraft(
-  draft: CurationDraft,
-  workflow: WorkflowId,
-  setCurationEdits: Dispatch<SetStateAction<CurationDraft[]>>,
-  setNotice: (value: string) => void
-) {
-  persistCurationDraft(draft, workflow)
-    .then((result) => {
-      setCurationEdits((edits) =>
-        updateCurationDraft(edits, draft.id, {
-          persistence: result.persisted ? "saved" : "local",
-        })
-      );
-      if (!result.persisted) {
-        setNotice(
-          `${sentenceCase(draft.action)} is local until model edits are available.`
-        );
-      }
-    })
-    .catch((caught) => {
-      setCurationEdits((edits) =>
-        updateCurationDraft(edits, draft.id, { persistence: "failed" })
-      );
-      setNotice((caught as Error).message);
-    });
-}
-
-function saveCurationUndo(
-  workflow: WorkflowId,
-  setNotice: (value: string) => void
-) {
-  persistCurationUndo(workflow).catch((caught) => {
-    setNotice((caught as Error).message);
-  });
-}
-
-function useCurationShortcuts({
-  handleCurationAction,
-  handleUndoCuration,
-  selection,
-  visibleModel,
-}: {
-  handleCurationAction: (
-    action: CurationAction,
-    target: CurationTarget
-  ) => void;
-  handleUndoCuration: () => void;
-  selection: Selection | undefined;
-  visibleModel: ProcessModel | undefined;
-}) {
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (shouldIgnoreShortcut(event)) {
-        return;
-      }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
-        event.preventDefault();
-        handleUndoCuration();
-        return;
-      }
-      const action = shortcutAction(event.key);
-      if (!(action && selection && visibleModel)) {
-        return;
-      }
-      event.preventDefault();
-      handleCurationAction(action, {
-        id: selection.id,
-        kind: selection.kind,
-      });
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleCurationAction, handleUndoCuration, selection, visibleModel]);
-}
-
-function shortcutAction(key: string): CurationAction | undefined {
-  const normalized = key.toLowerCase();
-  if (normalized === "c") {
-    return "confirm";
-  }
-  if (normalized === "m") {
-    return "merge";
-  }
-  if (normalized === "s") {
-    return "split";
-  }
-  if (normalized === "x") {
-    return "reject";
-  }
-  return undefined;
-}
-
-function Stat({
-  label,
-  value,
-  sub,
-  icon,
-}: {
-  label: string;
-  value: string;
-  sub: string;
-  icon: React.ReactNode;
-}) {
-  return (
-    <div className="stat">
-      <div className="stat-label">
-        {label}
-        {icon}
-      </div>
-      <div className="stat-value">{value}</div>
-      <div className="stat-sub">{sub}</div>
-    </div>
-  );
-}
-function EventList({
-  events,
-  onCase,
-  compact = false,
-}: {
-  events: ActivityEvent[];
-  onCase: (id: string) => void;
-  compact?: boolean;
-}) {
-  return (
-    <div className={`event-list ${compact ? "compact" : ""}`}>
-      {events.length ? (
-        events.map((e) => (
-          <div className="event-row" key={e.id}>
-            <span className={`avatar ${avatarTone(e.role)}`}>
-              {initials(e.actor)}
-            </span>
-            <div className="event-description">
-              <strong>{e.actor}</strong>
-              <span>
-                {e.action} <i>· {e.artifact}</i>
-              </span>
-            </div>
-            <button
-              className="case-link"
-              onClick={() => onCase(e.caseId)}
-              type="button"
-            >
-              {e.caseId}
-              <ArrowUpRight size={11} />
-            </button>
-            <time dateTime={e.timestamp}>{time(e.timestamp)}</time>
-          </div>
-        ))
-      ) : (
-        <div className="empty">No observations match these filters.</div>
-      )}
-    </div>
-  );
-}
-
-function avatarTone(role: string) {
-  if (role === "Compliance") {
-    return "clay";
-  }
-  return role === "Finance" ? "lavender" : "";
-}
-
-function AboutDialog({ onClose }: { onClose: () => void }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    dialog.current?.showModal();
-  }, []);
-  return (
-    <dialog
-      aria-labelledby="about-title"
-      className="about-modal"
-      onClose={onClose}
-      ref={dialog}
-    >
-      {" "}
-      <button
-        aria-label="Close about dialog"
-        className="modal-close"
-        onClick={() => onClose()}
-        type="button"
-      >
-        <X size={20} />
-      </button>
-      <span className="insight-icon">
-        <Waypoints size={24} />
-      </span>
-      <h2 id="about-title">A map of how work happens.</h2>
-      <p>
-        AriadneOS turns activity into process context for people and agents.
-        This working preview uses a synthetic organization with three workflows.
-      </p>
-      <div className="source-row">
-        <span className="workspace-icon">
-          <Play size={18} />
+    <section className="assistant-card">
+      <div className="assistant-heading">
+        <span className="assistant-icon">
+          <Sparkles size={19} />
         </span>
         <div>
-          <strong>Simulation harness</strong>
-          <small>Connected · 72 baseline cases</small>
+          <h2>Ask Ariadne</h2>
+          <p>
+            Agent memory and OpenRouter fallback are routed through /api/ask.
+          </p>
         </div>
-        <span className="online-dot" />
+        <span className="beta">AI</span>
       </div>
-      <div className="source-row muted">
-        <span className="workspace-icon">#</span>
-        <div>
-          <strong>Slack</strong>
-          <small>Planned integration · not connected in this preview</small>
+      {answer ? (
+        <div aria-live="polite" className="answer">
+          <span className="answer-label">
+            {answer.mode === "ai" ? "ARIADNE · OPENROUTER" : "COMPUTED SUMMARY"}
+          </span>
+          {answer.notice ? <small>{answer.notice}</small> : null}
+          <p>{answer.answer}</p>
         </div>
-      </div>
-      <p>
-        New simulations add six cases to your browser’s workspace, stored for up
-        to 48 hours. Graphs and counts are calculated from event records. AI
-        explanations use Cloudflare Workers AI when available.
-      </p>
-      <button
-        className="button primary"
-        onClick={() => onClose()}
-        type="button"
+      ) : (
+        <div className="suggestions">
+          <button
+            onClick={() => ask("What is the most common observed path?")}
+            type="button"
+          >
+            What normally happens? <ArrowUpRight size={13} />
+          </button>
+          <button
+            onClick={() => ask("Which observations show process drift?")}
+            type="button"
+          >
+            Where is the drift? <ArrowUpRight size={13} />
+          </button>
+        </div>
+      )}
+      <form
+        className="question-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          ask();
+        }}
       >
-        Explore the process <ArrowRight size={16} />
-      </button>
-    </dialog>
-  );
-}
-
-interface InspectorProps {
-  editBusy: boolean;
-  events: ActivityEvent[];
-  highlighted: boolean;
-  model: Snapshot["model"];
-  onEdit: (
-    action: GraphEditAction,
-    payload: Record<string, string>
-  ) => Promise<void>;
-  selectedEdge: Snapshot["model"]["edges"][number] | undefined;
-  selectedNode: Snapshot["model"]["nodes"][number] | undefined;
-  selection: Selection | undefined;
-  setCaseId: (value: string | undefined) => void;
-  setSelection: (value: Selection | undefined) => void;
-  setTab: (value: string) => void;
-  workflow: WorkflowId;
-}
-function Inspector({
-  editBusy,
-  model,
-  highlighted,
-  selection,
-  selectedNode,
-  selectedEdge,
-  events,
-  onEdit,
-  workflow,
-  setSelection,
-  setCaseId,
-  setTab,
-}: InspectorProps) {
-  const details = buildLegacyInspectorDetails({
-    events,
-    model,
-    selectedEdge,
-    selectedNode,
-    selection,
-  });
-  return (
-    <ProcessInspector
-      actions={
-        <InspectorEditActions
-          editBusy={editBusy}
-          onEdit={onEdit}
-          selectedEdge={selectedEdge}
-          selectedNode={selectedNode}
+        <input
+          aria-label="Ask a question about this process"
+          disabled={asking}
+          maxLength={400}
+          onChange={(event) => setQuestion(event.target.value)}
+          placeholder="What would you like to understand?"
+          value={question}
         />
-      }
-      className={highlighted ? "is-demo-focus" : ""}
-      details={details}
-      onClearSelection={() => setSelection(undefined)}
-      onInspectSources={() => {
-        setCaseId(undefined);
-        setTab(selection ? "events" : "variants");
-      }}
-      onOpenContext={() =>
-        window.open(
-          `/api/context?workflow=${workflow}`,
-          "_blank",
-          "noopener,noreferrer"
-        )
-      }
-    />
-  );
-}
-
-function InspectorEditActions({
-  editBusy,
-  onEdit,
-  selectedEdge,
-  selectedNode,
-}: Pick<
-  InspectorProps,
-  "editBusy" | "onEdit" | "selectedEdge" | "selectedNode"
->) {
-  if (!(selectedNode || selectedEdge)) {
-    return null;
-  }
-  return (
-    <div className="inspector-actions">
-      {selectedNode?.plane === "discovered" ? (
         <button
-          disabled={editBusy}
-          onClick={() => onEdit("promote", { id: selectedNode.id })}
-          title="Promote node"
-          type="button"
+          aria-label="Send question"
+          disabled={asking || !question.trim()}
+          type="submit"
         >
-          <ArrowUpRight size={13} />
-          Promote
+          {asking ? (
+            <LoaderCircle className="spin" size={17} />
+          ) : (
+            <Send size={17} />
+          )}
         </button>
-      ) : null}
-      {selectedNode?.plane === "designed" ? (
-        <button
-          disabled={editBusy}
-          onClick={() => onEdit("retire", { id: selectedNode.id })}
-          title="Retire node"
-          type="button"
-        >
-          <Trash2 size={13} />
-          Retire
-        </button>
-      ) : null}
-      {selectedNode ? (
-        <button
-          disabled={editBusy}
-          onClick={() => onEdit("reject", { id: selectedNode.id })}
-          title="Remove node"
-          type="button"
-        >
-          <X size={13} />
-          Remove
-        </button>
-      ) : null}
-      {selectedEdge ? (
-        <button
-          disabled={editBusy}
-          onClick={() =>
-            onEdit("remove_edge", {
-              source: selectedEdge.source,
-              target: selectedEdge.target,
-            })
-          }
-          title="Remove edge"
-          type="button"
-        >
-          <Unlink size={13} />
-          Remove
-        </button>
-      ) : null}
-      {selectedEdge ? (
-        <button
-          disabled={editBusy}
-          onClick={() =>
-            onEdit("require", {
-              source: selectedEdge.source,
-              target: selectedEdge.target,
-            })
-          }
-          title="Require edge"
-          type="button"
-        >
-          <Link2 size={13} />
-          Require
-        </button>
-      ) : null}
-    </div>
+      </form>
+    </section>
   );
 }
 
 function SettingsPanel({
-  data,
-  workflow,
-  workspace,
-  onAbout,
+  adapter,
+  graphReady,
   onExport,
+  onRefreshRuntime,
   onReload,
-  onRefreshSettings,
   settings,
   settingsError,
   settingsLoading,
+  state,
 }: {
-  data: Snapshot;
-  workflow: WorkflowId;
-  workspace: string;
-  onAbout: () => void;
+  adapter: ApiAdapter;
+  graphReady: boolean;
   onExport: () => void;
+  onRefreshRuntime: () => void;
   onReload: () => void;
-  onRefreshSettings: () => void;
   settings: WorkspaceSettings | null;
   settingsError: string;
   settingsLoading: boolean;
+  state: AppState;
 }) {
-  const workspaceLabel = workspace === "demo" ? "Acme Studio" : workspace;
   const deployWorkflow = settings?.deployment.controls.find(
     (control) => control.id === "actions"
   );
@@ -2161,49 +1683,39 @@ function SettingsPanel({
             : `Runtime ${settings?.environment ?? "local"}`}
         </span>
       </div>
+      {settingsError ? (
+        <div className="settings-warning" role="alert">
+          <ShieldCheck size={16} />
+          {settingsError}
+        </div>
+      ) : null}
       <div className="settings-grid">
         <article>
           <span>Workspace</span>
-          <strong>{workspaceLabel}</strong>
-          <small>
-            {settings?.slack.workspaceId
-              ? `Slack ${settings.slack.workspaceId}`
-              : "Demo scope"}{" "}
-            · Slack auth gated
-          </small>
+          <strong>{settings?.slack.workspaceId ?? "unconfigured"}</strong>
+          <small>{settings?.slack.channel ?? "No channel scope"}</small>
         </article>
         <article>
           <span>Project</span>
-          <strong>{data.workflow.name}</strong>
-          <small>
-            {workflow} · {data.workflow.description}
-          </small>
+          <strong>{state.scope.project_id}</strong>
+          <small>{state.scope.workflow_id ?? "No workflow selected"}</small>
         </article>
         <article>
           <span>Data source</span>
-          <strong>Simulation harness</strong>
-          <small>{data.remainingRuns} simulation runs left</small>
-        </article>
-        <article>
-          <span>Slack events</span>
-          <strong>{settings?.slack.status ?? "checking"}</strong>
-          <small>
-            {settings?.slack.channel
-              ? `Channel ${settings.slack.channel}`
-              : "No channel scope configured"}
-          </small>
+          <strong>{graphReady ? "D1 process API" : "Waiting"}</strong>
+          <small>{adapter.buildStreamUrl(state.scope)}</small>
         </article>
         <article>
           <span>Coordinator</span>
           <strong>{settings?.channelCoordinator ?? "checking"}</strong>
-          <small>Durable Object schedule and stream coordination</small>
+          <small>Durable Object stream and journal replay</small>
         </article>
         <article>
           <span>Release</span>
           <strong>{shortSha(settings?.releaseSha)}</strong>
           <small>
             {settings?.generatedAt
-              ? `Observed ${time(settings.generatedAt)}`
+              ? `Observed ${formatTime(settings.generatedAt)}`
               : "Waiting for runtime settings"}
           </small>
         </article>
@@ -2221,12 +1733,6 @@ function SettingsPanel({
             </p>
           </div>
         </div>
-        {settingsError ? (
-          <div className="settings-warning" role="alert">
-            <ShieldCheck size={16} />
-            {settingsError}
-          </div>
-        ) : null}
         <div className="deployment-targets">
           {(settings?.deployment.targets ?? []).map((target) => (
             <article
@@ -2241,20 +1747,13 @@ function SettingsPanel({
               {target.selected ? <em>Active runtime</em> : null}
             </article>
           ))}
-          {!settings && (
-            <article>
-              <span>Configuration</span>
-              <strong>{settingsLoading ? "Loading" : "Unavailable"}</strong>
-              <small>Runtime deployment metadata has not loaded yet.</small>
-            </article>
-          )}
         </div>
       </div>
       <div className="settings-actions">
         <button
           className="button secondary"
           disabled={settingsLoading}
-          onClick={onRefreshSettings}
+          onClick={onRefreshRuntime}
           type="button"
         >
           {settingsLoading ? (
@@ -2270,7 +1769,7 @@ function SettingsPanel({
         </button>
         <button className="button secondary" onClick={onExport} type="button">
           <ArrowDownToLine size={14} />
-          Export model
+          Export snapshot
         </button>
         <button
           className="button secondary"
@@ -2282,15 +1781,58 @@ function SettingsPanel({
           }}
           type="button"
         >
-          <ExternalLink size={14} />
-          Deploy workflow
-        </button>
-        <button className="button secondary" onClick={onAbout} type="button">
-          About this demo <ArrowUpRight size={14} />
+          Deploy workflow <ArrowUpRight size={14} />
         </button>
       </div>
     </section>
   );
+}
+
+function Stat({
+  icon,
+  label,
+  sub,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  sub: string;
+  value: string;
+}) {
+  return (
+    <div className="stat">
+      <div className="stat-label">
+        {label}
+        {icon}
+      </div>
+      <div className="stat-value">{value}</div>
+      <div className="stat-sub">{sub}</div>
+    </div>
+  );
+}
+
+function connectionLabel(state: AppState, settings: WorkspaceSettings | null) {
+  if (settings?.slack.status === "unconfigured") {
+    return "Channel unconfigured";
+  }
+  return `${state.connection.status} · ${settings?.environment ?? "local"}`;
+}
+
+function initials(name: string) {
+  return name
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2);
+}
+
+function formatTime(value: string) {
+  return new Date(value).toLocaleString(undefined, {
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "short",
+  });
 }
 
 function shortSha(value: string | undefined) {
@@ -2298,194 +1840,4 @@ function shortSha(value: string | undefined) {
     return "local";
   }
   return value.slice(0, 7);
-}
-
-function filterEvents(
-  events: ActivityEvent[],
-  caseId: string | undefined,
-  nodeId: string | undefined,
-  evidenceIds: Set<string>,
-  edgeSelected: boolean,
-  search: string
-) {
-  return events
-    .filter((e) => {
-      if (caseId && e.caseId !== caseId) {
-        return false;
-      }
-      if (nodeId && e.action !== nodeId) {
-        return false;
-      }
-      if (edgeSelected && !evidenceIds.has(e.id)) {
-        return false;
-      }
-      return (
-        !search ||
-        `${e.caseId} ${e.actor} ${e.action} ${e.artifact}`
-          .toLowerCase()
-          .includes(search.toLowerCase())
-      );
-    })
-    .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-}
-
-interface VariantsPanelProps {
-  highlighted: boolean;
-  model: Snapshot["model"];
-  setCaseId: (value: string | undefined) => void;
-  setSelection: (value: Selection | undefined) => void;
-  setTab: (value: string) => void;
-}
-function VariantsPanel({
-  highlighted,
-  model,
-  setSelection,
-  setCaseId,
-  setTab,
-}: VariantsPanelProps) {
-  return (
-    <div
-      className={`variants-panel ${highlighted ? "is-demo-focus" : ""}`}
-      data-demo-target="variants"
-    >
-      <div className="section-kicker">SAME WORK. DIFFERENT PATHS.</div>
-      <h3>The ways this process unfolds</h3>
-      <p>Sequences reconstructed from complete case histories.</p>
-      {model.variants.map((v, i) => (
-        <button
-          className="variant-card"
-          key={v.path.join()}
-          onClick={() => {
-            setSelection(undefined);
-            setCaseId(v.caseIds[0]);
-            setTab("events");
-          }}
-          type="button"
-        >
-          <div className="variant-head">
-            <span>
-              Variant {String(i + 1).padStart(2, "0")}
-              {i === 0 && <em>Most common</em>}
-            </span>
-            <strong>
-              {v.count} cases ·{" "}
-              {Math.round((v.count / model.stats.cases) * 100)}%
-            </strong>
-          </div>
-          <div className="variant-path">
-            {v.path.map((p, j) => (
-              <span key={v.path.slice(0, j + 1).join(" → ")}>
-                {j > 0 && <ArrowRight size={12} />}
-                <span>{p}</span>
-              </span>
-            ))}
-          </div>
-          <div className="variant-track">
-            <i
-              style={{
-                width: `${(v.count / model.stats.cases) * 100}%`,
-              }}
-            />
-          </div>
-          <small>
-            Inspect an example case <ArrowUpRight size={12} />
-          </small>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function selectionEvidence(
-  model: Snapshot["model"] | undefined,
-  selection: Selection | undefined
-) {
-  const selectedNode = model?.nodes.find(
-    (n) => selection?.kind === "node" && n.id === selection.id
-  );
-  const selectedEdge = model?.edges.find(
-    (e) => selection?.kind === "edge" && e.id === selection.id
-  );
-  const evidenceIds = new Set(
-    selectedEdge?.evidence.flatMap((e) => [e.from, e.to]) ?? []
-  );
-
-  return { evidenceIds, selectedEdge, selectedNode };
-}
-
-function WorkspaceStatus({
-  loading,
-  ready,
-  onReload,
-}: {
-  loading: boolean;
-  ready: boolean;
-  onReload: () => void;
-}) {
-  if (loading) {
-    return (
-      <div className="loading-state">
-        <LoaderCircle className="spin" />
-        <p>Connecting the observations…</p>
-      </div>
-    );
-  }
-  if (ready) {
-    return null;
-  }
-  return (
-    <div className="loading-state">
-      <p>No observations available.</p>
-      <button className="button secondary" onClick={onReload} type="button">
-        Reload workspace
-      </button>
-    </div>
-  );
-}
-
-function normalizeCanvasGraphEditPayload(payload: Record<string, string>) {
-  const normalized = { ...payload };
-  for (const key of ["id", "source", "target"] as const) {
-    if (normalized[key]) {
-      normalized[key] = legacyActivityId(normalized[key]);
-    }
-  }
-  return normalized;
-}
-
-function editNotice(action: GraphEditAction) {
-  return `${sentenceCase(action.replaceAll("_", " "))} saved.`;
-}
-
-function sentenceCase(value: string) {
-  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
-}
-
-function graphCurationHint(stats: ReturnType<typeof curationSummary>) {
-  return `${stats.active} curation edits · ${stats.pending} pending`;
-}
-
-function shouldIgnoreShortcut(event: KeyboardEvent) {
-  const { target } = event;
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-  return (
-    target.isContentEditable ||
-    target.tagName === "INPUT" ||
-    target.tagName === "SELECT" ||
-    target.tagName === "TEXTAREA"
-  );
-}
-
-function findLastActiveCurationEdit(
-  edits: CurationDraft[]
-): CurationDraft | undefined {
-  for (let index = edits.length - 1; index >= 0; index -= 1) {
-    const edit = edits[index];
-    if (edit && !edit.undone) {
-      return edit;
-    }
-  }
-  return undefined;
 }

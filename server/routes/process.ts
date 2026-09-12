@@ -39,6 +39,15 @@ import {
   type DesignedGraphEditPayload,
   rewriteStepForDesignedEdits,
 } from "../../shared/model-edits.ts";
+import { runDemoReadinessGate } from "../demo/readiness.ts";
+import {
+  type DemoScenario,
+  type DemoTranscript,
+  generateDemoTranscript,
+  type ScenarioId,
+  type ScenarioVariantId,
+  scenarioById,
+} from "../demo/simulator.ts";
 import { persistGraphRevision } from "../graph-persistence.ts";
 import {
   type AuthoredKb,
@@ -776,13 +785,123 @@ processRoutes.get("/stream", async (c) => {
   return response;
 });
 
-processRoutes.post("/sim/run", async () =>
-  apiError(
-    "simulation_runtime_unavailable",
-    "Durable simulation persistence is not available on this branch yet.",
-    503
-  )
-);
+processRoutes.post("/sim/run", async (c) => {
+  const context = getProcessContext(c);
+  const body = await readJson<{
+    project_id?: string;
+    request_id?: string;
+    scenario_id?: string;
+    variant?: string;
+    workflow_id?: string;
+  }>(c.req.raw);
+  if ("response" in body) {
+    return body.response;
+  }
+  if (!(body.request_id && body.request_id.length <= 120)) {
+    return apiError(
+      "invalid_request_id",
+      "request_id is required and must be at most 120 characters.",
+      400
+    );
+  }
+  const scenarioId = (body.scenario_id ?? "helios_p1") as ScenarioId;
+  const variant = (body.variant ?? "v2_skip_review") as ScenarioVariantId;
+  let scenario: DemoScenario;
+  let transcript: DemoTranscript;
+  try {
+    scenario = scenarioById(scenarioId);
+    transcript = generateDemoTranscript(
+      scenarioId,
+      variant,
+      seedFromRequest(body.request_id)
+    );
+  } catch (caught) {
+    return apiError("unknown_scenario", (caught as Error).message, 400);
+  }
+  if (body.project_id && body.project_id !== scenario.project_id) {
+    return apiError(
+      "scope_mismatch",
+      "scenario_id does not belong to project_id.",
+      400
+    );
+  }
+  if (body.workflow_id && body.workflow_id !== scenario.workflow_id) {
+    return apiError(
+      "scope_mismatch",
+      "scenario_id does not belong to workflow_id.",
+      400
+    );
+  }
+  const report = await runDemoReadinessGate({ transcripts: [transcript] });
+  if (!report.snapshot) {
+    return apiError(
+      "simulation_pipeline_failed",
+      "The demo simulator did not produce a UI snapshot.",
+      500
+    );
+  }
+  const snapshot = scopeSnapshot(report.snapshot, context.scope);
+  await persistDemoSnapshot(c.env.DB, snapshot);
+  await publishDemoSnapshotJournal(
+    c.env,
+    c.env.DB,
+    context.scope,
+    snapshot,
+    body.request_id
+  );
+  const conformance = await recalculateScopedConformance(
+    c.env,
+    c.env.DB,
+    context.scope,
+    {
+      projectId: scenario.project_id,
+      requestId: `sim:${body.request_id}`,
+      sessionId: snapshot.sessions[0]?.id,
+      source: "graph",
+      workflowId: scenario.workflow_id,
+    }
+  );
+  const data = await readScopedData(
+    c.env.DB,
+    context.scope,
+    scenario.project_id
+  );
+  const graph = buildGraphView({
+    data,
+    effectiveWorkflow:
+      (
+        await readEffectiveWorkflow(
+          c.env.DB,
+          context.scope,
+          scenario.workflow_id
+        )
+      )?.workflow ?? undefined,
+    kind: "overlay",
+    minSupport: DEFAULT_MIN_SUPPORT,
+    projectId: scenario.project_id,
+    workflowId: scenario.workflow_id,
+  });
+  if ("response" in graph) {
+    return graph.response;
+  }
+  await commitGraphJournal(
+    c.env,
+    c.env.DB,
+    context.scope,
+    graph,
+    `sim:${body.request_id}:graph`
+  );
+  return c.json({
+    conformance: conformance?.workflow ?? graph.conformance,
+    graph,
+    report: {
+      metrics: report.metrics,
+      passed: report.passed,
+      stages: report.stages,
+    },
+    session_id: snapshot.sessions[0]?.id,
+  });
+});
 
 processRoutes.post("/sim/pause", async (c) => controlSimulation(c, "/pause"));
 processRoutes.post("/sim/resume", async (c) => controlSimulation(c, "/resume"));
@@ -2290,6 +2409,242 @@ async function publishProcessJournal(
     params,
   });
   return committed.envelope;
+}
+
+function seedFromRequest(requestId: string) {
+  let hash = 2_166_136_261;
+  for (const char of requestId) {
+    // biome-ignore lint/suspicious/noBitwiseOperators: FNV-style request hashing gives stable simulator seeds without storing request state.
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return Math.abs(hash);
+}
+
+function scopeSnapshot(snapshot: Snapshot, scope: ChannelScope): Snapshot {
+  const messageIdByOldId = new Map(
+    snapshot.messages.map((message) => [
+      message.id,
+      `${scope.workspaceId}:${scope.channel}:${message.ts}` as Message["id"],
+    ])
+  );
+  const messages = snapshot.messages.map((message) => ({
+    ...message,
+    channel: scope.channel,
+    id: messageIdByOldId.get(message.id) ?? message.id,
+    workspace_id: scope.workspaceId,
+  }));
+  const rescopeEvidence = (evidence: EvidenceRef): EvidenceRef => ({
+    ...evidence,
+    channel: scope.channel,
+    message_id:
+      messageIdByOldId.get(evidence.message_id) ?? evidence.message_id,
+    workspace_id: scope.workspaceId,
+  });
+  return {
+    ...snapshot,
+    conformance: snapshot.conformance.map((item) => ({
+      ...item,
+      role_deviations: item.role_deviations.map((deviation) => ({
+        ...deviation,
+        evidence: deviation.evidence.map(rescopeEvidence),
+      })),
+      unreconciled: item.unreconciled.map((finding) => ({
+        ...finding,
+        evidence: finding.evidence.map(rescopeEvidence),
+      })),
+      violations: item.violations.map((violation) => ({
+        ...violation,
+        evidence: violation.evidence.map(rescopeEvidence),
+      })),
+    })),
+    graph: {
+      ...snapshot.graph,
+      edges: snapshot.graph.edges.map((edge) => ({ ...edge })),
+      nodes: snapshot.graph.nodes.map((node) => ({
+        ...node,
+        role_deviations: node.role_deviations.map((deviation) => ({
+          ...deviation,
+          evidence: deviation.evidence.map(rescopeEvidence),
+        })),
+        unreconciled: node.unreconciled.map((finding) => ({
+          ...finding,
+          evidence: finding.evidence.map(rescopeEvidence),
+        })),
+      })),
+    },
+    messages,
+    sessions: snapshot.sessions.map((session) => ({
+      ...session,
+      channel: scope.channel,
+      workspace_id: scope.workspaceId,
+    })),
+    steps: snapshot.steps.map((step) => ({
+      ...step,
+      evidence: step.evidence.map(rescopeEvidence),
+    })),
+  };
+}
+
+async function persistDemoSnapshot(db: D1Database, snapshot: Snapshot) {
+  const statements = [
+    ...snapshot.sessions.map((session) =>
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO pm_session
+           (id, workspace_id, channel, project_id, workflow_id, status, source,
+            scenario_id, variant, started_ts, ended_ts, suggested, fitness,
+            missing_json, extra_json, violations_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .bind(
+          session.id,
+          session.workspace_id,
+          session.channel,
+          session.project_id,
+          session.workflow_id,
+          session.status,
+          session.source,
+          session.scenario_id ?? null,
+          session.variant ?? null,
+          session.started_ts,
+          session.ended_ts,
+          Number(session.suggested),
+          session.fitness,
+          JSON.stringify(session.missing),
+          JSON.stringify(session.extra),
+          JSON.stringify(session.violations)
+        )
+    ),
+    ...snapshot.messages.map((message) =>
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO pm_message
+           (workspace_id, channel, ts, id, session_id, author_person_id,
+            author_label, text, permalink, thread_ts, revision, deleted,
+            availability, is_agent, received_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .bind(
+          message.workspace_id,
+          message.channel,
+          message.ts,
+          message.id,
+          message.session_id,
+          message.author_person_id,
+          message.author_label,
+          message.text,
+          message.permalink,
+          message.thread_ts,
+          message.revision,
+          Number(message.deleted),
+          message.availability,
+          Number(message.is_agent),
+          message.received_at
+        )
+    ),
+    ...snapshot.steps.map((step) =>
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO pm_step
+           (id, session_id, seq, activity_id, actor_person_id, artifact_id,
+            intent, type, handoff_to_person_id, modality, lifecycle_state,
+            curation_status, negated, confidence, ts_start, ts_end, effort_days)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .bind(
+          step.id,
+          step.session_id,
+          step.seq,
+          step.activity_id,
+          step.actor_person_id,
+          step.artifact_id,
+          step.intent,
+          step.type,
+          step.handoff_to_person_id,
+          step.modality,
+          step.lifecycle_state,
+          step.status,
+          Number(step.negated),
+          step.confidence,
+          step.ts_start,
+          step.ts_end,
+          step.effort_days ?? null
+        )
+    ),
+    ...snapshot.steps.flatMap((step) =>
+      step.evidence.map((evidence) =>
+        db
+          .prepare(
+            `INSERT OR IGNORE INTO pm_step_evidence
+             (step_id, workspace_id, channel, message_ts, message_revision,
+              span_start, span_end)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
+          )
+          .bind(
+            step.id,
+            evidence.workspace_id,
+            evidence.channel,
+            evidence.ts,
+            evidence.message_revision,
+            evidence.span?.start ?? null,
+            evidence.span?.end ?? null
+          )
+      )
+    ),
+  ];
+  await db.batch(statements);
+}
+
+async function publishDemoSnapshotJournal(
+  env: ProcessEnv,
+  db: D1Database,
+  scope: ChannelScope,
+  snapshot: Snapshot,
+  requestId: string
+) {
+  for (const session of snapshot.sessions) {
+    // biome-ignore lint/performance/noAwaitInLoops: journal ordering gives replaying clients a coherent session.
+    await publishProcessJournal(env, db, scope, {
+      kind: "session_started",
+      opKey: `sim:${requestId}:session:${session.id}`,
+      payload: session,
+      projectId: session.project_id,
+      sessionId: session.id,
+    });
+  }
+  for (const message of snapshot.messages) {
+    const session = snapshot.sessions.find(
+      (item) => item.id === message.session_id
+    );
+    if (!session) {
+      continue;
+    }
+    // biome-ignore lint/performance/noAwaitInLoops: journal ordering gives replaying clients message chronology.
+    await publishProcessJournal(env, db, scope, {
+      kind: "message",
+      opKey: `sim:${requestId}:message:${message.id}`,
+      payload: message,
+      projectId: session.project_id,
+      sessionId: session.id,
+    });
+  }
+  for (const step of snapshot.steps) {
+    const session = snapshot.sessions.find(
+      (item) => item.id === step.session_id
+    );
+    if (!session) {
+      continue;
+    }
+    // biome-ignore lint/performance/noAwaitInLoops: journal ordering gives replaying clients step chronology.
+    await publishProcessJournal(env, db, scope, {
+      kind: "step",
+      opKey: `sim:${requestId}:step:${step.id}`,
+      payload: step,
+      projectId: session.project_id,
+      sessionId: session.id,
+    });
+  }
 }
 
 async function controlSimulation(

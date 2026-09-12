@@ -376,7 +376,16 @@ export function createProductionApiAdapter(
 }
 
 function legacyWorkflowId(workflowId: WorkflowId): string {
-  return workflowId.replace(WORKFLOW_ID_PREFIX, "");
+  const compatibility: Partial<Record<WorkflowId, string>> = {
+    wf_access: "access",
+    wf_feature_intake: "refund",
+    wf_p1_incident: "vendor",
+    wf_refund: "refund",
+    wf_vendor: "vendor",
+  };
+  return (
+    compatibility[workflowId] ?? workflowId.replace(WORKFLOW_ID_PREFIX, "")
+  );
 }
 
 export function createFixtureApiAdapter(

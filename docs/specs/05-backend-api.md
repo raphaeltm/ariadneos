@@ -1,188 +1,138 @@
-# Spec 05 — Backend, Storage & API
+# Spec 05 — Worker, D1 and API
 
-> One FastAPI process. One SQLite file. SSE for live. No ORM, no migrations, no message broker.
+Read [the Cloudflare contract](00-cloudflare-architecture.md) first. Extend the existing Hono
+Worker and D1 database; no Python process, local SQLite server or second deployment project.
+The contracts issue freezes types/schema/fixtures; runtime and API issues implement them.
 
-**Owner:** Track A · **Time budget:** 40 min · **Module:** `backend/app/`
+## 1. D1 storage
 
----
+New domain tables use `pm_` names. Existing `events`, `sessions`, usage and Better Auth tables
+retain their current meanings. The schema owner must inspect merged migrations before assigning
+the next migration number; PR #5 already proposes auth and Slack observation tables.
 
-## 1. Storage — `ariadne.db`
+| Table | Key and contents |
+|---|---|
+| `pm_person`, `pm_project`, `pm_artifact`, `pm_policy` | Authored KB IDs and fields from spec 02; JSON text for arrays; optional artifact value/unit |
+| `pm_workflow` | Workflow ID, project, entry/exits, ordered activity slugs, matrix, policy IDs |
+| `pm_activity` | Canonical ID/slug, label, description, authored synonyms; designed workflow membership is separate |
+| `pm_workflow_activity` | Workflow + activity key, expected role, rank; never overwrite another workflow's membership |
+| `pm_designed_edge` | Workflow + from + to key, expected probability; authored independently of observations |
+| `pm_session` | Process session ID, workspace/channel, project/workflow, status/source, scenario/variant, timestamps, suggested flag |
+| `pm_message` | Composite workspace/channel/ts key, session, author, text/permalink/thread, persona/observer identity, revision, deleted flag |
+| `pm_step` | ID, session/sequence, canonical activity, actor/artifact/handoff, type/intent/modality, lifecycle state, confidence/status/negated, timestamps, optional effort_days |
+| `pm_step_evidence` | Step + workspace/channel/ts key, message revision; real scoped references with indexes for invalidation |
+| `pm_journal` | Monotonic integer ID, scope, kind, timestamp, JSON payload, stable operation key |
+| `pm_outbox` | Stable operation ID, scope, kind, payload, pending/sent/uncertain/failed, Slack ts, attempt count and next due time |
+| `pm_processing` | Observation/checkpoint IDs, pending/done/error, retry and extraction-window revision metadata |
 
-```sql
--- ORG PLANE (authored, spec 02)
-CREATE TABLE person   (id TEXT PRIMARY KEY, name TEXT, role TEXT, seniority TEXT, emoji TEXT,
-                       color TEXT, goals TEXT, biases TEXT, comms_style TEXT, projects TEXT);
-CREATE TABLE project  (id TEXT PRIMARY KEY, name TEXT, summary TEXT, spec_md TEXT,
-                       constraints TEXT, workflow_id TEXT);
-CREATE TABLE artifact (id TEXT PRIMARY KEY, type TEXT, name TEXT, uri TEXT, project_id TEXT);
-CREATE TABLE policy   (id TEXT PRIMARY KEY, project_id TEXT, kind TEXT, activity_slug TEXT,
-                       text TEXT, params TEXT);
+Reuse PR #5's append-only Slack observations. Do not replace that table with the mutable message
+projection. Index session+sequence, scope+message timestamp, scope+journal ID, pending operations,
+workflow membership and evidence references. Unique keys make retries safe. Migration smoke covers
+fresh and existing demo/auth databases; never drop/reseed production data.
 
--- PROCESS PLANE
-CREATE TABLE workflow (id TEXT PRIMARY KEY, name TEXT, project_id TEXT, plane TEXT,
-                       entry_activity TEXT, exit_activities TEXT, activity_slugs TEXT, matrix TEXT);
-CREATE TABLE activity (id TEXT PRIMARY KEY, slug TEXT UNIQUE, label TEXT, description TEXT,
-                       project_id TEXT, plane TEXT, role_expected TEXT, first_seen_ts TEXT);
-CREATE TABLE follows  (from_activity TEXT, to_activity TEXT, plane TEXT, kind TEXT,
-                       weight REAL, cases TEXT, is_back_edge INT,
-                       PRIMARY KEY (from_activity, to_activity, plane));
-
--- EXECUTION PLANE
-CREATE TABLE session  (id TEXT PRIMARY KEY, channel TEXT, project_id TEXT, workflow_id TEXT,
-                       started_ts TEXT, ended_ts TEXT, status TEXT, source TEXT,
-                       scenario_id TEXT, variant TEXT, suggested INT DEFAULT 0, conformance TEXT);
-CREATE TABLE message  (ts TEXT PRIMARY KEY, channel TEXT, session_id TEXT, author_person_id TEXT,
-                       author_label TEXT, text TEXT, permalink TEXT, thread_ts TEXT,
-                       is_agent INT DEFAULT 0, reactions TEXT);
-CREATE TABLE step     (id TEXT PRIMARY KEY, session_id TEXT, seq INT, activity_id TEXT,
-                       actor_person_id TEXT, artifact_id TEXT, intent TEXT, type TEXT,
-                       handoff_to_person_id TEXT, ts_start TEXT, ts_end TEXT, confidence REAL,
-                       evidence TEXT, status TEXT DEFAULT 'proposed', negated INT DEFAULT 0);
-
--- JOURNAL (SSE replay + time travel)
-CREATE TABLE event    (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, kind TEXT, payload TEXT);
-
-CREATE INDEX idx_step_session ON step(session_id, seq);
-CREATE INDEX idx_msg_session  ON message(session_id, ts);
-```
-
-**`step` is the single source of truth.** Every aggregate (`activity.support`, `follows.weight`,
-conformance) is recomputed from it. Nothing is incrementally mutated, so nothing can drift.
-
----
+D1 batches commit domain updates plus journal records together. Aggregates are pure functions of
+scoped done + confirmed steps and authored KB; caches may be rebuilt. Do not persist independently mutable
+support counters. Seed bundled KB JSON explicitly after migrations, idempotently.
 
 ## 2. HTTP API
 
-| Method | Path | Returns |
+All data/control routes require existing authentication plus configured workspace/channel access.
+Reject foreign IDs before reading evidence or controlling a runner. Health exposes readiness and
+revision without channel content. Validate enums, limits and request bodies; errors use
+`{error: {code, message}}`. Apply bounded pagination to lists. No secrets reach the browser.
+
+| Method | Path | Result / behavior |
 |---|---|---|
-| `GET` | `/api/health` | `{ok, kb_loaded, slack_connected, sessions, steps}` |
-| `GET` | `/api/kb` | Org plane: people, projects, artifacts, policies |
-| `GET` | `/api/graph/designed?workflow_id=` | grey documented DAG (available before any run) |
-| `GET` | `/api/graph/discovered?project_id=&min_support=1` | mined DAG |
-| `GET` | `/api/graph/overlay?workflow_id=&min_support=1` | **the money endpoint** — merged nodes/edges with `plane` on each, plus `conformance` |
-| `GET` | `/api/sessions` | list with status, project, fitness, step count |
-| `GET` | `/api/sessions/{id}` | session + ordered steps + conformance |
-| `GET` | `/api/sessions/{id}/graph` | instance DAG for one case |
-| `GET` | `/api/messages?session_id=&limit=` | Slack mirror for the left rail |
-| `GET` | `/api/steps/{id}/evidence` | `[{ts, author, text, permalink}]` |
-| `POST` | `/api/steps/{id}/status` | `{status: confirmed\|rejected}` → `graph_delta` |
-| `POST` | `/api/sim/run` | `{scenario_id, variant}` → starts a session (background task) |
-| `POST` | `/api/sim/pause` · `/api/sim/resume` | toggle the beat gate |
-| `POST` | `/api/ask` | `{question}` → `{answer, citations[], subgraph}` (graph-RAG) |
-| `POST` | `/api/graph/rebuild` | force full recompute (escape hatch) |
-| `GET` | `/api/stream` | **SSE** |
+| GET | `/api/health` | Preserve `ok, environment, revision`; add KB/Slack readiness without calling Slack on every health request |
+| GET | `/api/kb` | Authorized people/projects/artifacts/policies/workflows, role repertoires/artifact lifecycle definitions and allowed scenario catalog |
+| GET | `/api/snapshot?project_id=&workflow_id=` | Consistent initial graph, messages, sessions, steps, conformance and journal cursor |
+| GET | `/api/graph/designed?workflow_id=` | Designed graph, available before a run |
+| GET | `/api/graph/discovered?project_id=&min_support=1` | Scoped aggregate mined graph |
+| GET | `/api/graph/overlay?workflow_id=&min_support=1` | Union graph with derived plane, conformance, happy_path |
+| GET | `/api/sessions?project_id=` | Process sessions, status, fitness and step count |
+| GET | `/api/sessions/{id}` | Session, ordered steps and conformance |
+| GET | `/api/sessions/{id}/graph` | Instance graph keyed by step IDs so repeated activities remain distinct |
+| GET | `/api/messages?session_id=&limit=&cursor=` | Authorized Slack mirror, bounded page |
+| GET | `/api/steps/{id}/evidence` | Actual author/text/permalink/message refs; deleted evidence is unavailable |
+| POST | `/api/steps/{id}/status` | P1 `{status: confirmed|rejected}` → commit curation and graph diff |
+| POST | `/api/sim/run` | `{scenario_id, variant, request_id}` → 202 `{session_id}`; duplicate request returns same run; busy channel returns 409 |
+| POST | `/api/sim/pause`, `/api/sim/resume` | `{session_id}` → persist control before success |
+| POST | `/api/ask` | P1 `{question, project_id}` → `{answer, citations, subgraph}`; adapt existing consumer with handler |
+| POST | `/api/graph/rebuild` | Scoped bounded rebuild and committed deltas; no reseed |
+| GET | `/api/stream?project_id=&after=` | Authorized SSE from coordinator with durable replay |
 
-### 2.1 `/api/graph/overlay` response
+Snapshot cursor and state must describe the same committed point. Route snapshots through the
+coordinator's serialized mutation boundary and return state plus cursor before later publications.
+Subscribe after that cursor so a change between snapshot and stream connection is replayed.
+Every scope switch obtains a new snapshot/cursor. Contract fixtures include each response and error.
 
-```jsonc
-{
-  "nodes": [
-    {"id":"act_security_review","slug":"security_review","label":"Security review",
-     "plane":"designed","role_expected":"eng","roles_observed":[],
-     "support":0,"occurrences":0,"policy_ids":["pol_sec_review"],
-     "missing_in_sessions":["ses_002","ses_003"]},
-    {"id":"act_escalate_to_ceo","slug":"escalate_to_ceo","label":"Escalate to CEO",
-     "plane":"discovered","roles_observed":["support","ceo"],"support":4,"occurrences":5}
-  ],
-  "edges": [
-    {"from":"act_root_cause_analysis","to":"act_deploy_fix","plane":"discovered",
-     "kind":"sequence","weight":3,"cases":["ses_002","ses_003","ses_005"],
-     "is_back_edge":false,"violates":["pol_sec_review"]}
-  ],
-  "conformance": {"fitness":0.78,"precision":0.70,"sessions":5,
-                  "missing":["security_review"],"extra":["escalate_to_ceo","improvise_hotfix"]},
-  "happy_path": ["detect_incident","triage_incident", "..."]
-}
-```
+Graph node fields follow spec 01; edges have a stable ID, from/to, derived plane, kind, weight,
+cases, probability, is_back_edge and violates. Preserve separate designed probability and observed
+session support when both planes share an edge. Session conformance uses detailed objects from
+spec 04; workflow roll-up has a separately named type so missing-slug arrays and violation objects
+are not confused. Empty data returns null scores, not NaN or an invented perfect score.
 
----
+## 3. SSE and graph revisions
 
-## 3. SSE contract — `/api/stream`
+Wire frame: `id: <journal ID>` and `data: <JSON envelope>` separated by a blank line. JSON is
+`{id, kind, ts, workspace_id, channel, project_id, session_id?, payload}`. Use `onmessage` and the
+`kind` discriminator consistently; do not mix named SSE events with an onmessage-only client.
+Native reconnect honors `Last-Event-ID`; explicit reconnect uses `after`. The header wins when both
+exist. Replayed messages retain their original IDs; clients ignore already-applied IDs.
 
-Every event is `{kind, ts, payload}`. The frontend store applies them without refetching.
+| kind | Payload |
+|---|---|
+| `message` | Current Message row (upsert, including edited/deleted state) |
+| `session_started` | Session plus scenario/variant/project identifiers |
+| `step` | Step upsert, activity label and evidence refs, including status changes |
+| `graph_delta` | `{view_key, base_revision, revision, nodes_added, nodes_updated, nodes_removed, edges_added, edges_updated, edges_removed}` |
+| `conformance` | `{session_id?, workflow_id, value}`; replace the relevant score object |
+| `agent_post` | P1 `{kind: playbook|drift|answer, text, session_id, slack_ts}` |
+| `paused`, `resumed` | `{session_id, by, reason}` |
+| `session_closed` | `{session_id, conformance}` |
+| `reset` | `{reason}` → obtain a new snapshot; used for expired cursor or incompatible revision |
 
-| kind | Payload | UI effect |
-|---|---|---|
-| `message` | Message row | new line in the Slack rail |
-| `session_started` | `{session_id, scenario, variant, project}` | header chip, new case in the list |
-| `step` | Step + activity label | step card streams in; node appears dimmed (`proposed`) |
-| `graph_delta` | `{nodes_added, nodes_updated, edges_added, edges_updated}` | node settles, edge draws |
-| `conformance` | conformance object | the fitness number re-scores, ghosts update |
-| `agent_post` | `{kind: playbook\|drift\|answer, text, session_id}` | Ariadne card in the rail + toast |
-| `paused` / `resumed` | `{by, reason}` | the whole canvas gets a pause veil |
-| `session_closed` | `{session_id, conformance}` | case completes, roll-up animates |
+Journal replay is P0 reconnect correctness; a user-facing time-travel interface remains P2.
+Maintain graph state per view, not a single unscoped mutable graph. Remove incident edges before
+removing nodes. Rejecting a final observed step either removes a discovered-only node or updates
+it to a designed ghost. Updates may change topology without changing the node set.
 
-Implementation: one `asyncio.Queue` per connected client, fan-out from a module-level broadcaster.
-Every event is also appended to `event` so the UI can replay a session from scratch (time travel, P2).
+Fan-out comes from committed journal records in the DO, not module-global Worker memory.
+Bound subscriber buffers; disconnect slow clients to reconnect/replay. Clean up aborted streams,
+send heartbeat comments, cap idle connection duration, and retain a documented journal window.
+Unknown/expired cursor or mismatched base_revision triggers snapshot reset. On hidden pages close
+the stream; on visibility restore resume from cursor. No permanent per-client D1 polling.
 
----
+## 4. Bindings, configuration and local development
 
-## 4. Configuration — `.env`
+Keep `DB`, `AI`, `ASSETS`, `APP_ENV`, `RELEASE_SHA` and auth configuration. Add a
+`CHANNEL_COORDINATOR` SQLite-backed DO binding/class migration in each environment, with isolated
+staging/production namespaces. Runtime owner alone edits Wrangler and deployment workflows.
 
-```bash
-SLACK_BOT_TOKEN=xoxb-…
-SLACK_CHANNEL_ID=C09…
-SLACK_WORKSPACE=ariadne-demo          # for permalink construction
+Local secrets go in ignored `.dev.vars`; deployed secrets go through the existing GitHub Actions
+secret workflow per environment. `.env.example` contains names/placeholders only.
 
-OPENROUTER_API_KEY=sk-or-…
-MODEL_SIM=openai/gpt-4.1-mini         # persona chatter — fast + cheap
-MODEL_EXTRACT=openai/gpt-4.1          # event-log extraction — needs to be good
-MODEL_RAG=openai/gpt-4.1              # graph-RAG answers
+- `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, existing Slack login credentials; configured allowed
+  workspace/channel and workspace subdomain. A missing token leaves live features unavailable.
+- `OPENROUTER_API_KEY`, `MODEL_SIM`, `MODEL_EXTRACT`, `MODEL_RAG`: configurable, server-only.
+  Use native fetch with OpenRouter's OpenAI-compatible API, app attribution headers, schema output,
+  timeouts/token budgets and one retry. Validate returned JSON locally regardless of provider claims.
+- Window defaults: size 8, trigger 4 new messages, idle 6 seconds. Human idle gap 90 seconds,
+  simulation close silence 20 seconds, post spacing >=1.2 seconds, observer spacing >=8 seconds.
+- Explicit daily model/run limits and maximum run duration; suspend idle simulation and report failure.
 
-POLL_INTERVAL_S=2.0
-WINDOW_SIZE=8
-WINDOW_TRIGGER_MSGS=4
-WINDOW_IDLE_S=6
-SESSION_IDLE_GAP_S=90
-POST_INTERVAL_S=1.2
-DEMO_MODE=perform                     # perform | generate
-```
+Keep `npm ci`, `npm run db:local`, `npm run dev` and the current build/deployment commands.
+Add KB-seed and transcript-generation scripts as their issues land. No Worker filesystem access,
+Python dependencies, docker-compose or frontend migration. Existing Cron cleanup remains; add only
+a bounded pending-work recovery pass, not a two-second cron or unbounded retry loop.
 
-All model calls go through one OpenAI-compatible client pointed at
-`https://openrouter.ai/api/v1` with headers `HTTP-Referer` + `X-Title: Ariadne`.
+## 5. Definition of done
 
----
-
-## 5. Process layout
-
-```python
-# main.py
-@asynccontextmanager
-async def lifespan(app):
-    init_db(); load_kb()
-    app.state.poller = asyncio.create_task(poll_loop())    # steps 1–9 of spec 04 §1
-    yield
-    app.state.poller.cancel()
-```
-
-One background task, one broadcaster, one SQLite connection per request (`check_same_thread=False`,
-WAL mode). The simulator runs as a `BackgroundTask` per `/api/sim/run`.
-
----
-
-## 6. Docker
-
-```yaml
-services:
-  api:
-    build: ./backend
-    env_file: .env
-    ports: ["8000:8000"]
-    volumes: ["./data:/data", "./kb:/app/kb", "./fixtures:/app/fixtures"]
-  web:
-    build: ./frontend
-    ports: ["5173:80"]
-    environment: [VITE_API_BASE=http://localhost:8000]
-```
-
-`docker compose up` must produce a working demo on a judge's laptop with only `.env` filled in.
-
----
-
-## 7. Definition of done
-
-- [ ] `GET /api/health` green with `kb_loaded: true` within 3 s of boot
-- [ ] `GET /api/graph/overlay` renders a grey designed DAG before any simulation
-- [ ] SSE survives a page reload and a 5-minute idle
-- [ ] `POST /api/graph/rebuild` completes in <100 ms with 5 sessions loaded
-- [ ] `docker compose up` works from a clean clone
+- Additive migrations and repeatable seed preserve old demo/auth data; designed overlay works with no runs.
+- Unauthorized user cannot read another workspace's evidence, stream or control its simulator.
+- Multi-client SSE agrees; reload, five-minute idle, scope switch and simulated reconnect recover correctly.
+- Restart/retried alarm does not duplicate steps or support; curation removals replay correctly.
+- Pure graph computation target <50 ms at demo scale; measure D1/API latency separately. Do not promise
+  <100 ms end-to-end D1 rebuilds without measurements.
+- A clean clone runs with existing npm/Wrangler commands; absent Slack/model credentials are explicit.
+- PR checks and staging deployment pass for the recorded deployed SHA before merge.

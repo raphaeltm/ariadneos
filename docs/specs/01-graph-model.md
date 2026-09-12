@@ -1,5 +1,9 @@
 # Spec 01 — The Graph Model
 
+**Implementation authority:** [Cloudflare contract](00-cloudflare-architecture.md) and
+[scope](../SCOPE.md). Runtime, priorities and resolved edge cases there supersede older examples.
+
+
 > The single most important document in this repo. Every other component reads or writes this model.
 > If you change a node or edge type here, both tracks stop and re-sync.
 
@@ -55,7 +59,7 @@ Activity {
   "slug": "triage_incident",            // snake_case verb_object — the identity key
   "label": "Triage incident",
   "description": "Assess severity and assign an owner",
-  "project_id": "proj_vertex" | null,   // null = cross-project activity
+  "project_id": "proj_helios" | null,   // null = cross-project activity
   "plane": "designed" | "discovered" | "both",   // ← computed, drives the overlay colours
   "role_expected": "support",           // from the designed model
   "roles_observed": ["support","eng"],  // from execution
@@ -80,7 +84,7 @@ Activity {
 Session {            // the CASE. One instance of a process.
   "id": "ses_vertex_p1_002",
   "channel": "C09...",
-  "project_id": "proj_vertex",
+  "project_id": "proj_helios",
   "workflow_id": "wf_p1_incident",     // designed workflow it was matched to (or null)
   "started_ts": "1757...", "ended_ts": "1757...",
   "status": "open" | "closed",
@@ -105,14 +109,14 @@ Step {               // one atomic unit of work, an INSTANCE of an Activity
   "confidence": 0.86,
   "evidence": ["1757671234.000200", "1757671251.000300"],   // Slack message ts
 
-  // two ORTHOGONAL axes — see spec 00 §4 and §10. Do not collapse them.
+  // two ORTHOGONAL axes — see work-model spec 00 §4 and §10. Do not collapse them.
   "state":  "requested" | "committed" | "in_progress" | "done"
           | "failed" | "skipped" | "abandoned",   // work lifecycle
   "status": "proposed" | "confirmed" | "rejected"  // human curation via ✅/❌
 }
 
 Message {            // evidence. The ground floor of provenance.
-  "ts": "1757671234.000200",            // primary key, Slack's own id
+  "ts": "1757671234.000200",            // key with workspace_id + channel
   "channel": "C09...",
   "session_id": "ses_...",
   "author_person_id": "per_priya" | null,
@@ -189,7 +193,7 @@ This is the whole cycle story. No SCC algorithms, no loop unrolling.
 Workflow {
   "id": "wf_p1_incident",
   "name": "Enterprise P1 incident response",
-  "project_id": "proj_vertex",
+  "project_id": "proj_helios",
   "plane": "designed" | "discovered",
   "entry_activity": "detect_incident",
   "exit_activities": ["notify_customer"],
@@ -225,19 +229,16 @@ role_dev      = activities where roles_observed ⊄ {role_expected}
                 → "the CEO performed assign_owner, documented as PM, in 3 of 4 cases"
 ```
 
-Three independent dimensions, per spec 00 §8.3 — **control flow** (did the right things happen in
+Three independent dimensions, per work-model spec 00 §8.3 — **control flow** (did the right things happen in
 the right order), **policy** (were the rules followed), **role** (did the right people do it). Each
 answers a different question a manager would actually ask, and each is cheap set arithmetic.
-
-```
-```
 
 **Policy checks** (four kinds, each ~5 lines of code):
 
 | kind | Check |
 |---|---|
 | `mandatory` | `activity_slug ∈ O` |
-| `ordering` | `params.before` appears earlier in topological order than `params.after` |
+| `ordering` | `params.before` appears earlier in session step sequence than `params.after` |
 | `approval` | a Step of type `approval` by a Person with `role ∈ params.roles` exists after `activity_slug` |
 | `threshold` | if any Step's artifact carries `value > params.limit`, an `approval` must exist |
 
@@ -248,11 +249,12 @@ alert can quote the exact message where the process went off the rails.
 
 ## 6. Near-real-time rebuild
 
-Target: **a node appears on the canvas within ~4s of the Slack message that caused it.**
+Target: **~4s during active flow**, measured separately from the six-second sparse-window wait.
+The timing below is illustrative, not a platform or model latency guarantee.
 
 ```
  t+0.0s  message posted to Slack
- t+≤2.0s poll picks it up            → SSE: message
+ t+≤2.0s webhook persists it            → SSE: message
  t+2.2s  buffered; window triggers (4 new msgs OR 6s idle)
  t+3.7s  extractor returns steps      → SSE: step  (node appears, "proposed" state, dimmed)
  t+4.5s  canonicalised → activity     → SSE: graph_delta (node settles, edge draws)
@@ -264,7 +266,7 @@ from the step table** (it is arithmetic; <50ms at our scale), then diff against 
 graph and send only the delta over SSE. Correctness by construction, no incremental-update bugs at
 16:00 with a judge watching.
 
-```python
+```text
 def rebuild() -> Graph:          # pure function of the step/session tables
     steps = db.steps_ordered()
     activities = aggregate_activities(steps)        # support, occurrences, roles_observed
@@ -296,7 +298,7 @@ distance 2 of an existing one is merged instead of created; confidence < 0.4 →
 
 ---
 
-## 8. Graph-RAG retrieval (P0, powers `@Ariadne`)
+## 8. Graph-RAG retrieval (P1, powers `@Ariadne`)
 
 No embeddings, no vector store. The graph *is* the index:
 
@@ -312,6 +314,7 @@ No embeddings, no vector store. The graph *is* the index:
 
 ## 9. Storage
 
-SQLite, one file, no ORM, no migrations. Tables mirror §1–§2 one-to-one; edges are rows, JSON blobs
-for list fields. Full DDL in spec 05 §1. The graph is materialised in memory on demand — at our
-scale (<2k steps) that is free, and it means **there is exactly one source of truth: the step table.**
+D1 in the existing Worker binding, additive numbered migrations, and JSON text for lists.
+Use `pm_` domain tables to avoid auth/demo collisions (spec 05). Load a bounded set of accepted
+steps, compute aggregates in TypeScript and discard the cache safely between invocations.
+Designed membership comes from the KB; observed support comes only from steps.

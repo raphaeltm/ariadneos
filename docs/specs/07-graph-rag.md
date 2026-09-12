@@ -3,7 +3,9 @@
 > How `@Ariadne` answers a question no document can answer, and proves every sentence with a Slack
 > permalink. The graph is the index. There are no embeddings.
 
-**Owner:** Track A · **Time budget:** 45 min · **Module:** `rag.py` · **Entry:** `POST /api/ask`
+**Owner:** RAG issue #27 · **Priority:** P1 · **Module:** `server/rag.ts` · **Entry:** `POST /api/ask`
+
+Read [the Cloudflare contract](00-cloudflare-architecture.md) for runtime, authorization and budgets.
 
 ---
 
@@ -43,7 +45,9 @@ hatch.
                                  → uncited sentences are stripped
 ```
 
-One LLM call in the common path, two when the intent heuristic misses. Target end-to-end: **< 2.5 s.**
+One LLM call in the common path. Coalesce intent/entity fallback into at most one additional
+model call per question; never allow a fallback chain to exceed the model budget. Target p50
+end-to-end **<2.5s**, measured on staging rather than promised.
 
 ---
 
@@ -70,10 +74,11 @@ one cheap LLM classification call. Still no match → `process_shape`, which is 
 
 ## 4. Stage 1 — anchoring
 
-A **lexicon** is built once at boot and held in memory. Every retrievable entity contributes its
+A scoped **lexicon** is built from bundled KB plus D1 activity revisions and cached per isolate
+when available; cache loss is harmless and a KB/graph revision change invalidates it. Every retrievable entity contributes its
 surface forms:
 
-```python
+```text
 LEXICON: dict[str, tuple[NodeType, str]]     # normalised surface → (type, id)
 
 Person     "priya raman", "priya"                      → per_priya
@@ -89,7 +94,7 @@ Matching, in order — first non-empty result wins:
 
 1. **Exact** on normalised surface (lowercase, strip punctuation, collapse whitespace).
 2. **Token containment** — every token of a lexicon key appears in the question.
-3. **Fuzzy** — `difflib.get_close_matches(cutoff=0.8)` over lexicon keys.
+3. **Fuzzy** — a bounded TypeScript edit-distance matcher over lexicon keys.
 4. **LLM extraction** — one call: *"which of these entities does the question refer to?"* with the
    candidate list. Only reached when 1–3 all miss.
 
@@ -107,7 +112,7 @@ No anchor found → answer is *"I haven't observed anything about that."* We do 
 Where naive graph-RAG dies is unbounded traversal: two hops on a dense graph is the whole graph, and
 the prompt becomes noise. Hard budget:
 
-```python
+```text
 MAX_HOPS       = 2
 MAX_NODES      = 40
 MAX_EVIDENCE   = 3      # messages per activity
@@ -129,8 +134,9 @@ Rules:
 
 ## 6. Stage 4 — serialisation
 
-Line-oriented, not nested JSON. Roughly 40% fewer tokens than the equivalent JSON, and models follow
-a flat typed listing more reliably than they follow deep object nesting.
+Use a compact line-oriented context with explicit IDs. Measure tokens on fixtures; no fixed
+40% saving or model reliability improvement is assumed. Escape untrusted Slack text so it cannot
+forge structural context/citation records.
 
 ```
 QUESTION_INTENT process_shape
@@ -169,8 +175,9 @@ System prompt, in priority order:
 
 1. **Answer only from the subgraph above.** You have no knowledge of incident management, software
    process, or this company beyond what is printed here.
-2. **Every factual sentence carries a citation** — a permalink from an `EVIDENCE` line, or a count
-   from an `ACTIVITY` / `CONFORMANCE` line.
+2. **Every factual sentence carries a citation** — a verified permalink from an `EVIDENCE` line, or a typed reference
+   to a retrieved `ACTIVITY` / `CONFORMANCE` record for a numerical/authored claim. Do not invent
+   a Slack quote for authored-only policy; label the source type and return its KB reference.
 3. Prefer the observed over the documented, and **say which is which**. *"In practice…"* vs
    *"The documentation says…"* is the distinction the whole product exists to draw.
 4. If the subgraph does not contain the answer, say so. Do not reason around the gap.
@@ -180,42 +187,22 @@ System prompt, in priority order:
 resolvable citation is dropped. If everything drops, reply *"I don't have evidence for that yet."*
 An uncited answer never reaches the channel.
 
-That rule is worth stating out loud to judges: **Ariadne is structurally incapable of answering from
-parametric knowledge.** Unplug the graph and it says "I don't know" — which is the correct behaviour
-for a system whose entire claim is provenance.
+A resolvable citation alone does not prove that it supports a claim. Validate quoted text and
+counts against retrieved data; reject unsupported claims. This reduces unsupported answers but
+does not make a model incapable of hallucination. With no evidence return the no-evidence response.
 
 ---
 
 ## 8. Stack
 
-Core logic is runtime-agnostic — SQL for assembly, a dict for the lexicon, one HTTP call for the
-model. The stack decision on `main` is still open, so here is the mapping both ways.
+TypeScript in the existing Hono Worker, scoped D1 queries and a bounded in-memory traversal.
+Use the shared model adapter from #19 with native fetch/OpenRouter, configured MODEL_SIM for
+classification/anchoring fallback and MODEL_RAG for answers. No Python SDK, KV cache or new service.
+D1 uses the additive pm_ schema from spec 05; all retrieval enforces authorized workspace/channel.
+Reuse existing local npm/Wrangler commands and environment-specific secrets.
 
-| Concern | Python + FastAPI + SQLite | Cloudflare Workers + D1 |
-|---|---|---|
-| Graph store | SQLite, tables per spec 05 §1 | D1, **identical DDL** — same schema, no port needed |
-| Traversal | recursive CTE, or load edges into a dict (<2k rows) | recursive CTE — D1 is SQLite, both work |
-| Lexicon | module-level dict, built in `lifespan` | rebuilt per isolate from D1 on cold start (~10 ms), or cached in KV |
-| Serialisation | plain string building | identical |
-| Model calls | `openai` client → OpenRouter base URL | `fetch()` → OpenRouter, no SDK needed |
-| Streaming | `sse-starlette` | native `ReadableStream` |
-| Secrets | `.env` | `wrangler secret put OPENROUTER_API_KEY` |
-| Local dev | `uvicorn --reload` | `wrangler dev --local` (D1 runs on local SQLite) |
-
-**Nothing in this spec favours one runtime.** The port cost for graph-RAG specifically is close to
-zero because it is SQL plus string building plus one `fetch`.
-
-Models, via OpenRouter either way:
-
-| Role | Model | Why |
-|---|---|---|
-| Intent classification (fallback only) | `MODEL_SIM` (cheap) | 6-way classification, trivial |
-| Entity extraction (fallback only) | `MODEL_SIM` | short, constrained by a candidate list |
-| Answer | `MODEL_RAG` (strong) | citation discipline is the hard part, don't cheap out here |
-
-**If we ever need embeddings** (corpus ≫ 10k messages, or fuzzy question matching starts failing):
-`sqlite-vec` on the Python side, Cloudflare **Vectorize** on the Workers side. Both are additive —
-embeddings would rank the *anchors*, never replace the traversal. Out of scope today.
+Vectorize is deferred. If later measured recall failures justify embeddings, use them to rank
+anchors while retaining deterministic traversal and evidence checks. No indexing work in P1.
 
 ---
 
@@ -245,7 +232,7 @@ embeddings would rank the *anchors*, never replace the traversal. Out of scope t
 
 ## 10. Definition of done
 
-- [ ] `answer()` returns prose with ≥2 resolvable permalinks for any process question
+- [ ] `answer()` returns prose with ≥2 resolvable permalinks for fixture questions with sufficient live evidence; otherwise an explicit no-evidence answer
 - [ ] An out-of-scope question returns the no-anchor response, not a guess
 - [ ] Every sentence surviving post-processing carries a citation
 - [ ] A `deviation` question returns conformance findings without traversing

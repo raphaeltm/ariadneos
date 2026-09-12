@@ -1,5 +1,9 @@
 # Spec 00 — The Work Model
 
+**Runtime authority:** [Cloudflare implementation contract](00-cloudflare-architecture.md).
+This document defines domain semantics; `state` and curation `status` remain separate.
+
+
 > What counts as work, who can do it, what it acts on, and how an utterance becomes a node.
 > Conceptually this comes before spec 01: the graph model stores what this document defines.
 
@@ -29,7 +33,7 @@ only some of that corresponds to a state change in the world.
 > **A unit of work is a state change in the world, attributable to one actor, acting on one object,
 > with an intent, at a time — evidenced by one or more utterances.**
 
-All five are required. Drop any one and it is not a step:
+Evidence and an identifiable action are mandatory; actor/object uncertainty is handled as below:
 
 | Component | Field | If missing |
 |---|---|---|
@@ -143,9 +147,10 @@ genuinely broken process.
 | `doc` | `draft → reviewed → published` | any |
 | `contract` | `proposed → approved → signed` | cpo, ceo |
 
-Rule: a step that advances an artifact **more than one state at a time** implies skipped work.
+Rule: a step that advances an artifact **more than one state at a time** flags possible unobserved work.
 `detected → mitigated` on an incident means triage and ownership never happened in the channel —
-which is either a mining gap or a real one, and either way it is worth surfacing.
+which may be a mining gap or real deviation. Report uncertainty; do not assert a violation from
+absence alone. A retrospective report may omit intermediate states.
 
 ---
 
@@ -154,7 +159,7 @@ which is either a mining gap or a real one, and either way it is worth surfacing
 ### 8.1 The pipeline
 
 ```
- utterance                     ← Slack message, polled
+ utterance                     ← Slack message, signed event
     │
     ├─ 1  attribute            author → Person            deterministic
     ├─ 2  correlate            → case (session/thread/gap) deterministic
@@ -178,12 +183,16 @@ table, recomputed in full on every change — so aggregates can never drift out 
 
 Applied in order, first match wins:
 
-1. **Exact** — same `(activity_slug, actor_person_id)`, open state, same case → advance that step.
+1. **Exact** — same `(activity_slug, actor_person_id, artifact_id)`, open state, same case → advance that step.
 2. **Fulfilment** — a `reported` act matching an open `requested` step on `(activity_slug)` where the
    reporter is the requestee → advance, and mark the handoff edge complete.
 3. **Repeat** — same `(activity_slug, actor)` already `done` in this case → new step, `type: rework`,
    back-edge.
 4. **Otherwise** — new step.
+
+Do not reconcile distinct canonical activities merely because their words resemble each other.
+Request fulfilment must preserve requester and requestee provenance. A repeated report sharing
+evidence is deduped before the repeat/rework rule; null artifacts require explicit target matching.
 
 Dedupe guard: two steps sharing `(activity, actor)` whose evidence sets overlap are the same step.
 
@@ -213,17 +222,17 @@ conformance non-trivial.
 
 ## 9. Worked example
 
-Six real messages from `helios_p1 / v2_skip_review`, and exactly what each produces.
+Seven illustrative messages from `helios_p1 / v2_skip_review`, and exactly what each produces.
 
 | # | Utterance | Modality | Step produced | State |
 |---|---|---|---|---|
 | 1 | Priya 09:14 — *"vertex checkout throwing 500s since 09:14, ~40% of card payments failing"* | reported | `detect_incident` · per_priya · art_inc_4412 | `done` |
 | 2 | Priya 09:14 — *"calling this a P1"* | reported | `triage_incident` · per_priya · type `decision` | `done` |
 | 3 | Priya 09:15 — *"opening INC-4412"* | reported | `open_incident_ticket` · per_priya | `done` |
-| 4 | Dana 09:16 — *"tom can you look right now, skip the queue"* | **requested** | `assign_owner` · **per_dana** · handoff→per_tom | `done` + **role deviation** (expected `pm`) |
+| 4 | Dana 09:16 — *"assigned Tom to this incident, skipping the queue"* | **reported** | `assign_owner` · **per_dana** · handoff→per_tom | `done` + **role deviation** (expected `pm`) |
 | 5 | Tom 09:38 — *"i'll push a mitigation before i have the full root cause"* | **committed** | `improvise_hotfix` · per_tom | `committed` |
 | 6 | Tom 09:41 — *"skipping the security checklist to save time"* | **negated** | `security_review` · per_tom | `skipped` → **policy violation** `pol_sec_review` |
-| 7 | Tom 09:47 — *"fix is deployed"* | reported | reconciles #5 → `deploy_fix` | `committed` → `done` |
+| 7 | Tom 09:47 — *"the mitigation hotfix is now live"* | reported | reconciles #5 → `improvise_hotfix` | `committed` → `done` |
 
 Yield from seven utterances: **six steps, one role deviation, one policy violation, one
 reconciliation, and one gold activity** (`improvise_hotfix`, which appears in no matrix). Message 4

@@ -4,6 +4,7 @@ Status: in-review
 Owner: Codex agent for SAM task 01M2AZEN3EFXBF7G8Q9493QP7S
 Source: User and SAM task request to implement GitHub issue #41 as "Expose agent chat UI panel with streaming responses" on branch `sam/implement-github-issue-41-93qp7s`, skipping staging verification for speed. GitHub issue #41 currently has a different title/body about simulation speed and preflight; this work item records the SAM/user-described chat-panel scope as the active assignment.
 Branch: sam/implement-github-issue-41-93qp7s
+PR: https://github.com/raphaeltm/ariadneos/pull/80
 
 ## Intent
 Add an agent chat panel to the existing `/app` shell that lets a signed-in user submit prompts, see message history, and watch assistant responses render incrementally while keeping the implementation inside the current React/Vite client state and Cloudflare API boundaries.
@@ -16,7 +17,7 @@ Add an agent chat panel to the existing `/app` shell that lets a signed-in user 
 
 ## Decisions and rationale
 - Implement the chat surface as a React component inside the existing `/app` shell because issue #25 already owns the navigation frame.
-- Keep chat history in browser state for this slice because no conversation persistence path is merged on `main`; issue #40 has a separate open PR for memory/context persistence.
+- Keep visible chat history in browser state for this slice. After rebasing, `main` includes backend agent memory, so `/api/ask` persists conversation context on its default user/workflow thread without this UI adding a separate persistence path.
 - Render assistant output token by token on the client after `/api/ask` resolves. The current backend returns complete JSON and the task scope does not require adding a second transport or provider path.
 - Use the issue #23 `createProductionApiAdapter().ask` boundary from the UI. The adapter sends typed `workflow_id` and `project_id` plus the legacy `workflow` field so it composes with the current demo endpoint.
 
@@ -26,6 +27,9 @@ Add an agent chat panel to the existing `/app` shell that lets a signed-in user 
 - Updated `/api/ask` request parsing to accept typed `workflow_id` bodies and reject malformed typed requests without throwing.
 - Extended the typed client `RagAnswer` shape with the current demo answer metadata and made the production adapter include the legacy workflow field.
 - Added chat panel styling and browser coverage for navigation, history, streaming cursor display, typed request payload, and evidence navigation.
+- Rebased PR #80 onto `origin/main` after curation and agent-memory work landed, preserving curation controls and the backend memory path.
+- Rebased PR #80 again onto `origin/main` at `b295d5d`, preserving the newer settings/deployment UI while keeping the chat view on the app-shell navigation path.
+- Rebased PR #80 onto `origin/main` at `df55568` after Mastra tools and graph edit persistence consistency landed; no file conflicts were reported.
 
 ## Validation
 - `npm ci`: passed; installed 232 packages and found 0 vulnerabilities.
@@ -34,10 +38,20 @@ Add an agent chat panel to the existing `/app` shell that lets a signed-in user 
 - `npm run check:repo`: initially failed because Ruff was not installed on PATH. Installed Ruff 0.16.7 into `/tmp/ariadneos-ruff`.
 - `PATH="/tmp/ariadneos-ruff:$PATH" npm run check:repo`: initially failed in Playwright because Chromium was not installed locally. Installed Chromium with `npm exec --no -- playwright install --with-deps chromium`.
 - `PATH="/tmp/ariadneos-ruff:$PATH" npm run check:repo`: passed work-item tests, all-record context validation, Ruff check/format, `npm run check`, dependency audit, isolated Worker/D1 smoke, and 7 Chromium browser tests.
+- After rebasing onto `origin/main` at `22564d5`, `npm ci`: passed; installed 369 packages and found 0 vulnerabilities.
+- After rebasing, `npm run fix`: passed with 112 files checked and no fixes applied.
+- After rebasing, `npm run check`: passed lint, typecheck, fixture validation, 169 coverage tests across 22 files, guardrail probes, migration check, and production build.
+- After rebasing, `PATH="/tmp/ariadneos-ruff:$PATH" npm run check:repo`: passed work-item tests, all-record context validation, Ruff check/format, `npm run check`, dependency audit, isolated Worker/D1 smoke including agent-disabled smoke, and 7 Chromium browser tests.
+- After rebasing onto `origin/main` at `b295d5d`, `npm run fix`: passed with 112 files checked and no fixes applied.
+- After rebasing onto `origin/main` at `b295d5d`, `npm run check`: passed lint, typecheck, fixture validation, 171 coverage tests across 22 files, guardrail probes, migration check, and production build.
+- After rebasing onto `origin/main` at `b295d5d`, `PATH="/tmp/ariadneos-ruff:$PATH" npm run check:repo`: passed work-item tests, all-record context validation, Ruff check/format, `npm run check`, dependency audit, isolated Worker/D1 smoke including agent-disabled smoke, and 7 Chromium browser tests.
+- After rebasing onto `origin/main` at `df55568`, `npm run fix`: passed with 116 files checked and no fixes applied.
+- After rebasing onto `origin/main` at `df55568`, `npm run check`: passed lint, typecheck, fixture validation, 183 coverage tests across 24 files, guardrail probes, migration check, and production build.
+- After rebasing onto `origin/main` at `df55568`, `PATH="/tmp/ariadneos-ruff:$PATH" npm run check:repo`: passed work-item tests, all-record context validation, Ruff check/format, `npm run check`, dependency audit, isolated Worker/D1 smoke including the agent-tools migration and agent-disabled smoke, and 7 Chromium browser tests.
 
 ## Risks and rollback
 - Staging verification is intentionally skipped per the user's time-critical instruction.
 - Roll back by reverting the chat panel component, related app shell wiring, styles, tests, and this work item.
 
 ## Next steps
-- Run the staged work-item context check, commit, push, open the PR with `Closes #41`, monitor CI, and merge only when green.
+- Monitor PR #80 CI and merge only when green. Staging verification remains skipped per the time-critical user instruction.

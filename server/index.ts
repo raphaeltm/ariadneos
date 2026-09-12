@@ -36,8 +36,8 @@ import {
   configuredChannelScope,
   wakeChannelCoordinator,
 } from "./runtime/channel.ts";
-import { type SlackEventsEnv, slackEvents } from "./slack-events.ts";
 import type { SlackPostEnv } from "./slack/post.ts";
+import { type SlackEventsEnv, slackEvents } from "./slack-events.ts";
 
 interface Env
   extends AgentModelEnv,

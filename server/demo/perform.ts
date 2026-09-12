@@ -80,9 +80,13 @@ export async function performTranscript(
 
     if (index > 0) {
       const requested = Math.round(message.delay * 1000);
+      // biome-ignore lint/performance/noAwaitInLoops: pacing is the point — Slack rate-limits per
+      // channel, and the gaps are what make the conversation readable while the graph builds.
       await sleep(Math.max(MIN_POST_INTERVAL_MS, requested));
     }
 
+    // biome-ignore lint/performance/noAwaitInLoops: Slack orders messages by receipt, so posting
+    // in parallel would scramble the conversation and the directly-follows ordering derived from it.
     const result = await postPersonaMessage(env, {
       channel: input.channel,
       persona,

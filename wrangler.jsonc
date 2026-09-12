@@ -30,6 +30,20 @@
       "migrations_dir": "migrations"
     }
   ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CHANNEL_COORDINATOR",
+        "class_name": "ChannelCoordinator"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1_channel_coordinator",
+      "new_sqlite_classes": ["ChannelCoordinator"]
+    }
+  ],
   "ai": {
     "binding": "AI"
   },
@@ -42,7 +56,9 @@
   "vars": {
     "APP_ENV": "production",
     "BETTER_AUTH_URL": "https://ariadneos.com",
-    "RELEASE_SHA": "local"
+    "RELEASE_SHA": "local",
+    "SLACK_ALLOWED_TEAM_ID": "",
+    "SLACK_ALLOWED_CHANNEL_ID": ""
   },
   "env": {
     "staging": {
@@ -65,10 +81,20 @@
       "ai": {
         "binding": "AI"
       },
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "CHANNEL_COORDINATOR",
+            "class_name": "ChannelCoordinator"
+          }
+        ]
+      },
       "vars": {
         "APP_ENV": "staging",
         "BETTER_AUTH_URL": "https://staging.ariadneos.com",
-        "RELEASE_SHA": "local"
+        "RELEASE_SHA": "local",
+        "SLACK_ALLOWED_TEAM_ID": "",
+        "SLACK_ALLOWED_CHANNEL_ID": ""
       },
       "triggers": {
         "crons": ["27 3 * * *"]
@@ -98,10 +124,20 @@
       "ai": {
         "binding": "AI"
       },
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "CHANNEL_COORDINATOR",
+            "class_name": "ChannelCoordinator"
+          }
+        ]
+      },
       "vars": {
         "APP_ENV": "production",
         "BETTER_AUTH_URL": "https://ariadneos.com",
-        "RELEASE_SHA": "local"
+        "RELEASE_SHA": "local",
+        "SLACK_ALLOWED_TEAM_ID": "",
+        "SLACK_ALLOWED_CHANNEL_ID": ""
       },
       "triggers": {
         "crons": ["17 3 * * *"]

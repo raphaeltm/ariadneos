@@ -52,6 +52,17 @@ describe("request boundaries", () => {
       ).status
     ).toBe(403);
   });
+  it.each([
+    null,
+    {},
+    { action: "rename_node", payload: {}, workflow: "unknown" },
+    { action: "delete_everything", payload: {}, workflow: "vendor" },
+  ])("rejects invalid graph edits: %j", async (body) => {
+    expect((await request("/api/model/canvas-edit", body)).status).toBe(400);
+  });
+  it("rejects invalid undo requests before storage", async () => {
+    expect((await request("/api/model/canvas-edit/undo", {})).status).toBe(400);
+  });
   it("rejects oversized bodies", async () => {
     expect(
       (await request("/api/ask", { question: "x".repeat(5000) })).status

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { duration, isWorkflow, median, mine } from "../shared/process.ts";
+import {
+  applyGraphCanvasEdits,
+  designedEdgeId,
+  duration,
+  isWorkflow,
+  median,
+  mine,
+} from "../shared/process.ts";
 import { simulate } from "../shared/simulation.ts";
 
 describe("process discovery", () => {
@@ -108,5 +115,111 @@ describe("display and observation boundaries", () => {
       events.map((event) => event.sequence)
     );
     expect(model.stats.medianMinutes).toBe(0);
+  });
+});
+
+describe("graph canvas edits", () => {
+  it("overlays inline labels and designed-edge moves without mutating observations", () => {
+    const model = mine(simulate("access", 42, 2));
+    const edited = applyGraphCanvasEdits(model, [
+      {
+        action: "create_edge",
+        actor: "tester",
+        createdAt: "2026-09-12T00:00:30.000Z",
+        id: "edit-0",
+        payload: {
+          label: "Intake review",
+          source: "Access requested",
+          target: "Manager review",
+        },
+        workflow: "access",
+      },
+      {
+        action: "rename_node",
+        actor: "tester",
+        createdAt: "2026-09-12T00:00:00.000Z",
+        id: "edit-1",
+        payload: { label: "Request intake", nodeId: "Access requested" },
+        workflow: "access",
+      },
+      {
+        action: "rename_edge",
+        actor: "tester",
+        createdAt: "2026-09-12T00:00:15.000Z",
+        id: "edit-1b",
+        payload: {
+          label: "Observed intake",
+          source: "Access requested",
+          target: "Manager review",
+        },
+        workflow: "access",
+      },
+      {
+        action: "create_edge",
+        actor: "tester",
+        createdAt: "2026-09-12T00:01:00.000Z",
+        id: "edit-2",
+        payload: {
+          label: "Security shortcut",
+          source: "Access requested",
+          target: "Security review",
+        },
+        workflow: "access",
+      },
+      {
+        action: "rename_edge",
+        actor: "tester",
+        createdAt: "2026-09-12T00:02:00.000Z",
+        id: "edit-3",
+        payload: {
+          edgeId: designedEdgeId("Access requested", "Security review"),
+          label: "Review path",
+        },
+        workflow: "access",
+      },
+      {
+        action: "move_edge",
+        actor: "tester",
+        createdAt: "2026-09-12T00:03:00.000Z",
+        id: "edit-4",
+        payload: {
+          edgeId: designedEdgeId("Access requested", "Security review"),
+          source: "Manager review",
+          target: "Security review",
+        },
+        workflow: "access",
+      },
+    ]);
+    expect(
+      model.nodes.find((node) => node.id === "Access requested")?.label
+    ).toBe("Access requested");
+    expect(
+      edited.nodes.find((node) => node.id === "Access requested")?.label
+    ).toBe("Request intake");
+    expect(
+      edited.edges.find(
+        (edge) =>
+          edge.source === "Access requested" && edge.target === "Manager review"
+      )
+    ).toMatchObject({
+      label: "Observed intake",
+      plane: "both",
+    });
+    expect(
+      edited.edges.find(
+        (edge) =>
+          edge.source === "Manager review" && edge.target === "Security review"
+      )
+    ).toMatchObject({
+      label: "Review path",
+      plane: "designed",
+    });
+    expect(
+      edited.edges.find(
+        (edge) =>
+          edge.source === "Access requested" &&
+          edge.target === "Security review"
+      )
+    ).toBeUndefined();
   });
 });

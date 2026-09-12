@@ -46,12 +46,19 @@ describe("Slack authentication boundary", () => {
   });
   it.each([
     "/api/model",
+    "/api/model/canvas-edits",
+    "/api/model/canvas-edit",
+    "/api/model/canvas-edit/undo",
     "/api/context",
     "/api/settings",
     "/api/simulate",
     "/api/ask",
   ])("rejects anonymous access to %s before reading data", async (path) => {
-    const post = path === "/api/simulate" || path === "/api/ask";
+    const post =
+      path === "/api/simulate" ||
+      path === "/api/ask" ||
+      path === "/api/model/canvas-edit" ||
+      path === "/api/model/canvas-edit/undo";
     const response = await request(
       path,
       post

@@ -133,6 +133,7 @@ export interface ProcessEdge {
   evidence: { from: string; to: string; caseId: string }[];
   id: string;
   isBackEdge?: boolean;
+  label?: string;
   medianMinutes: number;
   plane?: GraphPlane;
   probability: number;
@@ -171,6 +172,27 @@ export interface Snapshot {
   revision?: string;
   source: "simulation";
   workflow: (typeof workflows)[number];
+}
+export type GraphCanvasEditAction =
+  | "create_edge"
+  | "move_edge"
+  | "rename_edge"
+  | "rename_node";
+export interface GraphCanvasEditPayload {
+  edgeId?: string;
+  label?: string;
+  nodeId?: string;
+  source?: string;
+  target?: string;
+}
+export interface GraphCanvasEdit {
+  action: GraphCanvasEditAction;
+  actor: string;
+  createdAt: string;
+  id: string;
+  payload: GraphCanvasEditPayload;
+  undone?: boolean;
+  workflow: WorkflowId;
 }
 export interface AgentEvent {
   caseId?: string;
@@ -408,6 +430,164 @@ export function mine(input: ActivityEvent[], designed?: DesignedModel) {
     variants: rankedVariants,
   };
 }
+
+export function designedEdgeId(source: string, target: string) {
+  return `designed:${source}::${target}`;
+}
+
+export function applyGraphCanvasEdits(
+  model: ProcessModel,
+  edits: readonly GraphCanvasEdit[]
+): ProcessModel {
+  const nodes = new Map(model.nodes.map((node) => [node.id, { ...node }]));
+  const edges = new Map(model.edges.map((edge) => [edge.id, { ...edge }]));
+  for (const edit of edits) {
+    if (edit.undone) {
+      continue;
+    }
+    applyGraphCanvasEdit(nodes, edges, edit);
+  }
+  return {
+    ...model,
+    edges: [...edges.values()],
+    nodes: [...nodes.values()],
+  };
+}
+
+function applyGraphCanvasEdit(
+  nodes: Map<string, ProcessNode>,
+  edges: Map<string, ProcessEdge>,
+  edit: GraphCanvasEdit
+) {
+  if (edit.action === "rename_node") {
+    renameEditedNode(nodes, edit.payload);
+    return;
+  }
+  if (edit.action === "rename_edge") {
+    renameEditedEdge(edges, edit.payload);
+    return;
+  }
+  if (edit.action === "create_edge") {
+    upsertDesignedEdge(edges, edit.payload);
+    return;
+  }
+  moveEditedEdge(edges, edit.payload);
+}
+
+function renameEditedNode(
+  nodes: Map<string, ProcessNode>,
+  payload: GraphCanvasEditPayload
+) {
+  const { nodeId } = payload;
+  const label = payload.label?.trim();
+  if (!(nodeId && label)) {
+    return;
+  }
+  const node = nodes.get(nodeId);
+  if (node) {
+    nodes.set(nodeId, { ...node, label });
+  }
+}
+
+function renameEditedEdge(
+  edges: Map<string, ProcessEdge>,
+  payload: GraphCanvasEditPayload
+) {
+  const edge = findEditedEdge(edges, payload);
+  const label = payload.label?.trim();
+  if (edge && label) {
+    edges.set(edge.id, { ...edge, label });
+  }
+}
+
+function moveEditedEdge(
+  edges: Map<string, ProcessEdge>,
+  payload: GraphCanvasEditPayload
+) {
+  const edge = findEditedEdge(edges, payload);
+  if (!edge) {
+    return;
+  }
+  const source = payload.source ?? edge.source;
+  const target = payload.target ?? edge.target;
+  removeDesignedOverlay(edges, edge);
+  upsertDesignedEdge(edges, {
+    label: edge.label,
+    source,
+    target,
+  });
+}
+
+function findEditedEdge(
+  edges: ReadonlyMap<string, ProcessEdge>,
+  payload: GraphCanvasEditPayload
+) {
+  if (payload.edgeId) {
+    const edge = edges.get(payload.edgeId);
+    if (edge) {
+      return edge;
+    }
+  }
+  if (!(payload.source && payload.target)) {
+    return;
+  }
+  return [...edges.values()].find(
+    (edge) => edge.source === payload.source && edge.target === payload.target
+  );
+}
+
+function upsertDesignedEdge(
+  edges: Map<string, ProcessEdge>,
+  payload: GraphCanvasEditPayload
+) {
+  if (
+    !(payload.source && payload.target) ||
+    payload.source === payload.target
+  ) {
+    return;
+  }
+  const existing = [...edges.values()].find(
+    (edge) => edge.source === payload.source && edge.target === payload.target
+  );
+  if (existing) {
+    edges.set(existing.id, {
+      ...existing,
+      label: payload.label?.trim() || existing.label,
+      plane: existing.plane === "designed" ? "designed" : "both",
+    });
+    return;
+  }
+  const id = designedEdgeId(payload.source, payload.target);
+  edges.set(id, {
+    cases: 0,
+    count: 0,
+    evidence: [],
+    id,
+    label: payload.label?.trim() || undefined,
+    medianMinutes: 0,
+    plane: "designed",
+    probability: 0.45,
+    source: payload.source,
+    target: payload.target,
+  });
+}
+
+function removeDesignedOverlay(
+  edges: Map<string, ProcessEdge>,
+  edge: ProcessEdge
+) {
+  if (edge.plane === "designed") {
+    edges.delete(edge.id);
+    return;
+  }
+  if (edge.plane === "both") {
+    edges.set(edge.id, {
+      ...edge,
+      plane: "discovered",
+    });
+  }
+}
+
 export function duration(minutes: number) {
   return minutes < 60
     ? `${Math.round(minutes)}m`

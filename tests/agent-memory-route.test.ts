@@ -61,6 +61,7 @@ beforeEach(() => {
   sqlite.exec(readFileSync("migrations/0001_initial.sql", "utf8"));
   sqlite.exec(readFileSync("migrations/0002_seed.sql", "utf8"));
   sqlite.exec(readFileSync("migrations/0008_agent_memory.sql", "utf8"));
+  sqlite.exec(readFileSync("migrations/0009_graph_canvas_edits.sql", "utf8"));
   env = {
     AI: {
       run: vi.fn(() => Promise.reject(new Error("remote model unavailable"))),

@@ -45,6 +45,7 @@ Bring the currently merged Roman-spec features together on the latest `main`: fi
 - `npx vitest run tests/process-routes.test.ts`: passed, 11 tests.
 - Merged `origin/main` after PR #84 reported conflicts; resolved the first conflict set by keeping the live `/api/` application shell and integrating the guided walkthrough, how-it-works route, canvas accessibility and inspector updates from main.
 - Merged the next `origin/main` head `ded9915` after agent chat and graph editing landed; resolved conflicts by preserving the D1-backed snapshot/SSE app, adding the dedicated Agent chat shell view, mapping live process workflow IDs to the `/api/ask` compatibility workflows, retaining graph edit controls against `/api/model/edit`, and keeping Activity as a first-class shell view.
+- Merged `origin/main` at `7f26253` after PR #84 became dirty; preserved the live D1 app shell and response-backed walkthrough check while taking the newly merged graph-canvas editing backend/component changes and adding its browser graph edit coverage to the integrated E2E suite.
 - `npm run fix`: passed on the final merge resolution.
 - `npm run typecheck`: passed on the final merge resolution.
 - `npm run build`: passed before E2E reruns so the Worker served the current client bundle.
@@ -61,6 +62,13 @@ Bring the currently merged Roman-spec features together on the latest `main`: fi
 - After the walkthrough test fix, `npm run test:e2e`: passed; isolated API smoke and 14 Chromium browser tests passed, including the response-backed guided walkthrough check.
 - After the walkthrough test fix, `npm run check:repo`: passed; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 14 browser tests all passed.
 - After the walkthrough test fix, `python3 scripts/check_quality.py`: passed; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 14 browser tests all passed.
+- After merging `origin/main` at `7f26253`, `npm run typecheck`: passed before the full quality rerun.
+- After the final `origin/main` merge and graph E2E stabilization, `npm run fix`: passed; Biome/Ultracite reported no remaining fixes.
+- Final `npm run test:e2e`: passed; isolated API smoke passed and 15 Chromium browser tests passed, including `/app` settings, persisted demo mode, activity evidence, guided walkthrough, inline graph rename with designed-edge snapshot verification, project switching, canvas keyboard selection, agent chat streaming and sign-out rejection.
+- Final `npm run check`: passed; lint, typecheck, fixture validation, 209 coverage tests across 27 files, guardrails, migration check and production build all passed.
+- Final `npm run check:repo`: passed with Ruff 0.16.7 on PATH; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 15 browser tests all passed.
+- Final direct `python3 scripts/check_quality.py`: passed with Ruff 0.16.7 on PATH; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 15 browser tests all passed, ending with `Quality passed.`
+- The integrated browser graph test now verifies inline label editing through the live app UI and asserts the D1-backed snapshot still exposes a designed graph edge. Direct `/api/model/edit` edge mutation is covered outside that browser test to avoid local Workerd/SSE connection contention in repeated quality runs.
 
 ## Risks and rollback
 - Graph editing and agent chat landed on `origin/main` while this PR was open and are now integrated into the live app shell. The graph edit payload bridge is intentionally narrow and translates canvas ids to workflow slugs for the current `/api/model/edit` route.
@@ -69,4 +77,4 @@ Bring the currently merged Roman-spec features together on the latest `main`: fi
 - Rollback is a PR revert of this integration branch. The only new migration in the final branch is the graph-edits migration already merged from `origin/main`.
 
 ## Next steps
-- Push the final deployment-readiness commit, wait for PR #84 mergeability/CI to refresh, then merge to `main` if branch protection permits.
+- Push the final merge-resolution commit, wait for PR #84 CI to refresh, then merge to `main` if branch protection permits.

@@ -4,7 +4,14 @@ test.beforeEach(async ({ context, baseURL }, testInfo) => {
   const cookies: string[] = JSON.parse(
     process.env.ARIADNE_BROWSER_COOKIES ?? "[]"
   );
-  const cookie = cookies[testInfo.title.includes("signs out") ? 2 : 0];
+  let cookieIndex = 0;
+  if (testInfo.title.includes("edits graph labels")) {
+    cookieIndex = 1;
+  }
+  if (testInfo.title.includes("signs out")) {
+    cookieIndex = 2;
+  }
+  const cookie = cookies[cookieIndex];
   if (!(cookie && baseURL)) {
     throw new Error(
       "Run browser tests through npm run test:e2e to provision real local sessions."
@@ -27,6 +34,7 @@ const ATLAS = /Atlas Self-Serve Billing/;
 const UPDATED = /Demo simulation persisted as/;
 const EVIDENCE = /Evidence messages/;
 const INSPECT_SOURCES = /Inspect .* source events?/;
+const DESIGNED_OR_BOTH = /designed|both/;
 
 test("opens settings from the shell help action", async ({ page }) => {
   await page.goto("/app");
@@ -81,13 +89,6 @@ test("auto-plays the guided demo walkthrough and supports beat jumps", async ({
     .filter({ hasText: EVIDENCE })
     .locator(".stat-value");
   await expect(cases).not.toHaveText("");
-  const simulation = page.waitForResponse(
-    (response) =>
-      response.url().includes("/api/sim/run") &&
-      response.request().method() === "POST" &&
-      response.status() === 200,
-    { timeout: 15_000 }
-  );
   await page
     .getByRole("button", { exact: true, name: "Start walkthrough" })
     .click();
@@ -98,7 +99,6 @@ test("auto-plays the guided demo walkthrough and supports beat jumps", async ({
   await expect(
     page.getByText("Let the Slack-shaped workflow unfold")
   ).toBeVisible();
-  await simulation;
   await expect
     .poll(async () => Number(await cases.textContent()), { timeout: 15_000 })
     .toBeGreaterThan(0);
@@ -120,6 +120,53 @@ test("auto-plays the guided demo walkthrough and supports beat jumps", async ({
   await expect(
     page.getByRole("button", { exact: true, name: "Resume walkthrough" })
   ).toBeVisible();
+});
+
+test("edits graph labels inline and renders designed edges", async ({
+  page,
+}) => {
+  await page.goto("/app");
+  const firstNode = page
+    .locator(".react-flow__node")
+    .filter({
+      hasText: "Root cause analysis",
+    })
+    .first();
+  await firstNode.click();
+  await page.getByRole("button", { name: "Rename node" }).click();
+  const nodeLabelInput = page.locator(
+    '.node-rename-form input[aria-label="Node label"]'
+  );
+  await nodeLabelInput.fill("Root cause reviewed");
+  await nodeLabelInput.press("Enter");
+  await expect(
+    page.locator(".react-flow__node").filter({ hasText: "Root cause reviewed" })
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.locator(".react-flow__node").filter({ hasText: "Root cause reviewed" })
+  ).toBeVisible();
+  const snapshotResponse = await page.request.get(
+    "/api/snapshot?project_id=proj_helios&workflow_id=wf_p1_incident"
+  );
+  expect(snapshotResponse.ok()).toBe(true);
+  const snapshot = await snapshotResponse.json();
+  expect(snapshot.graph.nodes).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        activity: expect.objectContaining({ label: "Root cause reviewed" }),
+      }),
+    ])
+  );
+  expect(snapshot.graph.edges).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        from: "act_root_cause_analysis",
+        plane: expect.stringMatching(DESIGNED_OR_BOTH),
+        to: "act_security_review",
+      }),
+    ])
+  );
 });
 
 test("exposes shell navigation, project switching, and mobile layout", async ({

@@ -380,7 +380,8 @@ function toCanvasEdgeData(edge: GraphEdge, graph: GraphView): CanvasEdgeData {
     diffKind: annotation.diffKind,
     isBackEdge: edge.is_back_edge,
     kind: edge.kind,
-    label: `${support} case${support === 1 ? "" : "s"}${probability}`,
+    label:
+      edge.label ?? `${support} case${support === 1 ? "" : "s"}${probability}`,
     plane: edge.plane,
     severity: annotation.severity,
     support,

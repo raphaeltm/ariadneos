@@ -1281,7 +1281,7 @@ function getProcessContext(c: {
   return c.get("processContext");
 }
 
-function resolveScope(
+export function resolveScope(
   query: Record<string, string | undefined>,
   kb: AuthoredKb,
   options: { requireWorkflow?: boolean } = {}
@@ -1383,7 +1383,7 @@ function isSafeId(value: string) {
   return ID_PATTERN.test(value);
 }
 
-interface ScopedData {
+export interface ScopedData {
   messages: Message[];
   sessions: ProcessSession[];
   steps: Step[];
@@ -1393,7 +1393,7 @@ function emptyScopedData(): ScopedData {
   return { messages: [], sessions: [], steps: [] };
 }
 
-async function readScopedData(
+export async function readScopedData(
   db: D1Database,
   scope: ChannelScope,
   projectId: string,
@@ -1452,7 +1452,7 @@ async function readSession(
   return row ? toSession(row) : null;
 }
 
-async function readMessages(
+export async function readMessages(
   db: D1Database,
   scope: ChannelScope,
   options: {
@@ -1521,7 +1521,11 @@ async function readSteps(
   return rows.results.map((row) => toStep(row, evidence.get(row.id) ?? []));
 }
 
-async function readStep(db: D1Database, scope: ChannelScope, stepId: string) {
+export async function readStep(
+  db: D1Database,
+  scope: ChannelScope,
+  stepId: string
+) {
   const row = await db
     .prepare(
       `SELECT stp.*
@@ -1580,7 +1584,7 @@ async function readEvidenceForSteps(
   return evidence;
 }
 
-async function readEvidenceMessages(
+export async function readEvidenceMessages(
   db: D1Database,
   scope: ChannelScope,
   stepId: string
@@ -1674,7 +1678,7 @@ function parseJsonArray(value: string) {
   return Array.isArray(parsed) ? parsed.map(String) : [];
 }
 
-function buildGraphView(input: {
+export function buildGraphView(input: {
   data: ScopedData;
   effectiveWorkflow?: DesignedWorkflowInput;
   kind: GraphView["kind"];
@@ -1821,7 +1825,7 @@ function mergedSlugForStep(step: Step, mergedSlugs: Record<string, string>) {
   return mergedSlugs[slug] ?? slug;
 }
 
-function designedWorkflowInput(
+export function designedWorkflowInput(
   workflowId: WorkflowId,
   kb: AuthoredKb
 ): DesignedWorkflowInput | null {

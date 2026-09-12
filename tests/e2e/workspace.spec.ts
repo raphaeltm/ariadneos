@@ -82,6 +82,40 @@ test("refreshes persisted simulation results and exposes evidence", async ({
   expect(errors).toEqual([]);
 });
 
+test("exposes shell navigation, project switching, and mobile layout", async ({
+  page,
+}) => {
+  await page.goto("/app");
+  await expect(
+    page.getByRole("navigation", { name: "App navigation" })
+  ).toBeVisible();
+  await page.getByRole("button", { exact: true, name: "Settings" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Demo workspace controls" })
+  ).toBeVisible();
+  await page.getByLabel("Switch project").selectOption("refund");
+  await expect(
+    page.getByRole("heading", { name: "Customer refunds" })
+  ).toBeVisible();
+
+  await page.setViewportSize({ height: 800, width: 390 });
+  await page.goto("/app");
+  await expect(
+    page.getByRole("button", { exact: true, name: "Graph canvas" })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { exact: true, name: "Inspector" })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { exact: true, name: "Settings" })
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth
+    )
+  ).toBe(true);
+});
+
 test("signs out and rejects the previous session", async ({
   page,
   context,

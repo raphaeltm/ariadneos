@@ -118,3 +118,5 @@ A realistic hackathon demo would be:
 4. Visualize the inferred process graph.
 5. Give an agent access to the discovered model.
 6. Have the agent explain or reproduce one workflow.
+
+See the [proposed Cloudflare stack](docs/cloudflare-stack.md) for researched technology choices, connector constraints, and a one-day implementation plan.

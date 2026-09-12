@@ -1,0 +1,55 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "extends": [
+    "ultracite/biome/core",
+    "ultracite/biome/react",
+    "ultracite/biome/vitest",
+    "ultracite/biome/type-aware"
+  ],
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "includes": ["!!package-lock.json", "!!coverage"]
+  },
+  "linter": {
+    "rules": {
+      "correctness": {
+        "noUnresolvedImports": "off"
+      },
+      "suspicious": {
+        "noUnnecessaryConditions": "off"
+      },
+      "performance": {
+        "noJsxPropsBind": "off"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["src/style.css"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noDescendingSpecificity": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["scripts/smoke.mjs"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noMisplacedAssertion": "off"
+          },
+          "performance": {
+            "noAwaitInLoops": "off"
+          }
+        }
+      }
+    }
+  ]
+}

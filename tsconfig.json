@@ -9,8 +9,23 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "types": ["@cloudflare/workers-types", "vite/client"],
-    "noEmit": true
+    "types": ["@cloudflare/workers-types", "vite/client", "node"],
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "server", "shared", "tests", "vite.config.ts"]
+  "include": [
+    "src",
+    "server",
+    "shared",
+    "tests",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "scripts/**/*.ts",
+    "playwright.config.ts"
+  ]
 }

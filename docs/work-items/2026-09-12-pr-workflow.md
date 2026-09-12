@@ -19,7 +19,7 @@ Make every change reviewable and understandable by agents working for different 
 - Use one Markdown file per work item to keep records readable in Git and reduce shared-index conflicts; no external service or new runtime dependency is required.
 - Use Python's standard library for the context gate so it runs on the current documentation-only base and remains independent of the demo stack.
 - Treat semantic quality, independent review, and deployment evidence as human review responsibilities; structural checks cannot establish their truth.
-- Keep this PR independent of the ongoing demo branch, with an explicit integration contract for its application checks.
+- Initially kept this PR independent of the demo. The subsequent [agent-quality request](2026-09-12-agent-quality.md) supersedes that choice: PR 2 is now stacked on PR 3 to verify tooling against the application.
 
 ## Changes
 - Added agent instructions, contribution guide, PR template, work-item template and recovered demo handoff.

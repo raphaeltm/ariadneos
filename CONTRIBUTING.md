@@ -14,19 +14,18 @@ Keep notes concise and factual. A good next step names the action, relevant file
 
 ## Local and PR checks
 
-Run from the repository root with Python 3.11+ (standard library only):
+Run from the repository root after installing Node 22, Python 3.11+, Ruff 0.16.7, locked npm dependencies, and Chromium as described in [code quality](docs/code-quality.md):
 
 ```sh
-python3 scripts/check_quality.py
+npm ci
+npm run check:repo
 git fetch origin main
 python3 scripts/check_work_items.py --base origin/main
 ```
 
 The context check uses the merge base and requires an added or modified work-item file in the change. It checks required metadata and nonempty sections, rejects template placeholders, and rejects deletion of historical records. It cannot judge whether the explanation is accurate; that is a review responsibility. CI also checks that the PR body links a changed work item. Editing only the template or index does not satisfy the gate.
 
-The `Quality` job runs gate regression tests and checks whitespace. When a root `package.json` exists, it requires a committed `package-lock.json` and `test`, `typecheck`, and `build` scripts, then runs `npm ci`, `npm test`, `npm run typecheck`, and `npm run build`. This is the contract for integrating the pending demo. If its package layout or script names differ, adapt the quality runner in the application PR and preserve equivalent checks. CI uses Node 22. No application exists on this PR's base, so current checks do not claim to validate the demo.
-
-GitHub Actions runs `Work item context` and `Quality` for every PR and push to `main`, without path filters. CI has read-only repository permissions and no deployment credentials. Pull request code runs with `pull_request`, never `pull_request_target`. Changes to gates themselves require particularly careful review; a PR can modify its own workflow.
+The `Quality` job runs the complete [code-quality suite](docs/code-quality.md): Ultracite/Biome, strict TypeScript, coverage tests, negative gate probes, build, Ruff, dependency audit, and isolated Worker/D1/browser tests. `Work item context` validates the changed work record and PR link. `Secret scan` and `CodeQL` run separately. All PRs are checked without path filters; there are no deployment credentials. CodeQL has narrowly scoped write permission to publish security results. Changes to gates themselves require careful review.
 
 ## Repository settings to enforce before relying on gates
 
@@ -34,7 +33,7 @@ A repository administrator must configure an active ruleset for `main`:
 
 - Require a pull request and at least one approval from someone other than the author; dismiss stale approvals after new commits.
 - Require resolution of review conversations.
-- Require checks named `Work item context` and `Quality`, with the branch up to date before merging.
+- Require checks named `Work item context`, `Quality`, `Secret scan`, and `CodeQL`, with the branch up to date before merging.
 - Block force pushes and branch deletion; keep bypass access limited and explicit.
 
 These are recommended settings, **not settings applied by this PR**. The available integration returned HTTP 403 when reading branch protection. After this workflow has run, select its exact check names in GitHub settings and verify enforcement with a deliberately failing PR. If there is only one maintainer, decide explicitly how independent review will be provided before enabling the approval rule.

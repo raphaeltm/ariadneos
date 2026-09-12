@@ -9,3 +9,13 @@
 7. Leave explicit handoff instructions when stopping. Distinguish observed facts, previous-session reports, proposals, and verified deployments. Never put credentials, tokens, private payloads, or full chat transcripts in logs.
 
 Follow explicit user authorization for publishing/deployment; opening a PR does not itself authorize merging or deployment. Durable cross-cutting decisions belong in `docs/decisions/` when needed, linked from the work item. Correct outdated decisions with a superseding record instead of silently rewriting history.
+
+## Agent quality loop
+
+- Read `docs/code-quality.md` before implementation. Install the locked tools with `npm ci`; use Node 22 and Ruff 0.16.7. Editor/agent tooling must use this repository's Biome configuration.
+- Work in small changes. Run `npm run fix` for safe mechanical fixes, inspect the diff, then run `npm run check`. Never run unsafe autofixes without reviewing each changed behavior. Use `npm run check:repo` before handoff for Python checks, dependency audit, and isolated API/browser tests too.
+- Fix causes of diagnostics. Do not lower coverage, disable tests, add broad ignores, remove strict compiler flags, or bypass hooks to make a change pass. A legitimate exception needs a narrow scope and a reason in the config/work item, with equivalent verification where possible.
+- Add regression tests for changed behavior: malformed inputs and failure paths for APIs, ordering/deduplication/evidence for mining, and keyboard/navigation/refresh for UI. Do not equate a passing linter or high coverage with correctness.
+- Keep external data untrusted until validated; TypeScript assertions are not runtime validation. Preserve session isolation, parameterized SQL, body/origin limits, and the separation of observations from simulation truth.
+- Review the final diff after tools run. Check accidental public API changes, unchecked promises, secrets, permissions, and unrelated churn. Record exact check outcomes and unresolved limitations in the work item.
+- Dependabot PRs need the same context and review: add a work item with compatibility evidence before merge. Never exempt bots from the quality gates.

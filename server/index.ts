@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
+import { bodyLimit } from "hono/body-limit";
 import {
   isWorkflow,
   mine,
@@ -10,6 +11,13 @@ import {
 import { simulate } from "../shared/simulation";
 type Env = { DB: D1Database; AI: Ai; ASSETS: Fetcher };
 const app = new Hono<{ Bindings: Env }>();
+app.use(
+  "/api/*",
+  bodyLimit({
+    maxSize: 4096,
+    onError: (c) => c.json({ error: "Request body is too large." }, 413),
+  }),
+);
 app.use("/api/*", async (c, next) => {
   c.header("Cache-Control", "no-store");
   c.header("X-Content-Type-Options", "nosniff");
@@ -97,7 +105,7 @@ app.post("/api/simulate", async (c) => {
   } catch {
     return c.json({ error: "Invalid JSON." }, 400);
   }
-  if (!isWorkflow(body.workflow ?? ""))
+  if (!body || !isWorkflow(body.workflow ?? ""))
     return c.json({ error: "Unknown workflow." }, 400);
   if (!(await quota(c.env.DB, "simulation", 1000)))
     return c.json(
@@ -135,7 +143,7 @@ app.post("/api/simulate", async (c) => {
     Date.now() % 100000,
     6,
     prefix,
-    Date.now() - 86400000,
+    Date.now() - 3 * 86400000,
   );
   try {
     await c.env.DB.batch(
@@ -174,6 +182,7 @@ app.post("/api/ask", async (c) => {
     return c.json({ error: "Invalid JSON." }, 400);
   }
   if (
+    !body ||
     !isWorkflow(body.workflow ?? "") ||
     typeof body.question !== "string" ||
     !body.question.trim() ||
@@ -266,7 +275,7 @@ export default {
         "DELETE FROM events WHERE session_id != 'baseline' AND session_id IN (SELECT id FROM sessions WHERE created_at < ?)",
       ).bind(Date.now() - 86400000),
       env.DB.prepare("DELETE FROM sessions WHERE created_at < ?").bind(
-        Date.now() - 86400000,
+        Date.now() - 3 * 86400000,
       ),
       env.DB.prepare(
         "DELETE FROM usage WHERE substr(bucket,instr(bucket,':')+1) < ?",

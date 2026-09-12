@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   Activity,
-  ArrowDown,
   ArrowDownToLine,
   ArrowRight,
   ArrowUpRight,
@@ -14,7 +13,6 @@ import {
   Layers3,
   LoaderCircle,
   Play,
-  Plus,
   Search,
   Send,
   Sparkles,
@@ -79,9 +77,12 @@ export default function App() {
   const [answer, setAnswer] = useState<Answer>();
   const [asking, setAsking] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const currentWorkflow = useRef(workflow);
+  currentWorkflow.current = workflow;
   useEffect(() => {
     let active = true;
     setLoading(true);
+    setData(null);
     setError("");
     setSelection(undefined);
     setCaseId(undefined);
@@ -101,6 +102,32 @@ export default function App() {
       active = false;
     };
   }, [workflow, refresh]);
+  useEffect(() => {
+    if (!info) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setInfo(false);
+      if (event.key === "Tab") {
+        const items = document.querySelectorAll<HTMLElement>(
+          ".about-modal button",
+        );
+        const first = items[0],
+          last = items[items.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      previous?.focus();
+    };
+  }, [info]);
   async function run() {
     setBusy(true);
     setError("");
@@ -125,8 +152,13 @@ export default function App() {
     setAsking(true);
     setAnswer(undefined);
     try {
-      setAnswer(await api<Answer>("/api/ask", { workflow, question: text }));
+      const result = await api<Answer>("/api/ask", {
+        workflow,
+        question: text,
+      });
+      if (currentWorkflow.current === workflow) setAnswer(result);
     } catch (e) {
+      if (currentWorkflow.current !== workflow) return;
       setAnswer({
         answer: (e as Error).message,
         mode: "summary",

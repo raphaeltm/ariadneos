@@ -109,6 +109,14 @@ export default function ProcessGraph({
       maxZoom={1.5}
       nodesDraggable={false}
       nodesConnectable={false}
+      onNodesChange={(changes) => {
+        const change = changes.find((c) => c.type === "select" && c.selected);
+        if (change && "id" in change) onSelect({ kind: "node", id: change.id });
+      }}
+      onEdgesChange={(changes) => {
+        const change = changes.find((c) => c.type === "select" && c.selected);
+        if (change && "id" in change) onSelect({ kind: "edge", id: change.id });
+      }}
       onNodeClick={(_, n) => onSelect({ kind: "node", id: n.id })}
       onEdgeClick={(_, e) => onSelect({ kind: "edge", id: e.id })}
       proOptions={{ hideAttribution: false }}

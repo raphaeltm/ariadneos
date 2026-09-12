@@ -28,12 +28,12 @@ Enforce consistent formatting, linting, type safety, tests, and secure contribut
 - `npm run test:integration` passed against an isolated local Worker/D1 database.
 - Browser rendered the app and graph with no page errors. Chromium initially required missing system libraries, which were installed. Both Playwright regressions pass: modal keyboard/Escape/focus restoration and persisted simulation refresh/evidence/workflow switching.
 - `npm run test:guardrails` proved unsafe lint and indexed-access fixtures fail.
-- Ruff checks and formatting pass. Dependency install reported zero advisories.
+- `npm run check:repo` passed end to end, including eight work-log regression tests, Ruff, all app checks, zero npm audit advisories, and fresh API/browser checks.
+- Published [PR 2](https://github.com/raphaeltm/ariadneos/pull/2), stacked on demo PR 3. GitHub Quality, context, secret scan, and CodeQL results passed for application commit a37017e. The final docs/workflow-name commit is validated by the PR checks.
 
 ## Risks and rollback
 - Formatting will touch existing app files. Review behavior fixes separately from mechanical changes.
 - No deployment is requested or performed. Revert tooling/fixes to restore the previous development setup.
 
 ## Next steps
-- Workflow agent: finish browser/full-suite verification and publish the expanded PR.
 - Maintainer: merge demo PR 3 first, retarget PR 2 to main, review tooling and application fixes, then enable documented required checks.

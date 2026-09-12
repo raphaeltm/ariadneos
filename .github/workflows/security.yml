@@ -29,7 +29,7 @@ jobs:
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: 'false'
           GITLEAKS_ENABLE_SUMMARY: 'true'
   codeql:
-    name: CodeQL
+    name: CodeQL analysis
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

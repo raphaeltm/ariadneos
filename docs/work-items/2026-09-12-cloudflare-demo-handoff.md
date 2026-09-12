@@ -37,3 +37,6 @@ Build and deploy a basic process-mining demo on Cloudflare. The user authorized 
 - Demo implementer: commit/push the backend and dashboard, then open or update its PR with reproducible test results and a work item.
 - Integrator: reconcile the demo's actual package layout/scripts with `scripts/check_quality.py` and run mining tests, type checking, and production build in CI.
 - Demo implementer: verify the deployed URL, API behavior, graph evidence, simulation, and Q&A; record target environment, commit, migration state, and rollback procedure.
+
+## Later integration update
+The demo branch subsequently published application and custom-domain commits through `a3174bb`, with [PR 3](https://github.com/raphaeltm/ariadneos/pull/3) open. The [agent-quality work](2026-09-12-agent-quality.md) integrates that snapshot into PR 2 and verifies the application locally. The original inspection notes above remain a dated record, not the current implementation status. Deployment evidence is recorded in [the custom-domain work item](2026-09-12-custom-domain.md); this quality task did not deploy.

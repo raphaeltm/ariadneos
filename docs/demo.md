@@ -1,5 +1,7 @@
 # Running the AriadneOS demo
 
+Live URL: **https://ariadneos-demo.ariadneos-33d987.workers.dev**
+
 This preview implements the observation → discovery → explanation loop using a synthetic organization. It has three workflows (vendor onboarding, refunds, and access requests), 72 baseline cases, and 316 stored events. The graph, variants, counts, cycle times, and evidence links are computed from those events.
 
 **Try it:** choose a workflow, inspect a node or transition, open its source events, explore a variant, and run a simulation. Each run adds six cases to your browser's workspace. Reloading preserves your observations; another browser starts with its own baseline. Ask a question to get a Workers AI explanation, or export the model as JSON.
@@ -68,3 +70,15 @@ Each browser session allows five simulation runs. Atomic D1 counters cap shared 
 A daily Worker cron removes sessions older than 24 hours, their events, and old usage counters. Consequently, temporary data can remain for up to about 48 hours. Baseline observations are never deleted by cleanup. Closing the browser does not immediately delete data. Workers observability is enabled; inspect ingestion or inference failures with `npx wrangler tail`.
 
 The miner groups explicit cases, deduplicates event IDs, orders by timestamp/sequence, counts adjacent activities, and preserves event pairs for every transition. Probabilities are conditional on an observed next event. Demo traces are complete; the system does not infer causality, concurrency, real process compliance, or execution permission. Notion fidelity and inferred case correlation are unimplemented and must be evaluated independently when a live connector is added.
+
+## Deployment verification — 2026-09-12
+
+Deployed Worker version `3bda34ca-15e0-4b8f-86e9-f219287c8fd8` to the URL above using the account's existing free plan. No plan upgrade was made.
+
+- Production build and all four mining tests passed, including in GitHub Actions.
+- The smoke suite passed against both local Wrangler and the live deployment.
+- Desktop browser checks confirmed rendering, graph-node inspection, transition evidence filtering, and simulation updates; no browser errors were reported.
+- Mobile verification at 390 × 844 confirmed no horizontal page overflow.
+- Workers AI returned real model-generated answers locally and on the live endpoint. The live refund answer correctly identified the dominant path and James Wilson in Finance as the actor issuing refunds.
+
+Not yet validated: long-term traffic/load, a scheduled cleanup observed in production, live Notion ingestion, or real organization permissions. This is a working synthetic-data demo.

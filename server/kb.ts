@@ -117,6 +117,7 @@ export interface DesignedGraph {
 
 export interface KbSeedResult {
   authoredNodes: number;
+  stateHash: string;
   workflowActivities: number;
   workflowFollows: number;
 }
@@ -238,6 +239,8 @@ const WORKFLOW_ACTIVITY_UPSERT_SQL =
   "INSERT INTO pm_kb_workflow_activities(workflow_id,activity_id,source,rank,payload,authored_hash,updated_at,observed_support,observed_occurrences) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(workflow_id,activity_id) DO UPDATE SET source=excluded.source,rank=excluded.rank,payload=excluded.payload,authored_hash=excluded.authored_hash,updated_at=excluded.updated_at WHERE pm_kb_workflow_activities.source='authored'";
 const WORKFLOW_FOLLOW_UPSERT_SQL =
   "INSERT INTO pm_kb_workflow_follows(workflow_id,from_activity_id,to_activity_id,source,weight,payload,authored_hash,updated_at,observed_support,observed_occurrences) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workflow_id,from_activity_id,to_activity_id) DO UPDATE SET source=excluded.source,weight=excluded.weight,payload=excluded.payload,authored_hash=excluded.authored_hash,updated_at=excluded.updated_at WHERE pm_kb_workflow_follows.source='authored'";
+const KB_STATE_UPSERT_SQL =
+  "INSERT INTO pm_kb_state(source,state_hash,summary_json,updated_at) VALUES (?,?,?,?) ON CONFLICT(source) DO UPDATE SET state_hash=excluded.state_hash,summary_json=excluded.summary_json,updated_at=excluded.updated_at";
 
 let cachedKb: AuthoredKb | null = null;
 
@@ -481,11 +484,19 @@ export async function readDesignedGraph(db: D1Database, workflowId: string) {
 }
 
 export async function seedKb(db: D1Database, now = new Date().toISOString()) {
-  const statements = buildKbSeedStatements(loadKb(), now);
+  const kb = loadKb();
+  const statements = buildKbSeedStatements(kb, now);
+  const summary = kbSummary(kb);
+  const summaryJson = stableStringify(summary as unknown as JsonValue);
+  const stateHash = hashString(stableStringify(kb as unknown as JsonValue));
   await db.batch(
-    statements.map((statement) =>
-      db.prepare(statement.sql).bind(...statement.bindings)
-    )
+    [
+      ...statements,
+      {
+        bindings: [AUTHOR_SOURCE, stateHash, summaryJson, now],
+        sql: KB_STATE_UPSERT_SQL,
+      },
+    ].map((statement) => db.prepare(statement.sql).bind(...statement.bindings))
   );
   return statements.reduce<KbSeedResult>(
     (result, statement) => {
@@ -498,8 +509,35 @@ export async function seedKb(db: D1Database, now = new Date().toISOString()) {
       }
       return result;
     },
-    { authoredNodes: 0, workflowActivities: 0, workflowFollows: 0 }
+    {
+      authoredNodes: 0,
+      stateHash,
+      workflowActivities: 0,
+      workflowFollows: 0,
+    }
   );
+}
+
+export async function readKbState(db: D1Database, source = AUTHOR_SOURCE) {
+  const row = await db
+    .prepare(
+      "SELECT source,state_hash,summary_json,updated_at FROM pm_kb_state WHERE source = ?"
+    )
+    .bind(source)
+    .first<{
+      source: string;
+      state_hash: string;
+      summary_json: string;
+      updated_at: string;
+    }>();
+  return row
+    ? {
+        source: row.source,
+        stateHash: row.state_hash,
+        summary: JSON.parse(row.summary_json) as ReturnType<typeof kbSummary>,
+        updatedAt: row.updated_at,
+      }
+    : null;
 }
 
 function assertUnique(values: string[], label: string) {
@@ -525,6 +563,14 @@ function stableStringify(value: JsonValue): string {
       .join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function hashString(value: string): string {
+  let hash = 5381;
+  for (const char of value) {
+    hash = (hash * 33 + char.charCodeAt(0)) % 2_176_782_336;
+  }
+  return `kb_${hash.toString(36)}`;
 }
 
 function validateKb(kb: AuthoredKb) {

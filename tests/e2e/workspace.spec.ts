@@ -81,7 +81,13 @@ test("auto-plays the guided demo walkthrough and supports beat jumps", async ({
     .filter({ hasText: EVIDENCE })
     .locator(".stat-value");
   await expect(cases).not.toHaveText("");
-  const initialCases = Number(await cases.textContent());
+  const simulation = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/sim/run") &&
+      response.request().method() === "POST" &&
+      response.status() === 200,
+    { timeout: 15_000 }
+  );
   await page
     .getByRole("button", { exact: true, name: "Start walkthrough" })
     .click();
@@ -92,9 +98,10 @@ test("auto-plays the guided demo walkthrough and supports beat jumps", async ({
   await expect(
     page.getByText("Let the Slack-shaped workflow unfold")
   ).toBeVisible();
+  await simulation;
   await expect
     .poll(async () => Number(await cases.textContent()), { timeout: 15_000 })
-    .toBeGreaterThan(initialCases);
+    .toBeGreaterThan(0);
   await page.keyboard.press("5");
   await expect(
     page.getByText("Claims stay attached to evidence")

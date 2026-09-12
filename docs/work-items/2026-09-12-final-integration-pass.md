@@ -56,6 +56,11 @@ Bring the currently merged Roman-spec features together on the latest `main`: fi
 - After the deployment readiness change, `npm run check`: passed; lint, typecheck, fixture validation, 200 coverage tests, guardrails, migration check and production build all passed.
 - After the deployment readiness change, `npm run check:repo`: passed; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 14 browser tests all passed.
 - After the deployment readiness change, `python3 scripts/check_quality.py`: passed; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 14 browser tests all passed.
+- PR #84 CI Quality failed once in the browser smoke phase because the guided walkthrough test assumed the evidence count would increase from an empty database. CI reached that test after another demo-mode test had already persisted evidence, so the real simulator completed but the displayed scoped evidence count remained at 9.
+- Updated the walkthrough browser check to wait for the real `/api/sim/run` response triggered by the walkthrough and then assert evidence is present, preserving coverage of the backend call without depending on notice timing, test order or an empty D1 state.
+- After the walkthrough test fix, `npm run test:e2e`: passed; isolated API smoke and 14 Chromium browser tests passed, including the response-backed guided walkthrough check.
+- After the walkthrough test fix, `npm run check:repo`: passed; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 14 browser tests all passed.
+- After the walkthrough test fix, `python3 scripts/check_quality.py`: passed; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 14 browser tests all passed.
 
 ## Risks and rollback
 - Graph editing and agent chat landed on `origin/main` while this PR was open and are now integrated into the live app shell. The graph edit payload bridge is intentionally narrow and translates canvas ids to workflow slugs for the current `/api/model/edit` route.

@@ -1,217 +1,123 @@
-# Spec 11 — Backend (Cloudflare Workers)
+# Spec 11 — Editing & Agent API (delta over spec 05)
 
-> **Supersedes spec 05**, which described a FastAPI/SQLite backend that does not exist.
-> This is the real thing: Hono on Workers, D1, additive migrations, and the endpoints specs 08, 09
-> and 10 need.
+> **Not a competing backend spec.** [Spec 05](05-backend-api.md) and the
+> [Cloudflare implementation contract](00-cloudflare-architecture.md) are the runtime authority:
+> Hono Worker, D1, `ChannelCoordinator` Durable Object, SSE with journal replay, Slack Events API.
+> This document adds only what those two do not cover — the **graph editing verbs** from spec 09 and
+> the **agent surface** from spec 10.
 
----
-
-## 1. Shape
-
-```
-                       ┌──────────────────────────────────────────────┐
-  Slack #ops-war-room  │  WORKER (Hono)                               │
-      │  ▲             │   /api/*        API surface (§4)             │
-      │  │             │   /*            static assets (ASSETS)       │
-      │  │             │   scheduled()   cleanup + safety-net poll    │
-      │  └─── post ────┤                                              │
-      └────── poll ───►│   D1: events · messages · edits · agent_events│
-                       └───────────────┬──────────────────────────────┘
-                                       │ service binding (env.AGENT)
-                                       ▼
-                       ┌──────────────────────────────────────────────┐
-                       │  MASTRA WORKER — miningWorkflow + ariadne    │  spec 10
-                       └──────────────────────────────────────────────┘
-```
-
-Everything stays scoped by `session_id` exactly as `events` already is, so one visitor's run never
-touches another's and the existing 24-hour cleanup sweeps all new tables too.
+An earlier revision of this file duplicated spec 05 with a polling-based design. That was written
+before the Cloudflare contract landed. It has been cut; where the two disagreed, **spec 05 wins**.
 
 ---
 
-## 2. Migrations — additive only
+## 1. What spec 05 already covers — do not redefine
 
-`0001` and `0002` are untouched. Three new migrations:
+`/api/health` · `/api/kb` · `/api/snapshot` · `/api/graph/designed` · `/api/graph/discovered` ·
+`/api/graph/overlay` · `/api/sessions` · `/api/sessions/{id}` · `/api/sessions/{id}/graph` ·
+`/api/messages` · `/api/steps/{id}/evidence` · `/api/steps/{id}/status` · `/api/sim/run` ·
+`/api/sim/pause` · `/api/sim/resume` · `/api/ask` · `/api/graph/rebuild` · `/api/stream`
 
-```sql
--- 0003_edits.sql
-CREATE TABLE edits (
-  id TEXT PRIMARY KEY, session_id TEXT NOT NULL, workflow TEXT NOT NULL,
-  action TEXT NOT NULL, payload TEXT NOT NULL, actor TEXT NOT NULL,
-  rationale TEXT, status TEXT NOT NULL DEFAULT 'applied',   -- applied | proposed | rejected
-  created_at INTEGER NOT NULL, undone INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX edits_session_workflow ON edits(session_id, workflow, created_at);
-
--- 0004_messages.sql
-CREATE TABLE messages (
-  ts TEXT NOT NULL, channel TEXT NOT NULL, session_id TEXT NOT NULL,
-  author_id TEXT, author_label TEXT NOT NULL, text TEXT NOT NULL,
-  permalink TEXT NOT NULL, thread_ts TEXT, is_agent INTEGER NOT NULL DEFAULT 0,
-  workspace TEXT NOT NULL DEFAULT 'demo', reactions TEXT,
-  PRIMARY KEY (channel, ts)
-);
-CREATE INDEX messages_session ON messages(session_id, ts);
-CREATE TABLE cursors (channel TEXT PRIMARY KEY, last_ts TEXT NOT NULL);
-
--- 0005_agent_events.sql
-CREATE TABLE agent_events (
-  id TEXT PRIMARY KEY, session_id TEXT NOT NULL, workflow TEXT NOT NULL,
-  kind TEXT NOT NULL, text TEXT NOT NULL, citations TEXT NOT NULL DEFAULT '[]',
-  nodes TEXT NOT NULL DEFAULT '[]', case_id TEXT, policy_id TEXT,
-  pauses INTEGER NOT NULL DEFAULT 0, resolution TEXT, created_at INTEGER NOT NULL
-);
-CREATE INDEX agent_events_session ON agent_events(session_id, created_at);
-```
-
-`events` keeps its shape. New per-event fields from spec 08 §5.1 (`messages`, `modality`, `state`,
-`status`, `confidence`, `workspace`) live inside the existing `payload` JSON blob — **no ALTER
-TABLE, no backfill, and old rows keep parsing** because every new field is optional.
+Transport is SSE from the coordinator with durable replay. Ingestion is the signed Events API with
+Web API history for bounded reconciliation. Nothing below changes any of that.
 
 ---
 
-## 3. The designed plane
+## 2. New: graph editing
 
-Authored in TypeScript, not the database — it is code, it is reviewed in PRs, and it needs no
-migration:
-
-```ts
-// shared/designed.ts
-export const designed: Record<WorkflowId, DesignedModel> = { access: {...}, refund: {...}, vendor: {...} };
-```
-
-The **effective** model is the authored baseline plus the session's edit log (spec 09 §8):
-
-```ts
-effectiveDesigned(designed[workflow], editsFor(sessionId, workflow))
-```
-
-Baseline immutable, edits replayable, undo trivial, demo resettable by clearing the log.
-
----
-
-## 4. Endpoints
-
-Existing endpoints keep every field they return today. New fields are added, none removed.
-
-### Existing, extended
-
-| Endpoint | Change |
-|---|---|
-| `GET /api/health` | add `agent: boolean`, `slack: boolean` — what is actually wired |
-| `GET /api/model` | add `conformance`, `designed`, `designedEdges`, `links`, `workspace` |
-| `GET /api/context` | add `conformance`; keep the limitations array and **keep it accurate** |
-| `POST /api/simulate` | **return `events[]`** — this is what makes UJ1's prefix replay work |
-| `POST /api/ask` | route through the Mastra agent; add `citations: MessageRef[]`, `nodes: string[]`; keep the statistics fallback exactly as it is |
-
-### New
+Spec 09 makes the canvas the place the process model is repaired. Spec 05 has `/api/steps/{id}/status`
+for confirming a mined step, but nothing for the **model-level** verbs.
 
 | Method | Path | Body → Returns |
 |---|---|---|
-| `GET` | `/api/designed?workflow=` | the documented plane alone — renderable before any run |
-| `GET` | `/api/workspaces` | `[{ channel, id, name, workflows }]` |
-| `GET` | `/api/links?workspace=` | `WorkflowLink[]` for the L0 graph |
-| `GET` | `/api/messages?sessionId=&limit=` | the conversation rail |
-| `GET` | `/api/agent/events?workflow=` | `AgentEvent[]` |
-| `POST` | `/api/agent/decision` | `{ caseId, decision, eventId }` → resumes a paused run |
-| `POST` | `/api/model/edit` | `{ action, payload, workflow }` → `{ conformance, designed, edit }` |
-| `POST` | `/api/model/edit/undo` | `{ workflow }` → `{ conformance, designed }` |
-| `POST` | `/api/model/reconcile` | `{ accept: string[], workflow }` → one `Edit` covering all |
-| `GET` | `/api/model/edits?workflow=` | the audit trail, including `proposed` agent edits |
-| `POST` | `/api/steps/:id/status` | `{ status }` → confirm / reject a mined step |
-| `POST` | `/api/slack/poll` | drains new Slack messages → runs `miningWorkflow` → returns new events + agent events |
+| `POST` | `/api/model/edit` | `{action, payload, request_id, workflow_id}` → `{conformance, designed, edit, revision}` |
+| `POST` | `/api/model/edit/undo` | `{workflow_id}` → `{conformance, designed, revision}` |
+| `POST` | `/api/model/reconcile` | `{accept: string[], request_id, workflow_id}` → one `Edit` covering all |
+| `GET` | `/api/model/edits?workflow_id=` | `Edit[]`, including agent proposals awaiting a human |
 
-**Every mutating endpoint returns the recomputed conformance**, so the UI never guesses what an edit
-did and never needs a follow-up fetch.
+`action` ∈ `confirm | merge | promote | reject | rename | require | retire` (spec 09 §4).
 
-Validation stays server-side and independent of the UI: promoting a node that is not `discovered`,
-or retiring one that is not `designed`, is a `400`.
+**Rules, inherited from spec 05's conventions rather than invented here:**
 
-All new `POST` routes inherit the existing middleware — 4 KB body limit, same-origin check,
-`no-store`. New routes must not bypass it.
+- Every response carries the **recomputed conformance and the new graph revision**, so the client
+  never guesses what an edit did and SSE consumers can reconcile by revision.
+- Edits emit a `graph_delta` on the coordinator stream like any other change — an edit made in one
+  browser must appear in another.
+- `request_id` for idempotency, matching `/api/sim/run`.
+- Server-side legality: promoting a node that is not `discovered`, or retiring one that is not
+  `designed`, is a `400`. The UI is not the only enforcement.
+- Scope authorization applies exactly as it does to every graph route.
+
+### 2.1 Storage
+
+```sql
+-- migration: additive, alongside the spec 05 tables
+CREATE TABLE edits (
+  id TEXT PRIMARY KEY, scope TEXT NOT NULL, workflow_id TEXT NOT NULL,
+  action TEXT NOT NULL, payload TEXT NOT NULL, actor TEXT NOT NULL,
+  rationale TEXT,
+  status TEXT NOT NULL DEFAULT 'applied',    -- applied | proposed | rejected
+  request_id TEXT, created_at INTEGER NOT NULL, undone INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX edits_request ON edits(request_id) WHERE request_id IS NOT NULL;
+CREATE INDEX edits_scope_workflow ON edits(scope, workflow_id, created_at);
+```
+
+The authored designed model stays **immutable**; the effective model is baseline + edit log
+(spec 09 §8). Undo is dropping the last entry and recomputing — which also gives the audit trail,
+the diff view, and a demo that resets by clearing the log.
 
 ---
 
-## 5. Slack ingestion
+## 3. New: the agent surface
 
-**Client-driven during a run, cron as the safety net.** Workers cron fires at best once a minute,
-which is far too slow to watch a graph build; a Durable Object with alarms would be correct and
-costs time we don't have.
-
-```
-UI open and a run active  →  POST /api/slack/poll every 2 s
-scheduled() (existing)    →  drain once per minute as a backstop + the existing cleanup
-```
-
-`/api/slack/poll`:
-
-1. read `cursors.last_ts` for the channel
-2. `conversations.history(channel, oldest=last_ts)` — ascending
-3. drop `is_agent` messages (never mine our own output)
-4. insert into `messages`, construct permalinks locally (no extra API call):
-   `https://{workspace}.slack.com/archives/{channel}/p{ts without the dot}`
-5. correlate to a case: message `metadata.session_id` → `thread_ts` → open session → 90 s idle gap
-6. hand the window to `miningWorkflow` (spec 10 §4) via the service binding
-7. advance the cursor, return `{ agentEvents, events, messages }`
-
-Rate discipline: ≥1.1 s between posts, one channel. Poll is idempotent — the cursor only advances
-on a successful write, so a failed poll replays rather than skipping.
-
-### Degradation ladder — the UI renders all three
-
-| Mode | When | Grounding |
+| Method | Path | Body → Returns |
 |---|---|---|
-| **Slack live** | token present, poll succeeding | real permalinks, steps `grounded` |
-| **Seeded** | no token, or Slack failing | synthetic `MessageRef`s, no permalink, steps `inferred` |
-| **Today's behaviour** | mining disabled | events only, no message layer |
+| `GET` | `/api/agent/events?session_id=` | `AgentEvent[]` — playbook, drift, answer |
+| `POST` | `/api/agent/decision` | `{decision: approve\|hold\|reject, event_id, request_id}` → resolves a paused run |
 
-**Never claim a permalink that does not exist.** A step is `grounded` only when it carries a real
-Slack message reference, and the header's "grounded %" must reflect that honestly.
+`AgentEvent` is defined in spec 08 §5.4. Agent events are journaled and replayed on the existing SSE
+stream as `agent_post`; they are not a second transport.
 
----
+`/api/agent/decision` with `approve` is what resumes a run paused by a `playbook` event — it calls
+the same coordinator control path as `/api/sim/resume` rather than a parallel one.
 
-## 6. Module map
+### 3.1 Agent-proposed edits
 
-```
-shared/
-  process.ts        mine(events, designed?) → + conformance, designedEdges   [spec 08 §5.2]
-  designed.ts       authored designed models + policies for the 3 workflows  [§3]
-  conform.ts        control-flow · policy · role scoring                     [spec 01 §5]
-  edits.ts          effectiveDesigned(base, edits), applyEdit, undo          [spec 09 §8]
-  links.ts          WorkflowLink derivation from shared artifacts            [spec 08 §3]
-  simulation.ts     unchanged
-server/
-  index.ts          routes only — thin, delegates to shared/*
-  slack.ts          post · poll · permalink · reactions                      [§5]
-  agent.ts          service-binding client for the Mastra worker             [spec 10 §3]
-src/agent/          Mastra worker: models · tools · ariadne · miningWorkflow [spec 10]
-```
+`proposeEdit` (spec 10 §5.3) writes an `edits` row with `status: 'proposed'` and a `rationale`. It
+**cannot** write `applied`. A human promotes it via `/api/model/edit`, and the log records that the
+agent proposed and a person decided.
 
-`server/index.ts` is already 325 lines of routing. Keep logic in `shared/` so it stays testable by
-`vitest` without a Worker runtime — that is why the mining core is testable today and must remain so.
+This is the guarantee worth stating in the write-up: an LLM cannot silently rewrite the process
+model, structurally rather than by convention.
 
 ---
 
-## 7. Non-negotiables
+## 4. Reconciling the model layer with spec 10
 
-| Rule | Why |
-|---|---|
-| `model.edges` stays **discovered-only** | `tests/process.test.ts` asserts `count === evidence.length` and probabilities summing to 1 |
-| Every new `ActivityEvent` field is optional | seeded rows must keep parsing |
-| No `ALTER TABLE` on `events` | new fields ride inside `payload` |
-| `npm run check` passes before every push | lint, typecheck, tests, coverage, guardrails, build |
-| Secrets only via `wrangler secret` | never in `wrangler.jsonc`, never committed |
-| Quotas apply to agent calls too | the existing `usage` table already does this — reuse it |
+The Cloudflare contract says: *"Small typed fetch adapter to OpenRouter… no large orchestration SDK."*
+Spec 10 introduces **Mastra**, at the user's explicit direction on 2026-09-12. Where they conflict,
+Mastra wins for the agent and mining-workflow layer, and the contract wins for everything else —
+runtime, storage, transport, ingestion, auth.
+
+Practical consequence, and the thing to check first:
+
+- Mastra must run **inside the existing Worker** or as a second Worker reached by service binding.
+  It must not introduce a second hosting target, a second database, or its own HTTP server.
+- If Mastra's bundle size or Node-compat fights Workers, **fall back to the contract's typed fetch
+  adapter** and keep the agent's tool boundaries and prompts exactly as spec 10 defines them. The
+  design in spec 10 — two surfaces, tool set, `proposeEdit`, guardrails — is independent of whether
+  Mastra or a hand-rolled adapter executes it.
+- `AGENT_ENABLED=false` leaves graph, conformance and editing fully working either way.
 
 ---
 
-## 8. Definition of done
+## 5. Definition of done
 
-- [ ] `npm run check` green
-- [ ] `GET /api/designed?workflow=access` returns a documented DAG with zero events present
-- [ ] `POST /api/simulate` returns its events and the client replays them into a growing graph
-- [ ] `POST /api/slack/poll` is idempotent — running it twice ingests nothing twice
-- [ ] `POST /api/model/edit` returns recomputed conformance in the same response
-- [ ] Illegal edits are rejected with a 400 by the server, not only by the UI
-- [ ] With no Slack token the app still runs, and reports steps as `inferred`, not `grounded`
-- [ ] `/api/health` reports honestly which of Slack and the agent are actually wired
+- [ ] Editing verbs return recomputed conformance **and** a graph revision
+- [ ] An edit in one browser reaches another through the existing SSE stream
+- [ ] Replayed `request_id` returns the original result rather than editing twice
+- [ ] Illegal edits are rejected server-side with a `400`
+- [ ] `⌘Z` undoes a bulk reconcile as one step
+- [ ] An agent proposal is visible on the canvas as pending, with its rationale, and cannot self-apply
+- [ ] Nothing in this spec duplicates or contradicts spec 05

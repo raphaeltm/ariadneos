@@ -3,6 +3,13 @@
 > The agent is not a chatbot bolted onto the dashboard. It operates on **the same process model the
 > UI edits**, through the same verbs, and everything it proposes is a proposal a human confirms.
 
+**Runtime authority:** [Cloudflare implementation contract](00-cloudflare-architecture.md) and
+[spec 05](05-backend-api.md). That contract says *"no large orchestration SDK"*; **Mastra overrides
+that line for the agent layer only**, at the user's explicit direction on 2026-09-12. Runtime,
+storage, transport (SSE from the `ChannelCoordinator` Durable Object), Slack ingestion (signed
+Events API) and auth are unchanged — this spec does not introduce polling, a second database, or a
+second hosting target. See spec 11 §4 for the fallback if Mastra fights the Workers bundle.
+
 **Stack:** Mastra (TypeScript) · OpenRouter for all models · runs on Cloudflare Workers
 **Docs to check before building:** [Agents](https://mastra.ai/docs/agents/overview) ·
 [Workflows](https://mastra.ai/docs/workflows/overview) ·
@@ -54,7 +61,8 @@ reach a model emits no steps and logs a `mining.degraded` event; it never throws
 
 ## 3. Deployment shape
 
-The app is already a Hono Worker serving API + assets. Two options, in preference order:
+Constraint from the Cloudflare contract: **no second hosting target, no second database, no separate
+Mastra HTTP server.** Two options within that, in preference order:
 
 **A — Mastra as a second Worker (recommended).** Deploy with `@mastra/deployer-cloudflare`, call it
 from the main Worker over a **service binding** (`env.AGENT.fetch(...)` — no public hop, no CORS, no

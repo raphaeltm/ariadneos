@@ -318,8 +318,13 @@ message is grounded when it is not.
 | 4 | `MessageRef` on events; Inspector quotes; provenance beam | UJ2 | 25 min | the trust anchor |
 | 5 | `AgentEvent` + cards + pause/approve/reject | UJ4 | 25 min | the agency beat |
 | 6 | Mining log strip | UJ5 | 15 min | convinces technical judges |
+| 6b | **Graph editing: confirm / reject / promote / retire + undo** (spec 09) | UJ3/UJ4 | 30 min | turns the canvas from a picture into a tool — highest value after 1-3 |
 | 7 | Real Slack ingestion + persona posting | UJ2/UJ4 | 45 min | upgrades grounding from synthetic to real |
 | 8 | Workspace L0 graph + `WorkflowLink` highlighting | §2/§3 | 40 min | scales the story past one process |
+
+Interaction craft and the editing verb set are specified separately in **spec 09** — node
+anatomy, edge rendering, the eight verbs, the reconcile diff, and the edit-log model that makes
+undo trivial.
 
 **Items 1–3 are the ones that change the demo.** If the clock runs out, 1–3 shipped and polished
 beats 1–8 half-wired.

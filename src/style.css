@@ -657,6 +657,13 @@ h1 {
 .graph-canvas {
   height: 487px;
 }
+.graph-canvas__keyboard-layer {
+  height: 100%;
+}
+.graph-canvas__keyboard-layer .react-flow:focus-visible {
+  outline: 2px solid #bd7b3c;
+  outline-offset: -2px;
+}
 .activity-node {
   position: relative;
   width: 200px;

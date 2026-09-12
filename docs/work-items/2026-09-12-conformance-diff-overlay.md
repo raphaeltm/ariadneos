@@ -1,6 +1,6 @@
 # Conformance diff overlay and canvas annotations
 
-Status: in-progress
+Status: in-review
 Owner: Codex agent for SAM task 01M2AZ5QK53Q7EPGBMZG8WGZS0
 Source: User request and SAM task for GitHub issue #35, "Add conformance diff overlay and violation annotations to graph canvas." Build the conformance diff overlay and severity annotations on the existing workflow canvas. GitHub issue #35 currently has a mismatched title, so this record follows the task title and prompt.
 Branch: sam/implement-github-issue-35-8wgzs0
@@ -25,6 +25,7 @@ Make conformance differences visible directly on the workflow canvas by classify
 - The workflow canvas conformance strip now shows clickable missing, extra, violation, and role-deviation counts, plus a deviant-path count.
 - Nodes render severity rings and diff pills for missing, extra, policy, and role-deviation states; violating/deviant edges use severity color and visible labels.
 - Added regression coverage for summary counts, node and edge classification, and representative issue selection.
+- Opened PR #73: https://github.com/raphaeltm/ariadneos/pull/73.
 
 ## Validation
 - `npm ci`: passed and installed locked dependencies.
@@ -45,4 +46,4 @@ Make conformance differences visible directly on the workflow canvas by classify
 - GitHub issue #35 currently has a title/body mismatch with the SAM task. The implementation follows the SAM task and user prompt; PR text should call this out. Rollback is removing the canvas helper/UI changes, tests, and this work item.
 
 ## Next steps
-- Open a PR with `Closes #35`, monitor CI, and merge when green. Staging verification remains skipped per instruction.
+- Monitor PR #73 CI and merge when green. Staging verification remains skipped per instruction.

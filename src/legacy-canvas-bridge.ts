@@ -36,10 +36,18 @@ export function legacyProcessToGraphView(
   generatedAt: string
 ): GraphView {
   const designedEdges = model.designedEdges ?? [];
-  const designedSlugs = new Set(
-    designedEdges.flatMap((edge) => [edge.source, edge.target])
+  const canvasDesignedEdges = model.edges.filter(
+    (edge) => edge.plane === "both" || edge.plane === "designed"
   );
-  const designedEdgeIds = new Set(designedEdges.map((edge) => edge.id));
+  const designedSlugs = new Set(
+    [...designedEdges, ...canvasDesignedEdges].flatMap((edge) => [
+      edge.source,
+      edge.target,
+    ])
+  );
+  const designedEdgeIds = new Set(
+    [...designedEdges, ...canvasDesignedEdges].map((edge) => edge.id)
+  );
   const nodesBySlug = new Map(model.nodes.map((node) => [node.id, node]));
   const slugs = new Set([...nodesBySlug.keys(), ...designedSlugs]);
   const nodes: GraphNode[] = [...slugs].map((slug) => {
@@ -73,8 +81,9 @@ export function legacyProcessToGraphView(
     id: graphEdgeId(edge.id),
     is_back_edge: edge.isBackEdge ?? false,
     kind: edge.isBackEdge ? "rework" : "sequence",
+    label: edge.label,
     observed_support: edge.count,
-    plane: designedEdgeIds.has(edge.id) ? "both" : "discovered",
+    plane: edge.plane ?? (designedEdgeIds.has(edge.id) ? "both" : "discovered"),
     probability: edge.probability,
     to: activityId(edge.target),
     violates: [],
@@ -89,6 +98,7 @@ export function legacyProcessToGraphView(
       id: graphEdgeId(edge.id),
       is_back_edge: false,
       kind: "sequence",
+      label: edge.label,
       observed_support: 0,
       plane: "designed",
       probability: edge.probability,

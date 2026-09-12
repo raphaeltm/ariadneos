@@ -10,7 +10,7 @@
   display: grid;
   grid-template-rows: auto minmax(420px, 1fr) auto;
   min-height: 560px;
-  overflow: hidden;
+  overflow: visible;
   color: #f4f4f5;
   background: var(--canvas-bg);
   border: 1px solid var(--canvas-line);
@@ -132,6 +132,11 @@
   box-shadow:
     0 0 0 2px #f6c453,
     0 20px 44px #0009;
+}
+
+.canvas-node.drag-active {
+  border-color: #f6c453;
+  transform: translateY(-1px);
 }
 
 .canvas-node.plane-discovered {
@@ -302,10 +307,59 @@
 }
 
 .workflow-canvas .react-flow__handle {
-  width: 7px;
-  height: 7px;
+  z-index: 5;
+  width: 9px;
+  height: 9px;
   background: #d4d4d8;
   border: 1px solid #18181b;
+}
+
+.workflow-canvas .react-flow__handle:hover,
+.workflow-canvas .is-drag-create .react-flow__handle,
+.workflow-canvas .is-drag-move .react-flow__handle {
+  background: #f6c453;
+  border-color: #78350f;
+}
+
+.workflow-canvas .is-drag-create,
+.workflow-canvas .is-drag-move {
+  cursor: crosshair;
+}
+
+.node-label-button,
+.canvas-edge-label__button {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+
+.node-label-button {
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.node-rename-form input,
+.edge-rename-form input {
+  width: min(190px, 52vw);
+  padding: 5px 7px;
+  font: inherit;
+  color: #18181b;
+  outline: none;
+  background: #f8fafc;
+  border: 1px solid #f59e0b;
+  border-radius: 5px;
+  box-shadow: 0 0 0 3px #f59e0b33;
 }
 
 .canvas-edge-label {
@@ -323,6 +377,16 @@
   box-shadow: 0 8px 20px #0006;
   opacity: 0;
   transition: opacity 0.15s;
+}
+
+.canvas-edge-label.selected,
+.canvas-edge-label.editing {
+  pointer-events: auto;
+}
+
+.canvas-edge-label__button {
+  font-size: inherit;
+  font-weight: inherit;
 }
 
 .react-flow__edge:hover + .canvas-edge-label,

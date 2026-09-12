@@ -33,6 +33,7 @@ export interface CanvasNodeData {
   ariaLabel: string;
   canEdit?: boolean;
   diffKind: CanvasNodeDiffKind;
+  dragActive?: boolean;
   groundedCount: number;
   groundingRatio: number;
   hasRoleDeviation: boolean;
@@ -41,6 +42,7 @@ export interface CanvasNodeData {
   isProposed: boolean;
   label: string;
   onEdit?: GraphEditHandler;
+  onRenameNode?: (value: { label: string; nodeId: string }) => void;
   plane: GraphNode["activity"]["plane"];
   role: string;
   severity: CanvasSeverity;
@@ -53,12 +55,16 @@ export interface CanvasEdgeData {
   annotationLabel: string | null;
   annotationTitle: string | null;
   ariaLabel: string;
+  canEdit?: boolean;
   cases: string[];
   diffKind: CanvasEdgeDiffKind;
+  editing?: boolean;
   isBackEdge: boolean;
   kind: GraphEdge["kind"];
   label: string;
   onEdit?: GraphEditHandler;
+  onRenameEdge?: (value: { edgeId: string; label: string }) => void;
+  onStartEditEdge?: (edgeId: string | null) => void;
   plane: GraphEdge["plane"];
   severity: CanvasSeverity;
   support: number;
@@ -92,9 +98,17 @@ export interface WorkflowCanvasProps {
   graph: GraphView;
   initialMinSupport?: number;
   initialMode?: WorkflowCanvasMode;
+  onCreateDesignedEdge?: (value: { source: string; target: string }) => void;
   onEdit?: GraphEditHandler;
   onMinSupportChange?: (value: number) => void;
   onModeChange?: (mode: WorkflowCanvasMode) => void;
+  onMoveDesignedEdge?: (value: {
+    edgeId: string;
+    source: string;
+    target: string;
+  }) => void;
+  onRenameEdge?: (value: { edgeId: string; label: string }) => void;
+  onRenameNode?: (value: { label: string; nodeId: string }) => void;
   onSelectionChange?: (selection: AppSelection) => void;
   selection?: AppSelection;
 }

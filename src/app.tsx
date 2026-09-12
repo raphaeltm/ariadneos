@@ -46,6 +46,8 @@ import {
 import {
   type ActivityEvent,
   duration,
+  type GraphCanvasEditAction,
+  type GraphCanvasEditPayload,
   type GraphEditAction,
   type ProcessModel,
   type Snapshot,
@@ -89,6 +91,7 @@ import {
 import {
   canvasSelectionFromLegacy,
   legacyActivityId,
+  legacyEdgeId,
   legacyProcessToGraphView,
   legacySelectionFromCanvas,
 } from "./legacy-canvas-bridge.ts";
@@ -140,6 +143,10 @@ interface GraphEditing {
   setAddLabel: (value: string) => void;
   submitAddNode: (event: { preventDefault: () => void }) => Promise<void>;
   undoGraphEdit: () => Promise<void>;
+}
+
+interface GraphCanvasEditResponse {
+  model: ProcessModel;
 }
 
 async function api<T>(path: string, body?: unknown): Promise<T> {
@@ -616,6 +623,33 @@ export default function App() {
     a.click();
     URL.revokeObjectURL(url);
   }
+
+  async function saveGraphCanvasEdit(
+    action: GraphCanvasEditAction,
+    payload: GraphCanvasEditPayload,
+    message: string
+  ) {
+    setError("");
+    try {
+      const result = await api<GraphCanvasEditResponse>(
+        "/api/model/canvas-edit",
+        { action, payload, workflow }
+      );
+      setCurationEdits([]);
+      setData((current) =>
+        current && current.workflow.id === workflow
+          ? {
+              ...current,
+              generatedAt: new Date().toISOString(),
+              model: result.model,
+            }
+          : current
+      );
+      setNotice(message);
+    } catch (caught) {
+      setError((caught as Error).message);
+    }
+  }
   const model = data?.model;
   const curationProjection = useMemo(
     () => (model ? applyCurationEdits(model, curationEdits) : undefined),
@@ -830,14 +864,42 @@ export default function App() {
             isDemoTarget={isDemoTarget}
             model={model}
             onAbout={() => setInfo(true)}
+            onCreateDesignedEdge={({ source, target }) =>
+              saveGraphCanvasEdit(
+                "create_edge",
+                { source, target },
+                "Designed edge added to this process map."
+              )
+            }
             onExport={exportModel}
             onGraphSelect={(selected) => {
               setSelection(selected);
               setCaseId(undefined);
               setShellView("inspector");
             }}
+            onMoveDesignedEdge={({ edgeId, source, target }) =>
+              saveGraphCanvasEdit(
+                "move_edge",
+                { edgeId, source, target },
+                "Designed edge moved."
+              )
+            }
             onRefreshSettings={() => setSettingsRefresh((x) => x + 1)}
             onReload={() => setRefresh((x) => x + 1)}
+            onRenameEdge={({ edgeId, label }) =>
+              saveGraphCanvasEdit(
+                "rename_edge",
+                { edgeId, label },
+                "Edge label updated."
+              )
+            }
+            onRenameNode={({ label, nodeId }) =>
+              saveGraphCanvasEdit(
+                "rename_node",
+                { label, nodeId },
+                "Node label updated."
+              )
+            }
             search={search}
             selectedEdge={selectedEdge}
             selectedNode={selectedNode}
@@ -996,6 +1058,10 @@ function ProcessCanvasPanel({
   curationStats,
   focusClass,
   graphEditing,
+  onCreateDesignedEdge,
+  onMoveDesignedEdge,
+  onRenameEdge,
+  onRenameNode,
   selection,
   setCaseId,
   setSelection,
@@ -1005,6 +1071,14 @@ function ProcessCanvasPanel({
   curationStats: ReturnType<typeof curationSummary>;
   focusClass: string;
   graphEditing: GraphEditing;
+  onCreateDesignedEdge: (value: { source: string; target: string }) => void;
+  onMoveDesignedEdge: (value: {
+    edgeId: string;
+    source: string;
+    target: string;
+  }) => void;
+  onRenameEdge: (value: { edgeId: string; label: string }) => void;
+  onRenameNode: (value: { label: string; nodeId: string }) => void;
   selection: Selection | undefined;
   setCaseId: (value: string | undefined) => void;
   setSelection: (value: Selection | undefined) => void;
@@ -1026,6 +1100,12 @@ function ProcessCanvasPanel({
           <WorkflowCanvas
             canEdit={!graphEditing.editBusy}
             graph={canvasGraph}
+            onCreateDesignedEdge={({ source, target }) =>
+              onCreateDesignedEdge({
+                source: legacyActivityId(source),
+                target: legacyActivityId(target),
+              })
+            }
             onEdit={(
               action: GraphEditAction,
               payload: Record<string, string>
@@ -1034,6 +1114,19 @@ function ProcessCanvasPanel({
                 action,
                 normalizeCanvasGraphEditPayload(payload)
               )
+            }
+            onMoveDesignedEdge={({ edgeId, source, target }) =>
+              onMoveDesignedEdge({
+                edgeId: legacyEdgeId(edgeId),
+                source: legacyActivityId(source),
+                target: legacyActivityId(target),
+              })
+            }
+            onRenameEdge={({ edgeId, label }) =>
+              onRenameEdge({ edgeId: legacyEdgeId(edgeId), label })
+            }
+            onRenameNode={({ label, nodeId }) =>
+              onRenameNode({ label, nodeId: legacyActivityId(nodeId) })
             }
             onSelectionChange={(nextSelection) => {
               const next = legacySelectionFromCanvas(nextSelection);
@@ -1142,10 +1235,18 @@ interface LoadedWorkspaceProps {
   isDemoTarget: (target: DemoTarget) => string;
   model: ProcessModel;
   onAbout: () => void;
+  onCreateDesignedEdge: (value: { source: string; target: string }) => void;
   onExport: () => void;
   onGraphSelect: (selection: Selection | undefined) => void;
+  onMoveDesignedEdge: (value: {
+    edgeId: string;
+    source: string;
+    target: string;
+  }) => void;
   onRefreshSettings: () => void;
   onReload: () => void;
+  onRenameEdge: (value: { edgeId: string; label: string }) => void;
+  onRenameNode: (value: { label: string; nodeId: string }) => void;
   search: string;
   selectedEdge: Snapshot["model"]["edges"][number] | undefined;
   selectedNode: Snapshot["model"]["nodes"][number] | undefined;
@@ -1363,6 +1464,10 @@ function MapPanel(props: LoadedWorkspaceProps) {
         curationStats={props.curationStats}
         focusClass={props.isDemoTarget("graph")}
         graphEditing={props.graphEditing}
+        onCreateDesignedEdge={props.onCreateDesignedEdge}
+        onMoveDesignedEdge={props.onMoveDesignedEdge}
+        onRenameEdge={props.onRenameEdge}
+        onRenameNode={props.onRenameNode}
         selection={props.selection}
         setCaseId={props.setCaseId}
         setSelection={props.setSelection}

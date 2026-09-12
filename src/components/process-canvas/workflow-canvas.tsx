@@ -3,6 +3,7 @@ import {
   Background,
   BaseEdge,
   type Connection,
+  ConnectionLineType,
   Controls,
   type Edge,
   EdgeLabelRenderer,
@@ -14,6 +15,7 @@ import {
   type Node,
   type NodeProps,
   NodeToolbar,
+  type OnReconnect,
   Position,
   ReactFlow,
   type ReactFlowInstance,
@@ -72,6 +74,7 @@ const canvasModes = [
 
 type WorkflowNode = Node<CanvasNodeData, "activity">;
 type WorkflowEdge = Edge<CanvasEdgeData, "process">;
+type DragState = { kind: "create" } | { edgeId: string; kind: "move" };
 
 const nodeTypes = { activity: ActivityNode };
 const edgeTypes = { process: ProcessEdge };
@@ -81,14 +84,20 @@ export function WorkflowCanvas({
   graph,
   initialMode = graph.kind === "instance" ? "instance" : "overlay",
   initialMinSupport = graph.min_support,
+  onCreateDesignedEdge,
   onMinSupportChange,
   onEdit,
   onModeChange,
+  onMoveDesignedEdge,
+  onRenameEdge,
+  onRenameNode,
   onSelectionChange,
   selection,
 }: WorkflowCanvasProps) {
   const [mode, setMode] = useState<WorkflowCanvasMode>(initialMode);
   const [minSupport, setMinSupport] = useState(initialMinSupport);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null);
   const [flow, setFlow] = useState<ReactFlowInstance<
     WorkflowNode,
     WorkflowEdge
@@ -130,6 +139,7 @@ export function WorkflowCanvas({
     () => conformanceOverlaySummary(graph),
     [graph]
   );
+  const draggingEdgeId = drag?.kind === "move" ? drag.edgeId : null;
   const nodes = useMemo(
     () =>
       layout.nodes.map((node) => ({
@@ -137,12 +147,16 @@ export function WorkflowCanvas({
         data: {
           ...node.data,
           canEdit,
+          dragActive: Boolean(drag),
           onEdit,
+          onRenameNode,
         },
+        initialHeight: 80,
+        initialWidth: 200,
         selected: selectedId === node.id,
         type: "activity",
       })) satisfies WorkflowNode[],
-    [canEdit, layout.nodes, onEdit, selectedId]
+    [canEdit, drag, layout.nodes, onEdit, onRenameNode, selectedId]
   );
   const edges = useMemo(() => {
     const nodePositions = new Map(
@@ -156,18 +170,36 @@ export function WorkflowCanvas({
       )
       .map((edge) => ({
         ...edge,
-        animated: selectedId === edge.id,
+        animated: selectedId === edge.id || draggingEdgeId === edge.id,
+        data: {
+          ...edge.data,
+          canEdit,
+          editing: editingEdgeId === edge.id,
+          onRenameEdge,
+          onStartEditEdge: setEditingEdgeId,
+        },
         markerEnd: {
           color: edgeColor(edge.data, selectedId === edge.id),
           height: 16,
           type: MarkerType.ArrowClosed,
           width: 16,
         },
+        reconnectable:
+          canEdit &&
+          (edge.data.plane === "designed" || edge.data.plane === "both"),
         selected: selectedId === edge.id,
         style: edgeStyle(edge.data, selectedId === edge.id),
         type: "process",
       })) satisfies WorkflowEdge[];
-  }, [layout.edges, layout.nodes, selectedId]);
+  }, [
+    canEdit,
+    draggingEdgeId,
+    editingEdgeId,
+    layout.edges,
+    layout.nodes,
+    onRenameEdge,
+    selectedId,
+  ]);
   const { conformance } = graph;
   const maxSupport = supportLimit(graph);
   const chooseMode = (nextMode: WorkflowCanvasMode) => {
@@ -356,7 +388,15 @@ export function WorkflowCanvas({
           aria-activedescendant={activeDescendant}
           aria-describedby={`${instructionsId} ${statusId}`}
           aria-label="Process map nodes and edges"
+          className={drag ? `is-drag-${drag.kind}` : undefined}
+          connectionLineStyle={{
+            stroke: drag?.kind === "move" ? "#fb923c" : "#e8b84b",
+            strokeDasharray: "7 5",
+            strokeWidth: 2.5,
+          }}
+          connectionLineType={ConnectionLineType.SmoothStep}
           edges={edges}
+          edgesReconnectable={canEdit}
           edgeTypes={edgeTypes}
           fitView
           fitViewOptions={{ padding: 0.25 }}
@@ -364,11 +404,13 @@ export function WorkflowCanvas({
           minZoom={0.3}
           nodes={nodes}
           nodesConnectable={canEdit}
-          nodesDraggable={canEdit}
+          nodesDraggable={false}
           nodeTypes={nodeTypes}
           onConnect={(connection) => {
-            handleConnect(connection, onEdit);
+            handleConnect(connection, onCreateDesignedEdge, onEdit);
           }}
+          onConnectEnd={() => setDrag(null)}
+          onConnectStart={() => setDrag({ kind: "create" })}
           onEdgeClick={(_, edge) => {
             const graphEdge = edgeById.get(edge.id as GraphEdge["id"]);
             if (graphEdge) {
@@ -377,6 +419,11 @@ export function WorkflowCanvas({
               setAnnouncement(
                 `Selected ${edge.data?.ariaLabel ?? graphEdge.id}.`
               );
+            }
+          }}
+          onEdgeDoubleClick={(_, edge) => {
+            if (canEdit && edge.data?.onRenameEdge) {
+              setEditingEdgeId(edge.id);
             }
           }}
           onInit={setFlow}
@@ -399,6 +446,11 @@ export function WorkflowCanvas({
                 `Merged ${dragged.data.label} into ${target.data.label}.`
               );
             }
+          }}
+          onReconnect={handleReconnect(onMoveDesignedEdge)}
+          onReconnectEnd={() => setDrag(null)}
+          onReconnectStart={(_, edge) => {
+            setDrag({ edgeId: edge.id, kind: "move" });
           }}
           panOnDrag
           proOptions={{ hideAttribution: true }}
@@ -491,12 +543,21 @@ function ActivityNode({ data, selected }: NodeProps<WorkflowNode>) {
   const groundingPercent = Math.round(data.groundingRatio * 100);
   const [renaming, setRenaming] = useState(false);
   const [draftLabel, setDraftLabel] = useState(data.label);
+  useEffect(() => setDraftLabel(data.label), [data.label]);
   const rename = () => setRenaming(true);
   const submitRename = () => {
     const label = draftLabel.trim();
     if (label) {
-      data.onEdit?.("rename", { id: String(data.id), label });
+      if (data.onRenameNode) {
+        data.onRenameNode({ label, nodeId: String(data.id) });
+      } else {
+        data.onEdit?.("rename", { id: String(data.id), label });
+      }
     }
+    setRenaming(false);
+  };
+  const cancelRename = () => {
+    setDraftLabel(data.label);
     setRenaming(false);
   };
   return (
@@ -505,13 +566,19 @@ function ActivityNode({ data, selected }: NodeProps<WorkflowNode>) {
       aria-label={data.ariaLabel}
       className={`canvas-node plane-${data.plane} ${selected ? "selected" : ""} ${
         data.isProposed ? "is-proposed" : ""
-      } severity-${data.severity} diff-${data.diffKind}`}
+      } ${data.dragActive ? "drag-active" : ""} severity-${data.severity} diff-${
+        data.diffKind
+      }`}
       id={canvasDomId("item", data.id)}
       role="img"
       title={data.annotationTitle ?? undefined}
     >
       <NodeEditToolbar data={data} onRename={rename} selected={selected} />
-      <Handle position={Position.Left} type="target" />
+      <Handle
+        className="node-target-handle"
+        position={Position.Left}
+        type="target"
+      />
       <div className="canvas-node__meta">
         <span
           className={`role-chip ${data.hasRoleDeviation ? "is-deviating" : ""}`}
@@ -547,9 +614,17 @@ function ActivityNode({ data, selected }: NodeProps<WorkflowNode>) {
           <input
             aria-label="Node label"
             autoFocus
+            className="nodrag nopan"
             maxLength={60}
             onBlur={submitRename}
             onChange={(event) => setDraftLabel(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                cancelRename();
+              }
+              event.stopPropagation();
+            }}
             value={draftLabel}
           />
         </form>
@@ -585,7 +660,11 @@ function ActivityNode({ data, selected }: NodeProps<WorkflowNode>) {
           commitment pending
         </span>
       ) : null}
-      <Handle position={Position.Right} type="source" />
+      <Handle
+        className="node-source-handle"
+        position={Position.Right}
+        type="source"
+      />
     </div>
   );
 }
@@ -662,6 +741,8 @@ function NodeEditToolbar({
 
 function ProcessEdge(props: EdgeProps<WorkflowEdge>) {
   const { data } = props;
+  const [draftLabel, setDraftLabel] = useState(data?.label ?? "");
+  useEffect(() => setDraftLabel(data?.label ?? ""), [data?.label]);
   const [path, labelX, labelY] = data?.isBackEdge
     ? getBezierPath({
         sourcePosition: Position.Top,
@@ -683,6 +764,18 @@ function ProcessEdge(props: EdgeProps<WorkflowEdge>) {
   if (!data) {
     return null;
   }
+  const displayLabel = data.annotationLabel ?? data.label;
+  const finishEdit = () => {
+    const label = draftLabel.trim();
+    if (label) {
+      data.onRenameEdge?.({ edgeId: props.id, label });
+    }
+    data.onStartEditEdge?.(null);
+  };
+  const cancelEdit = () => {
+    setDraftLabel(data.label);
+    data.onStartEditEdge?.(null);
+  };
   return (
     <>
       <BaseEdge
@@ -693,21 +786,67 @@ function ProcessEdge(props: EdgeProps<WorkflowEdge>) {
       />
       <EdgeLabelRenderer>
         <div
-          aria-current={props.selected ? "true" : undefined}
-          aria-label={data.ariaLabel}
+          {...(data.editing
+            ? {}
+            : {
+                "aria-current": props.selected ? "true" : undefined,
+                "aria-label": data.ariaLabel,
+                role: "img",
+              })}
           className={`canvas-edge-label severity-${data.severity} ${
             props.selected ? "selected" : ""
-          }`}
+          } ${data.editing ? "editing" : ""}`}
           id={canvasDomId("item", props.id)}
-          role="img"
           style={{
             transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
           }}
           title={data.tooltip}
         >
-          {data.violationCount > 0 ? <AlertTriangle size={11} /> : null}
-          {data.isBackEdge ? <RotateCcw size={11} /> : null}
-          <span>{data.annotationLabel ?? data.label}</span>
+          {data.editing ? (
+            <form
+              className="edge-rename-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                finishEdit();
+              }}
+            >
+              <input
+                aria-label="Edge label"
+                autoFocus
+                className="nodrag nopan"
+                maxLength={80}
+                onBlur={finishEdit}
+                onChange={(event) => setDraftLabel(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    cancelEdit();
+                  }
+                  event.stopPropagation();
+                }}
+                value={draftLabel}
+              />
+            </form>
+          ) : (
+            <button
+              className="canvas-edge-label__button"
+              onDoubleClick={() => {
+                if (data.canEdit && data.onRenameEdge) {
+                  data.onStartEditEdge?.(props.id);
+                }
+              }}
+              title={
+                data.canEdit
+                  ? `${data.tooltip} · double-click to rename`
+                  : data.tooltip
+              }
+              type="button"
+            >
+              {data.violationCount > 0 ? <AlertTriangle size={11} /> : null}
+              {data.isBackEdge ? <RotateCcw size={11} /> : null}
+              <span>{displayLabel}</span>
+            </button>
+          )}
         </div>
       </EdgeLabelRenderer>
     </>
@@ -725,14 +864,44 @@ function edgePositionRank(
 
 function handleConnect(
   connection: Connection,
+  onCreateDesignedEdge: WorkflowCanvasProps["onCreateDesignedEdge"] | undefined,
   onEdit: WorkflowCanvasProps["onEdit"] | undefined
 ) {
-  if (connection.source && connection.target && onEdit) {
+  if (!(connection.source && connection.target)) {
+    return;
+  }
+  if (onCreateDesignedEdge) {
+    onCreateDesignedEdge({
+      source: connection.source,
+      target: connection.target,
+    });
+    return;
+  }
+  if (onEdit) {
     onEdit("add_edge", {
       source: connection.source,
       target: connection.target,
     });
   }
+}
+
+function handleReconnect(
+  onMoveDesignedEdge: WorkflowCanvasProps["onMoveDesignedEdge"] | undefined
+): OnReconnect<WorkflowEdge> {
+  return (oldEdge, connection) => {
+    if (
+      oldEdge.id &&
+      connection.source &&
+      connection.target &&
+      onMoveDesignedEdge
+    ) {
+      onMoveDesignedEdge({
+        edgeId: oldEdge.id,
+        source: connection.source,
+        target: connection.target,
+      });
+    }
+  };
 }
 
 function intersects(a: Node, b: Node) {

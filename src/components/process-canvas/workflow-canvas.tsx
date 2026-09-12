@@ -162,7 +162,7 @@ export function WorkflowCanvas({
           edges={edges}
           edgeTypes={edgeTypes}
           fitView
-          fitViewOptions={{ padding: 0.25 }}
+          fitViewOptions={{ padding: 0.5 }}
           maxZoom={1.5}
           minZoom={0.3}
           nodes={nodes}

@@ -15,6 +15,8 @@ vi.mock("../server/auth.ts", () => ({
   }),
 }));
 
+const HELIOS_SKIP_REVIEW_SESSION = /^ses_helios_p1_v2_skip_review_/;
+
 interface BoundStatement {
   all: <T>() => Promise<{ results: T[] }>;
   first: <T>() => Promise<T | null>;
@@ -192,6 +194,72 @@ describe("process API routes", () => {
         "write_postmortem",
       ]),
     });
+  });
+
+  it("runs the demo simulator through D1-backed process records", async () => {
+    const response = await post("/api/sim/run", {
+      project_id: "proj_helios",
+      request_id: "demo-run-1",
+      scenario_id: "helios_p1",
+      variant: "v2_skip_review",
+      workflow_id: "wf_p1_incident",
+    });
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      graph: { edges: unknown[]; nodes: unknown[] };
+      report: { metrics: { messages: number } };
+      session_id: string;
+    };
+    expect(payload.session_id).toMatch(HELIOS_SKIP_REVIEW_SESSION);
+    expect(payload.report.metrics.messages).toBeGreaterThan(0);
+    expect(payload.graph.nodes.length).toBeGreaterThan(0);
+    expect(payload.graph.edges.length).toBeGreaterThan(0);
+
+    expect(
+      sqlite
+        .prepare(
+          "SELECT COUNT(*) AS count FROM pm_session WHERE source = 'simulation'"
+        )
+        .get()
+    ).toEqual({ count: 1 });
+    expect(
+      (
+        sqlite.prepare("SELECT COUNT(*) AS count FROM pm_message").get() as {
+          count: number;
+        }
+      ).count
+    ).toBeGreaterThan(1);
+    expect(
+      (
+        sqlite
+          .prepare("SELECT COUNT(*) AS count FROM pm_step_evidence")
+          .get() as {
+          count: number;
+        }
+      ).count
+    ).toBeGreaterThan(0);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT COUNT(*) AS count FROM pm_journal WHERE kind = 'graph_delta'"
+        )
+        .get()
+    ).toEqual({ count: 1 });
+
+    const snapshot = await get(
+      "/api/snapshot?project_id=proj_helios&workflow_id=wf_p1_incident"
+    );
+    expect(snapshot.status).toBe(200);
+    const snapshotPayload = (await snapshot.json()) as {
+      graph: { nodes: unknown[] };
+      messages: unknown[];
+      sessions: unknown[];
+      steps: unknown[];
+    };
+    expect(snapshotPayload.sessions.length).toBeGreaterThan(1);
+    expect(snapshotPayload.messages.length).toBeGreaterThan(1);
+    expect(snapshotPayload.steps.length).toBeGreaterThan(1);
+    expect(snapshotPayload.graph.nodes.length).toBeGreaterThan(0);
   });
 
   it("persists designed graph edits with revision history and idempotent request ids", async () => {

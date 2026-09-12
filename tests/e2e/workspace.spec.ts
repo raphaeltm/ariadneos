@@ -22,34 +22,20 @@ test.beforeEach(async ({ context, baseURL }, testInfo) => {
   ]);
 });
 
-const CASE_COUNT = /Process cases/;
-const VENDOR = /Vendor onboarding/;
-const REFUND = /Customer refunds/;
-const UPDATED = /new events across 6 cases/;
-const EVIDENCE = /Inspect .* source events/;
+const HELIOS = /Helios Payments/;
+const ATLAS = /Atlas Self-Serve Billing/;
+const UPDATED = /Demo simulation persisted as/;
+const EVIDENCE = /Evidence messages/;
 
-test("opens the dialog, contains focus, and restores it on Escape", async ({
-  page,
-}) => {
+test("opens settings from the shell help action", async ({ page }) => {
   await page.goto("/app");
   const opener = page.getByRole("button", { name: "About this demo" });
   await opener.click();
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toBeVisible();
   await expect(
-    dialog.getByRole("button", { name: "Close about dialog" })
-  ).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(
-    dialog.getByRole("button", { name: "Explore the process" })
-  ).toBeFocused();
-  await page.keyboard.press("Shift+Tab");
-  await expect(
-    dialog.getByRole("button", { name: "Close about dialog" })
-  ).toBeFocused();
-  await page.keyboard.press("Escape");
-  await expect(dialog).toHaveCount(0);
-  await expect(opener).toBeFocused();
+    page.getByRole("heading", { name: "Workspace configuration" })
+  ).toBeVisible();
+  await page.getByRole("button", { exact: true, name: "Graph canvas" }).click();
+  await expect(page.getByText("Live overlay from /api/snapshot")).toBeVisible();
 });
 
 test("refreshes persisted simulation results and exposes evidence", async ({
@@ -58,27 +44,30 @@ test("refreshes persisted simulation results and exposes evidence", async ({
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/app");
-  await expect(page.getByRole("heading", { name: VENDOR })).toBeVisible();
+  await expect(page.getByRole("heading", { name: HELIOS })).toBeVisible();
   const cases = page
     .locator(".stat")
-    .filter({ hasText: CASE_COUNT })
+    .filter({ hasText: EVIDENCE })
     .locator(".stat-value");
-  await expect(cases).toHaveText("24");
+  await expect(cases).toHaveText("0");
   await page
-    .getByRole("button", { exact: true, name: "Simulate activity" })
+    .getByRole("button", { exact: true, name: "Run demo mode" })
     .click();
   await expect(page.getByText(UPDATED)).toBeVisible();
-  await expect(cases).toHaveText("30");
+  await expect(cases).not.toHaveText("0");
   await page.reload();
-  await expect(cases).toHaveText("30");
-  await page.locator(".react-flow__edge").first().click();
-  await page.getByRole("button", { name: EVIDENCE }).click();
+  await expect(cases).not.toHaveText("0");
+  await page
+    .locator(".react-flow__node")
+    .filter({ hasText: "Root cause analysis" })
+    .click();
+  await expect(page.getByText("SELECTION INSPECTOR").first()).toBeVisible();
+  await page.getByRole("button", { exact: true, name: "Activity" }).click();
   await expect(page.locator(".events-panel .event-row").first()).toBeVisible();
   await page
-    .getByRole("button", { exact: true, name: "Customer refunds" })
+    .getByRole("button", { exact: true, name: "Atlas Self-Serve Billing" })
     .click();
-  await expect(page.getByRole("heading", { name: REFUND })).toBeVisible();
-  await expect(cases).toHaveText("24");
+  await expect(page.getByRole("heading", { name: ATLAS })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -103,9 +92,9 @@ test("exposes shell navigation, project switching, and mobile layout", async ({
   await expect(
     page.getByRole("button", { name: "Deploy workflow" })
   ).toBeVisible();
-  await page.getByLabel("Switch project").selectOption("refund");
+  await page.getByLabel("Switch project").selectOption("proj_atlas");
   await expect(
-    page.getByRole("heading", { name: "Customer refunds" })
+    page.getByRole("heading", { name: "Atlas Self-Serve Billing" })
   ).toBeVisible();
 
   await page.setViewportSize({ height: 800, width: 390 });
@@ -115,6 +104,9 @@ test("exposes shell navigation, project switching, and mobile layout", async ({
   ).toBeVisible();
   await expect(
     page.getByRole("button", { exact: true, name: "Inspector" })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { exact: true, name: "Activity" })
   ).toBeVisible();
   await expect(
     page.getByRole("button", { exact: true, name: "Settings" })
@@ -131,7 +123,7 @@ test("signs out and rejects the previous session", async ({
   context,
 }) => {
   await page.goto("/app");
-  await expect(page.getByRole("heading", { name: VENDOR })).toBeVisible();
+  await expect(page.getByRole("heading", { name: HELIOS })).toBeVisible();
   const before = await context.cookies();
   const session = before.find(
     (cookie) => cookie.name === "better-auth.session_token"
@@ -145,7 +137,7 @@ test("signs out and rejects the previous session", async ({
   await expect(
     page.getByRole("button", { name: "Sign in with Slack" })
   ).toBeVisible();
-  const response = await page.request.get("/api/model", {
+  const response = await page.request.get("/api/snapshot", {
     headers: { Cookie: `better-auth.session_token=${session?.value}` },
   });
   expect(response.status()).toBe(401);

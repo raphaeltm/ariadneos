@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-export type AppShellView = "graph" | "inspector" | "settings";
+export type AppShellView = "activity" | "graph" | "inspector" | "settings";
 
 export interface AppShellOption {
   detail?: string;
@@ -45,6 +45,7 @@ interface AppShellProps {
 const navigationItems: NavigationItem[] = [
   { icon: Waypoints, id: "graph", label: "Graph canvas" },
   { icon: Activity, id: "inspector", label: "Inspector" },
+  { icon: GitBranch, id: "activity", label: "Activity" },
   { icon: Settings, id: "settings", label: "Settings" },
 ];
 

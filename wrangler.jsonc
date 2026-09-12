@@ -68,8 +68,8 @@
     "OPENROUTER_APP_TITLE": "AriadneOS",
     "OPENROUTER_SITE_URL": "https://ariadneos.com",
     "RELEASE_SHA": "local",
-    "SLACK_ALLOWED_TEAM_ID": "",
-    "SLACK_ALLOWED_CHANNEL_ID": ""
+    "SLACK_ALLOWED_TEAM_ID": "T_ARIADNEOS_DEMO",
+    "SLACK_ALLOWED_CHANNEL_ID": "C_HELIOS_OPS"
   },
   "env": {
     "staging": {
@@ -115,8 +115,8 @@
         "OPENROUTER_APP_TITLE": "AriadneOS Staging",
         "OPENROUTER_SITE_URL": "https://staging.ariadneos.com",
         "RELEASE_SHA": "local",
-        "SLACK_ALLOWED_TEAM_ID": "",
-        "SLACK_ALLOWED_CHANNEL_ID": ""
+        "SLACK_ALLOWED_TEAM_ID": "T_ARIADNEOS_DEMO",
+        "SLACK_ALLOWED_CHANNEL_ID": "C_HELIOS_OPS"
       },
       "triggers": {
         "crons": ["27 3 * * *"]
@@ -169,8 +169,8 @@
         "OPENROUTER_APP_TITLE": "AriadneOS",
         "OPENROUTER_SITE_URL": "https://ariadneos.com",
         "RELEASE_SHA": "local",
-        "SLACK_ALLOWED_TEAM_ID": "",
-        "SLACK_ALLOWED_CHANNEL_ID": ""
+        "SLACK_ALLOWED_TEAM_ID": "T_ARIADNEOS_DEMO",
+        "SLACK_ALLOWED_CHANNEL_ID": "C_HELIOS_OPS"
       },
       "triggers": {
         "crons": ["17 3 * * *"]

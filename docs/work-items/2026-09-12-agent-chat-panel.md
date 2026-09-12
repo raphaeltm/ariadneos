@@ -33,6 +33,8 @@ Add an agent chat panel to the existing `/app` shell that lets a signed-in user 
 - Replaced the chat message ID helper's `Math.random()` usage with `crypto.randomUUID()` plus a monotonic fallback after CodeQL flagged insecure randomness.
 - Rebased PR #80 onto `origin/main` at `36756a0`, preserving the new demo walkthrough and keyboard-accessible canvas while replacing the old assistant card with the Agent chat view.
 - Fixed the latest canvas bridge conflict so clearing a keyboard selection forwards the cleared state back to the app and returns the shell to the graph view.
+- Rebased PR #80 onto `origin/main` at `b16d4d4`, preserving main's editable graph ask path while keeping typed `workflow_id` request support and the chat view.
+- Stabilized the rebased browser coverage by waiting for the current canvas role and clicking the React Flow edge hit target directly.
 
 ## Validation
 - `npm ci`: passed; installed 232 packages and found 0 vulnerabilities.
@@ -60,6 +62,12 @@ Add an agent chat panel to the existing `/app` shell that lets a signed-in user 
 - After the canvas bridge fix, `npm run fix`: passed with 123 files checked and no fixes applied.
 - After the canvas bridge fix, `npm run check`: passed lint, typecheck, fixture validation, 190 coverage tests across 26 files, guardrail probes, migration check, and production build.
 - After the canvas bridge fix, `PATH="/tmp/ariadneos-ruff:$PATH" npm run check:repo`: passed work-item tests, all-record context validation, Ruff check/format, `npm run check`, dependency audit, isolated Worker/D1 smoke including the agent-tools migration and agent-disabled smoke, and 14 Chromium browser tests.
+- After rebasing onto `origin/main` at `b16d4d4`, `npm run fix`: passed with 125 files checked and no fixes applied.
+- After rebasing onto `origin/main` at `b16d4d4`, `npm run check`: passed lint, typecheck, fixture validation, 199 coverage tests across 27 files, guardrail probes, migration check, and production build.
+- After rebasing onto `origin/main` at `b16d4d4`, first `PATH="/tmp/ariadneos-ruff:$PATH" npm run check:repo`: passed work-item tests, all-record context validation, Ruff check/format, nested `npm run check`, dependency audit, and isolated Worker/D1 smoke, then failed in Playwright because the upstream canvas test selectors raced or targeted stale canvas markup. Updated the browser selectors.
+- After the browser selector fix, `npm run test:e2e`: passed isolated Worker/D1 smoke and 14 Chromium browser tests.
+- After the browser selector fix, final `npm run check`: passed lint, typecheck, fixture validation, 199 coverage tests across 27 files, guardrail probes, migration check, and production build.
+- After the browser selector fix, final `PATH="/tmp/ariadneos-ruff:$PATH" npm run check:repo`: passed work-item tests, all-record context validation, Ruff check/format, nested `npm run check`, dependency audit, isolated Worker/D1 smoke including the agent-tools migration and agent-disabled smoke, and 14 Chromium browser tests.
 
 ## Risks and rollback
 - Staging verification is intentionally skipped per the user's time-critical instruction.

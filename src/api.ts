@@ -35,6 +35,8 @@ import {
   removalDelta,
 } from "../shared/fixtures.ts";
 
+const WORKFLOW_ID_PREFIX = /^wf_/;
+
 export type {
   ActivityId,
   ChannelId,
@@ -112,7 +114,10 @@ export interface PipelineEvent {
 }
 
 export interface RagAnswer extends ContractRagAnswer {
+  evidence?: string[];
+  mode?: "ai" | "summary";
   nodes?: Array<ActivityId | StepId>;
+  notice?: string;
 }
 
 export interface Snapshot extends ContractSnapshot {
@@ -306,7 +311,12 @@ export function createProductionApiAdapter(
       request<RagAnswer>(
         "/api/ask",
         {
-          body: JSON.stringify(body),
+          body: JSON.stringify({
+            ...body,
+            workflow: body.workflow_id
+              ? legacyWorkflowId(body.workflow_id)
+              : undefined,
+          }),
           headers: { "Content-Type": "application/json" },
           method: "POST",
         },
@@ -363,6 +373,10 @@ export function createProductionApiAdapter(
         status,
       }),
   };
+}
+
+function legacyWorkflowId(workflowId: WorkflowId): string {
+  return workflowId.replace(WORKFLOW_ID_PREFIX, "");
 }
 
 export function createFixtureApiAdapter(

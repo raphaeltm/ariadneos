@@ -71,7 +71,10 @@ test("refreshes persisted simulation results and exposes evidence", async ({
   await expect(cases).toHaveText("30");
   await page.reload();
   await expect(cases).toHaveText("30");
-  await page.locator(".react-flow__edge").first().click();
+  await expect(
+    page.getByRole("application", { name: "Process map nodes and edges" })
+  ).toBeVisible();
+  await page.locator(".react-flow__edge-interaction").first().click();
   await page.getByRole("button", { name: EVIDENCE }).click();
   await expect(page.locator(".events-panel .event-row").first()).toBeVisible();
   await page
@@ -157,6 +160,9 @@ test("exposes shell navigation, project switching, and mobile layout", async ({
     page.getByRole("button", { exact: true, name: "Inspector" })
   ).toBeVisible();
   await expect(
+    page.getByRole("button", { exact: true, name: "Agent chat" })
+  ).toBeVisible();
+  await expect(
     page.getByRole("button", { exact: true, name: "Settings" })
   ).toBeVisible();
   expect(
@@ -180,6 +186,46 @@ test("supports keyboard selection and clearing on the process canvas", async ({
   await expect(page.getByText("PROCESS INSPECTOR")).toBeVisible();
   await page.keyboard.press("ControlOrMeta+Z");
   await expect(page.getByText("SELECTION INSPECTOR")).toBeVisible();
+});
+
+test("opens agent chat, streams an answer, and preserves message history", async ({
+  page,
+}) => {
+  let requestBody: unknown;
+  const response =
+    "The observed handoff from intake to approval is the best place to inspect. It appears across multiple completed cases, and the supporting event log carries the source observations for review.";
+  await page.route("**/api/ask", async (route) => {
+    requestBody = route.request().postDataJSON();
+    await route.fulfill({
+      body: JSON.stringify({
+        answer: response,
+        evidence: ["VEN-104", "VEN-119"],
+        mode: "summary",
+      }),
+      contentType: "application/json",
+    });
+  });
+
+  await page.goto("/app");
+  await page.getByRole("button", { exact: true, name: "Agent chat" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Ask Ariadne" })
+  ).toBeVisible();
+  await page.getByLabel("Message Ariadne").fill("Which handoff slows down?");
+  await page.getByRole("button", { name: "Send message" }).click();
+
+  await expect(page.getByText("Which handoff slows down?")).toBeVisible();
+  await expect(page.locator(".stream-cursor")).toBeVisible();
+  await expect(page.getByText(response)).toBeVisible();
+  expect(requestBody).toMatchObject({
+    project_id: "proj_helios",
+    question: "Which handoff slows down?",
+    workflow: "vendor",
+    workflow_id: "wf_vendor",
+  });
+
+  await page.getByRole("button", { name: "Inspect evidence" }).click();
+  await expect(page.locator(".events-panel .event-row").first()).toBeVisible();
 });
 
 test("signs out and rejects the previous session", async ({

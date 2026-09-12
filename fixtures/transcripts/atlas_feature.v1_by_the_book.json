@@ -1,0 +1,50 @@
+{
+  "expected_deviations": [],
+  "messages": [
+    {
+      "delay": 1.27,
+      "person_id": "per_marc",
+      "text": "Captured REQ-88 for Vertex SSO in the billing portal."
+    },
+    {
+      "delay": 1.63,
+      "person_id": "per_sofia",
+      "text": "Business case is qualified; the request protects expansion revenue."
+    },
+    {
+      "delay": 1.64,
+      "person_id": "per_marc",
+      "text": "Engineering estimate is three weeks if we reuse the enterprise auth path."
+    },
+    {
+      "delay": 1.43,
+      "person_id": "per_sofia",
+      "text": "Roadmap review is approved for Q4."
+    },
+    {
+      "delay": 1.61,
+      "person_id": "per_dana",
+      "text": "Approved from exec side given the expansion risk."
+    },
+    {
+      "delay": 1.33,
+      "person_id": "per_sofia",
+      "text": "I added it to the Q4 roadmap."
+    },
+    {
+      "delay": 1.39,
+      "person_id": "per_marc",
+      "text": "I communicated the decision back to Vertex."
+    },
+    {
+      "delay": 1.6,
+      "person_id": "per_marc",
+      "text": "Created the epic and linked the estimate."
+    }
+  ],
+  "project_id": "proj_atlas",
+  "scenario_id": "atlas_feature",
+  "seed": 128,
+  "variant": "v1_by_the_book",
+  "workflow_id": "wf_feature_intake"
+}

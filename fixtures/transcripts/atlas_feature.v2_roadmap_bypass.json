@@ -1,0 +1,40 @@
+{
+  "expected_deviations": ["negotiate_scope_offline"],
+  "messages": [
+    {
+      "delay": 1.27,
+      "person_id": "per_marc",
+      "text": "Captured REQ-88 for Vertex SSO in the billing portal."
+    },
+    {
+      "delay": 1.65,
+      "person_id": "per_dana",
+      "text": "I already promised Vertex we will add SSO this quarter."
+    },
+    {
+      "delay": 1.56,
+      "person_id": "per_marc",
+      "text": "That sounds like at least three engineering weeks."
+    },
+    {
+      "delay": 1.44,
+      "person_id": "per_sofia",
+      "text": "Roadmap review needs to happen before this goes into Q4."
+    },
+    {
+      "delay": 1.53,
+      "person_id": "per_marc",
+      "text": "I updated the customer note with the promised timing."
+    },
+    {
+      "delay": 1.27,
+      "person_id": "per_marc",
+      "text": "Created a provisional epic so we can scope the work."
+    }
+  ],
+  "project_id": "proj_atlas",
+  "scenario_id": "atlas_feature",
+  "seed": 129,
+  "variant": "v2_roadmap_bypass",
+  "workflow_id": "wf_feature_intake"
+}

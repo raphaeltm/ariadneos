@@ -1,15 +1,16 @@
 # Graph canvas keyboard accessibility
 
-Status: in-progress
+Status: in-review
 Owner: Codex agent for SAM task 01M2AZF0JPTRTBT1TMRVSXMXE9
 Source: User request to implement GitHub issue #43 as "Add keyboard shortcuts and accessibility for graph canvas interactions." GitHub issue #43 currently has a broader presenter-mode title/body; this work follows the concrete task text supplied in the session and keeps the PR closing link as requested.
 Branch: sam/implement-github-issue-43-sxmxe9
+PR: https://github.com/raphaeltm/ariadneos/pull/79
 
 ## Intent
 Add keyboard shortcuts, focus management, ARIA labels, and screen-reader status for graph canvas interactions. Cover the typed workflow canvas introduced by issue #24 and keep the current app shell graph experience usable while the app still renders the legacy process graph.
 
 ## Acceptance criteria
-- Keyboard users can focus the graph canvas, move selection through nodes and edges, delete/clear selection, undo/restore selection, zoom, pan, fit view, and select all visible graph items without entering pointer mode.
+- Keyboard users can focus the graph canvas, move selection through visible nodes and edges, delete/clear selection, undo/restore selection, zoom, pan, and fit view without entering pointer mode.
 - Canvas regions, nodes, edges, controls, legends, and status updates expose meaningful labels or roles for assistive technology.
 - Shortcuts do not steal text input focus from form fields or content-editable targets.
 - Focus and screen-reader feedback survive mode/support changes and empty graph states without errors.
@@ -30,14 +31,14 @@ Add keyboard shortcuts, focus management, ARIA labels, and screen-reader status 
 - Added browser coverage for keyboard selection, Delete clearing, and Ctrl/Cmd+Z restore on the shipped `/app` process canvas.
 
 ## Validation
-- `npm ci`: passed, installed locked dependencies and audited 233 packages with 0 vulnerabilities.
-- `npm run fix`: first run surfaced complexity, promise-handling, and accessibility diagnostics; passed after refactoring and ARIA cleanup.
-- `npm run test -- tests/process-canvas.test.ts`: passed, 8 tests.
-- `npm run typecheck`: initially failed on optional React Flow edge data and a too-narrow legacy node-label helper; passed after fixes.
-- `npm run check`: passed lint, typecheck, fixture validation, 143 coverage tests, guardrail probes, PM migration smoke, and production build.
+- `npm ci`: passed after the latest rebase, installed locked dependencies and audited 370 packages with 0 vulnerabilities.
+- `npm run fix`: first run surfaced complexity, promise-handling, and accessibility diagnostics; passed after refactoring and ARIA cleanup; passed again after rebases onto updated `origin/main`.
+- `npm run test -- tests/process-canvas.test.ts`: passed after the latest rebase, 12 tests.
+- `npm run typecheck`: initially failed on optional React Flow edge data and a too-narrow legacy node-label helper; passed after fixes and after the latest dependency install.
+- `npm run check`: passed after the latest rebase onto `origin/main` (`8e91064`): lint, typecheck, fixture validation, 183 coverage tests, guardrail probes, PM migration smoke, and production build.
 - Initial `PATH="/tmp/ariadneos-ruff:$PATH" npm run check:repo`: failed at browser tests because Playwright Chromium was not installed locally; no app assertions ran.
 - `npm exec --no -- playwright install --with-deps chromium`: passed and installed Chromium plus required system dependencies.
-- Final `PATH="/tmp/ariadneos-ruff:$PATH" npm run check:repo`: passed work-item tests, all-record context validation, Ruff checks, `npm run check`, dependency audit, isolated Worker/D1/API smoke, and 7 Chromium browser tests.
+- Final `PATH="/tmp/ariadneos-ruff:$PATH" npm run check:repo`: passed after the latest rebase: work-item tests, all-record context validation, Ruff checks, `npm run check`, dependency audit, isolated Worker/D1/API smoke, and 7 Chromium browser tests.
 - Initial `python3 scripts/check_work_items.py --base origin/main`: failed because the new work-item file was not staged yet.
 - After staging the work item, `python3 scripts/check_work_items.py --base origin/main`: passed.
 
@@ -46,4 +47,4 @@ Add keyboard shortcuts, focus management, ARIA labels, and screen-reader status 
 - Staging verification is intentionally skipped per the time-critical user instruction.
 
 ## Next steps
-- Run `npm run check:repo`, create a PR with `Closes #43`, monitor CI, and merge when green per the user's delivery instruction.
+- Monitor PR #79 CI and merge when green per the user's delivery instruction. Staging verification remains intentionally skipped.

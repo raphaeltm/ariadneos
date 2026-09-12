@@ -118,7 +118,7 @@ app.get("/api/context", async (c) => {
     source: "simulation",
     limitations: [
       "Observed frequencies are not execution permissions.",
-      "Synthetic data; no live Notion connection.",
+      "Synthetic data; no live Slack connection.",
       "Transition probabilities are conditional on an observed next event.",
     ],
     ...model,

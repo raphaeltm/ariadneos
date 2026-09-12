@@ -1,3 +1,4 @@
+import "@xyflow/react/dist/style.css";
 import { useEffect, useState, useRef } from "react";
 import {
   Activity,
@@ -897,10 +898,12 @@ export default function App() {
               <span className="online-dot" />
             </div>
             <div className="source-row muted">
-              <span className="workspace-icon">N</span>
+              <span className="workspace-icon">#</span>
               <div>
-                <strong>Notion</strong>
-                <small>Not connected in this preview</small>
+                <strong>Slack</strong>
+                <small>
+                  Planned integration · not connected in this preview
+                </small>
               </div>
             </div>
             <p>

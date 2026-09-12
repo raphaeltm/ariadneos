@@ -10,9 +10,9 @@ The longer-term idea is **process mining as context engineering for agents**. Ra
 
 ## Working preview
 
-**[Open the live demo](https://ariadneos.com)**
+**[Homepage](https://ariadneos.com) · [Open the live demo](https://ariadneos.com/app)**
 
-A basic implementation is now included: interactive process maps, variants, event evidence, persistent simulations, JSON agent context, and Workers AI explanations. It uses a synthetic organization; Notion is not connected yet.
+A basic implementation is now included: interactive process maps, variants, event evidence, persistent simulations, JSON agent context, and Workers AI explanations. The homepage at `/` markets the Slack-focused product; the interactive application lives at `/app`. The demo uses a synthetic organization; live Slack ingestion is not connected yet.
 
 See [demo setup and verification](docs/demo.md) and [automatic staging/production deployment](docs/deployment.md).
 
@@ -26,7 +26,7 @@ npm run dev
 
 ```text
 Organization activity
-Notion → Slack → GitHub → files → CRM → other systems
+Slack conversations → requests, decisions, and handoffs
                 ↓
 Observation layer
 actor + action + artifact + timestamp + context
@@ -47,11 +47,11 @@ A useful mental model is **OpenTelemetry for organizational processes**, with pr
 
 ## Hackathon scope
 
-For the hackathon, the goal is not to connect every SaaS product. The goal is to prove that AriadneOS can **observe messy human activity and recover something recognizably like a business process from it**.
+The hackathon is focused entirely on Slack integration. The goal is to prove that AriadneOS can **observe messy human activity and recover something recognizably like a business process from it**.
 
 ### 1. Observable environment
 
-Use Notion as the primary environment and create a small simulated organization with employees or agents working through a few realistic workflows. There should be enough repeated activity to make process discovery meaningful.
+Use Slack as the only integration environment for the hackathon and create a small simulated organization with employees or agents working through a few realistic workflows. There should be enough repeated activity to make process discovery meaningful.
 
 ### 2. Normalized event model
 

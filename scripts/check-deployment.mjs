@@ -31,6 +31,18 @@ async function check() {
   assert.equal(htmlResponse.status, 200, "App must load");
   const html = await htmlResponse.text();
   assert.match(html, /AriadneOS/);
+  for (const path of ["/app", "/app/"]) {
+    const appResponse = await fetch(new URL(path, base), {
+      signal: AbortSignal.timeout(15000),
+    });
+    assert.equal(
+      appResponse.status,
+      200,
+      `${path} must support direct navigation`,
+    );
+    assert.match(appResponse.headers.get("content-type") ?? "", /text\/html/);
+    assert.match(await appResponse.text(), /id="root"/);
+  }
   const script = html.match(/src="([^\"]+\.js)"/);
   assert.ok(script, "App HTML must reference a JavaScript bundle");
   const asset = await fetch(new URL(script[1], base), {

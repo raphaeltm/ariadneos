@@ -1,0 +1,395 @@
+.workflow-canvas {
+  --canvas-bg: #0a0a0b;
+  --canvas-panel: #111113;
+  --canvas-line: #232328;
+  --canvas-thread: #e8b84b;
+  --canvas-ok: #4ade80;
+  --canvas-ghost: #52525b;
+  --canvas-warn: #f87171;
+  display: grid;
+  grid-template-rows: auto minmax(420px, 1fr) auto;
+  min-height: 560px;
+  overflow: hidden;
+  color: #f4f4f5;
+  background: var(--canvas-bg);
+  border: 1px solid var(--canvas-line);
+  border-radius: 8px;
+}
+
+.workflow-canvas__toolbar,
+.conformance-strip {
+  z-index: 2;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  background: color-mix(in srgb, var(--canvas-panel) 94%, transparent);
+  border-bottom: 1px solid var(--canvas-line);
+}
+
+.canvas-segmented {
+  display: inline-flex;
+  padding: 3px;
+  margin: 0;
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 7px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  white-space: nowrap;
+  border: 0;
+  clip: rect(0, 0, 0, 0);
+}
+
+.canvas-segmented button {
+  min-width: 92px;
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 650;
+  color: #a1a1aa;
+  border-radius: 5px;
+}
+
+.canvas-segmented button.is-active {
+  color: #fafafa;
+  background: #2b2b31;
+}
+
+.support-control {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 220px;
+  font-size: 11px;
+  font-weight: 650;
+  color: #d4d4d8;
+}
+
+.support-control input {
+  width: 132px;
+  accent-color: var(--canvas-thread);
+}
+
+.workflow-canvas__stage {
+  position: relative;
+  min-height: 420px;
+}
+
+.workflow-canvas .react-flow {
+  background: radial-gradient(circle at 30% 20%, #131817, var(--canvas-bg) 55%);
+}
+
+.workflow-canvas .react-flow__controls {
+  overflow: hidden;
+  background: #18181b;
+  border: 1px solid #2a2a2f;
+  border-radius: 7px;
+  box-shadow: 0 18px 45px #0008;
+}
+
+.workflow-canvas .react-flow__controls-button {
+  width: 30px;
+  height: 30px;
+  color: #e4e4e7;
+  background: #18181b;
+  border-bottom: 1px solid #2a2a2f;
+}
+
+.canvas-node {
+  position: relative;
+  display: grid;
+  align-content: space-between;
+  width: 200px;
+  min-height: 80px;
+  padding: 10px 12px;
+  overflow: hidden;
+  color: #f4f4f5;
+  background: #111613;
+  border: 1.5px solid var(--canvas-ok);
+  border-radius: 8px;
+  box-shadow: 0 18px 34px #0007;
+  transition:
+    border-color 0.18s,
+    opacity 0.18s,
+    transform 0.18s;
+}
+
+.canvas-node.selected {
+  box-shadow:
+    0 0 0 2px #f6c453,
+    0 20px 44px #0009;
+}
+
+.canvas-node.plane-discovered {
+  background: #1a1608;
+  border-color: var(--canvas-thread);
+  border-width: 2px;
+}
+
+.canvas-node.plane-designed {
+  background: #0a0a0b;
+  border-color: var(--canvas-ghost);
+  border-style: dashed;
+  opacity: 0.58;
+}
+
+.canvas-node.has-violation {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--canvas-warn) 70%, transparent),
+    0 18px 34px #0007;
+}
+
+.canvas-node.is-proposed {
+  opacity: 0.62;
+}
+
+.canvas-node__meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.role-chip,
+.grounding-badge,
+.violation-badge,
+.support-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  color: #d9f99d;
+  text-transform: uppercase;
+  background: #18321d;
+  border-radius: 4px;
+}
+
+.role-chip.is-deviating {
+  color: #fecaca;
+  background: #3f151a;
+}
+
+.grounding-badge {
+  gap: 3px;
+  color: #bae6fd;
+  background: #0c2b3a;
+}
+
+.violation-badge {
+  padding: 0 5px;
+  color: #fecaca;
+  background: #3f151a;
+}
+
+.support-badge {
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #fef3c7;
+  background: #3a2f0c;
+}
+
+.canvas-node strong {
+  display: block;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.grounding-bar {
+  display: block;
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  appearance: none;
+  border-radius: 99px;
+}
+
+.grounding-bar::-webkit-meter-bar {
+  background: #27272a;
+  border: 0;
+  border-radius: 99px;
+}
+
+.grounding-bar::-webkit-meter-optimum-value {
+  background: var(--canvas-ok);
+  border-radius: 99px;
+}
+
+.grounding-bar::-moz-meter-bar {
+  background: var(--canvas-ok);
+  border-radius: 99px;
+}
+
+.node-footnote {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 9px;
+  color: #a1a1aa;
+}
+
+.workflow-canvas .react-flow__handle {
+  width: 7px;
+  height: 7px;
+  background: #d4d4d8;
+  border: 1px solid #18181b;
+}
+
+.canvas-edge-label {
+  position: absolute;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 4px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #18181b;
+  pointer-events: all;
+  background: #f4f4f5;
+  border-radius: 4px;
+  box-shadow: 0 8px 20px #0006;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.react-flow__edge:hover + .canvas-edge-label,
+.canvas-edge-label.selected {
+  opacity: 1;
+}
+
+.canvas-legend {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  max-width: min(620px, calc(100% - 24px));
+  padding: 9px 10px;
+  font-size: 11px;
+  color: #d4d4d8;
+  background: #111113e8;
+  border: 1px solid var(--canvas-line);
+  border-radius: 7px;
+}
+
+.canvas-legend span {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 15px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.legend-swatch.both {
+  background: #0f1a12;
+  border: 1px solid var(--canvas-ok);
+}
+
+.legend-swatch.discovered {
+  background: #1a1608;
+  border: 2px solid var(--canvas-thread);
+}
+
+.legend-swatch.designed {
+  background: transparent;
+  border: 1px dashed var(--canvas-ghost);
+}
+
+.legend-line {
+  display: inline-block;
+  width: 18px;
+  height: 0;
+  border-top: 2px dashed var(--canvas-warn);
+}
+
+.conformance-strip {
+  justify-content: flex-start;
+  margin: 0;
+  border-top: 1px solid var(--canvas-line);
+  border-bottom: 0;
+}
+
+.conformance-strip button,
+.conformance-strip span {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  padding: 6px 9px;
+  font-size: 11px;
+  color: #d4d4d8;
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 5px;
+}
+
+.conformance-strip strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #fafafa;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .canvas-node {
+    animation: canvas-node-in 0.18s ease-out;
+  }
+
+  .canvas-node.is-proposed {
+    animation: proposed-pulse 1.8s ease-in-out infinite;
+  }
+}
+
+@keyframes canvas-node-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+@keyframes proposed-pulse {
+  50% {
+    box-shadow: 0 0 0 3px #e8b84b44;
+  }
+}
+
+@media (max-width: 760px) {
+  .workflow-canvas {
+    grid-template-rows: auto minmax(360px, 1fr) auto;
+  }
+
+  .workflow-canvas__toolbar,
+  .conformance-strip {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .canvas-segmented,
+  .support-control {
+    width: 100%;
+  }
+
+  .canvas-segmented button {
+    flex: 1;
+    min-width: 0;
+  }
+}

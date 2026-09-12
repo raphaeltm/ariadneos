@@ -34,7 +34,7 @@ Add a focused graph editing slice to the existing TypeScript/Hono Worker, D1, Re
 - `npm ci`: passed.
 - `npm run fix`: passed after formatter/lint-driven refactors; final run reported no fixes applied.
 - `npm exec -- vitest run tests/graph-edits.test.ts tests/request.test.ts tests/auth.test.ts`: passed, 26 tests before later graph-edit coverage expansion.
-- `npm run check`: passed lint, typecheck, fixture validation, 176 coverage tests across 23 files, guardrail probes, migration smoke with `0009_graph_edits.sql`, and production build.
+- `npm run check`: passed lint, typecheck, fixture validation, 178 coverage tests across 23 files, guardrail probes, migration smoke with `0009_graph_edits.sql`, and production build.
 - Initial `npm run check:repo` failed because `ruff` was not installed. Installed Ruff 0.16.7 under `/tmp/ariadneos-ruff-0.16.7/ruff-x86_64-unknown-linux-gnu`.
 - Second `npm run check:repo` failed because Playwright Chromium was not installed. Ran `npm exec --no -- playwright install --with-deps chromium`.
 - `PATH="/tmp/ariadneos-ruff-0.16.7/ruff-x86_64-unknown-linux-gnu:$PATH" npm run check:repo`: passed work-item tests, work-item context, Ruff, full app checks, dependency audit, isolated Worker/D1/API smoke, and 6 Chromium browser tests after applying 10 local migrations through main's `0008_graph_edit_revisions.sql` and this branch's `0009_graph_edits.sql`.
@@ -61,3 +61,4 @@ Add a focused graph editing slice to the existing TypeScript/Hono Worker, D1, Re
 - Resolved the app and graph conflicts by composing persisted graph edits with the newer optimistic curation controls and reusable inspector action slot.
 - Kept edge labels visible and sorted rendered graph edges by layout rank so the existing browser edge-click regression continues to exercise a visible edge after the canvas integration.
 - After main added revisioned KB graph edit routes at `/api/model/edit`, updated the demo edit route handlers to pass KB workflow requests through to the process router while preserving the synthetic workflow edit surface used by `/app`.
+- Rebased again after main added workspace settings; kept the settings panel and shell navigation while preserving graph editing toolbar state and process-router forwarding for KB workflow edits.

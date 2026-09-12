@@ -23,7 +23,6 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
-  Send,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -53,6 +52,13 @@ import {
   type WorkflowId,
   workflows,
 } from "../shared/process.ts";
+import {
+  type WorkflowId as ContractWorkflowId,
+  createProductionApiAdapter,
+  type ProjectId,
+  type RagAnswer,
+} from "./api.ts";
+import { AgentChatPanel } from "./components/agent-chat/agent-chat-panel.tsx";
 import AppShell, {
   type AppShellView,
 } from "./components/app-shell/app-shell.tsx";
@@ -90,12 +96,6 @@ import {
 interface Selection {
   id: string;
   kind: "node" | "edge";
-}
-interface Answer {
-  answer: string;
-  evidence: string[];
-  mode: "ai" | "summary";
-  notice?: string;
 }
 interface WorkspaceSettings {
   auth: {
@@ -244,7 +244,20 @@ function useGraphEditing({
   };
 }
 
+const chatScopes: Record<
+  WorkflowId,
+  { projectId: ProjectId; workflowId: ContractWorkflowId }
+> = {
+  access: { projectId: "proj_atlas", workflowId: "wf_access" },
+  refund: { projectId: "proj_helios", workflowId: "wf_refund" },
+  vendor: { projectId: "proj_helios", workflowId: "wf_vendor" },
+};
+
 const demoStepKeyPattern = /^[1-6]$/;
+
+function chatScopeForWorkflow(workflow: WorkflowId) {
+  return chatScopes[workflow];
+}
 
 interface DemoControllerInput {
   busy: boolean;
@@ -335,7 +348,7 @@ function useDemoWalkthroughController({
     }
     switch (demoStep.action) {
       case "ask":
-        setShellView("graph");
+        setShellView("chat");
         setTab("map");
         break;
       case "events":
@@ -486,9 +499,6 @@ export default function App() {
   const [caseId, setCaseId] = useState<string>();
   const [search, setSearch] = useState("");
   const [info, setInfo] = useState(false);
-  const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState<Answer>();
-  const [asking, setAsking] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [curationEdits, setCurationEdits] = useState<CurationDraft[]>([]);
   const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
@@ -505,6 +515,7 @@ export default function App() {
     setNotice,
     workflow,
   });
+  const agentApi = useMemo(() => createProductionApiAdapter(), []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Refresh intentionally invalidates this request after a simulation.
   useEffect(() => {
     let active = true;
@@ -513,7 +524,6 @@ export default function App() {
     setError("");
     setSelection(undefined);
     setCaseId(undefined);
-    setAnswer(undefined);
     setSearch("");
     setCurationEdits([]);
     api<Snapshot>(`/api/model?workflow=${workflow}`)
@@ -579,34 +589,19 @@ export default function App() {
       setBusy(false);
     }
   }, [workflow]);
-  async function ask(text = question) {
-    if (!text.trim() || asking) {
-      return;
-    }
-    setQuestion(text);
-    setAsking(true);
-    setAnswer(undefined);
-    try {
-      const result = await api<Answer>("/api/ask", {
-        question: text,
-        workflow,
-      });
-      if (currentWorkflow.current === workflow) {
-        setAnswer(result);
-      }
-    } catch (e) {
-      if (currentWorkflow.current !== workflow) {
-        return;
-      }
-      setAnswer({
-        answer: (e as Error).message,
-        evidence: [],
-        mode: "summary",
-        notice: "Request failed. Try again.",
-      });
-    } finally {
-      setAsking(false);
-    }
+  async function askAgent(
+    question: string,
+    signal: AbortSignal
+  ): Promise<RagAnswer> {
+    const scope = chatScopeForWorkflow(workflow);
+    return await agentApi.ask(
+      {
+        project_id: scope.projectId,
+        question,
+        workflow_id: scope.workflowId,
+      },
+      signal
+    );
   }
   function exportModel() {
     if (!data) {
@@ -819,9 +814,7 @@ export default function App() {
         />
         {!loading && model !== undefined && data !== null && (
           <LoadedWorkspace
-            answer={answer}
-            ask={ask}
-            asking={asking}
+            askAgent={askAgent}
             canvasGraph={canvasGraph}
             caseId={caseId}
             curationProjection={curationProjection}
@@ -845,13 +838,11 @@ export default function App() {
             }}
             onRefreshSettings={() => setSettingsRefresh((x) => x + 1)}
             onReload={() => setRefresh((x) => x + 1)}
-            question={question}
             search={search}
             selectedEdge={selectedEdge}
             selectedNode={selectedNode}
             selection={selection}
             setCaseId={setCaseId}
-            setQuestion={setQuestion}
             setSearch={setSearch}
             setSelection={setSelection}
             setShellView={setShellView}
@@ -859,6 +850,7 @@ export default function App() {
             settings={settings}
             settingsError={settingsError}
             settingsLoading={settingsLoading}
+            shellView={shellView}
             tab={tab}
             workflow={workflow}
             workspace={workspace}
@@ -1133,9 +1125,7 @@ interface CurationTarget {
 }
 
 interface LoadedWorkspaceProps {
-  answer: Answer | undefined;
-  ask: (text?: string) => Promise<void>;
-  asking: boolean;
+  askAgent: (question: string, signal: AbortSignal) => Promise<RagAnswer>;
   canvasGraph: ReturnType<typeof legacyProcessToGraphView> | undefined;
   caseId: string | undefined;
   curationProjection: ReturnType<typeof applyCurationEdits> | undefined;
@@ -1158,13 +1148,11 @@ interface LoadedWorkspaceProps {
   onGraphSelect: (selection: Selection | undefined) => void;
   onRefreshSettings: () => void;
   onReload: () => void;
-  question: string;
   search: string;
   selectedEdge: Snapshot["model"]["edges"][number] | undefined;
   selectedNode: Snapshot["model"]["nodes"][number] | undefined;
   selection: Selection | undefined;
   setCaseId: (value: string | undefined) => void;
-  setQuestion: (value: string) => void;
   setSearch: (value: string) => void;
   setSelection: (value: Selection | undefined) => void;
   setShellView: Dispatch<SetStateAction<AppShellView>>;
@@ -1172,6 +1160,7 @@ interface LoadedWorkspaceProps {
   settings: WorkspaceSettings | null;
   settingsError: string;
   settingsLoading: boolean;
+  shellView: AppShellView;
   tab: string;
   workflow: WorkflowId;
   workspace: string;
@@ -1200,7 +1189,9 @@ function LoadedWorkspace(props: LoadedWorkspaceProps) {
       ) : (
         <ProcessExplorer {...props} />
       )}
-      {props.tab !== "settings" && <RecentAndAssistant {...props} />}
+      {props.tab !== "settings" && props.shellView !== "chat" && (
+        <RecentObservationsGrid {...props} />
+      )}
       <WorkspaceFooter remainingRuns={props.data.remainingRuns} />
     </>
   );
@@ -1265,38 +1256,55 @@ function ProcessExplorer(props: LoadedWorkspaceProps) {
         data={props.data}
         graphEditing={props.graphEditing}
         model={props.model}
+        setShellView={props.setShellView}
         setTab={props.setTab}
         tab={props.tab}
       />
-      <div className="explorer-body">
-        <div className="main-panel">
-          <MapPanel {...props} />
-          {props.tab === "variants" && (
-            <VariantsPanel
-              highlighted={props.isDemoActive("variants")}
-              model={props.model}
-              setCaseId={props.setCaseId}
-              setSelection={props.setSelection}
-              setTab={props.setTab}
-            />
-          )}
-          <EventsTabPanel {...props} />
-        </div>
-        <Inspector
-          editBusy={props.graphEditing.editBusy}
-          events={props.events}
-          highlighted={props.isDemoActive("inspector")}
-          model={props.displayModel}
-          onEdit={props.graphEditing.editGraph}
-          selectedEdge={props.selectedEdge}
-          selectedNode={props.selectedNode}
-          selection={props.selection}
-          setCaseId={props.setCaseId}
-          setSelection={props.setSelection}
-          setTab={props.setTab}
-          workflow={props.workflow}
+      {props.shellView === "chat" ? (
+        <AgentChatPanel
+          ask={props.askAgent}
+          className={`agent-chat-page ${
+            props.isDemoActive("assistant") ? "is-demo-focus" : ""
+          }`}
+          onInspectEvidence={() => {
+            props.setTab("events");
+            props.setShellView("graph");
+            props.setSelection(undefined);
+            props.setCaseId(undefined);
+          }}
+          scopeLabel={`${props.data.workflow.name} · ${props.data.events.length} observations`}
         />
-      </div>
+      ) : (
+        <div className="explorer-body">
+          <div className="main-panel">
+            <MapPanel {...props} />
+            {props.tab === "variants" && (
+              <VariantsPanel
+                highlighted={props.isDemoActive("variants")}
+                model={props.model}
+                setCaseId={props.setCaseId}
+                setSelection={props.setSelection}
+                setTab={props.setTab}
+              />
+            )}
+            <EventsTabPanel {...props} />
+          </div>
+          <Inspector
+            editBusy={props.graphEditing.editBusy}
+            events={props.events}
+            highlighted={props.isDemoActive("inspector")}
+            model={props.displayModel}
+            onEdit={props.graphEditing.editGraph}
+            selectedEdge={props.selectedEdge}
+            selectedNode={props.selectedNode}
+            selection={props.selection}
+            setCaseId={props.setCaseId}
+            setSelection={props.setSelection}
+            setTab={props.setTab}
+            workflow={props.workflow}
+          />
+        </div>
+      )}
     </section>
   );
 }
@@ -1305,12 +1313,14 @@ function ExplorerToolbar({
   data,
   graphEditing,
   model,
+  setShellView,
   setTab,
   tab,
 }: {
   data: Snapshot;
   graphEditing: GraphEditing;
   model: ProcessModel;
+  setShellView: (value: AppShellView) => void;
   setTab: (value: string) => void;
   tab: string;
 }) {
@@ -1321,7 +1331,10 @@ function ExplorerToolbar({
           <button
             className={tab === id ? "selected" : ""}
             key={id}
-            onClick={() => setTab(id)}
+            onClick={() => {
+              setTab(id);
+              setShellView("graph");
+            }}
             type="button"
           >
             <Icon size={15} />
@@ -1417,35 +1430,19 @@ function EventsTabPanel({
   );
 }
 
-function RecentAndAssistant({
-  answer,
-  ask,
-  asking,
+function RecentObservationsGrid({
   data,
-  question,
   isDemoActive,
   setCaseId,
-  setQuestion,
   setSelection,
   setTab,
 }: LoadedWorkspaceProps) {
   return (
-    <div className="bottom-grid">
+    <div className="recent-only bottom-grid">
       <RecentObservations
         data={data}
         highlighted={isDemoActive("conversation")}
         setCaseId={setCaseId}
-        setSelection={setSelection}
-        setTab={setTab}
-      />
-      <AssistantPanel
-        answer={answer}
-        ask={ask}
-        asking={asking}
-        highlighted={isDemoActive("assistant")}
-        question={question}
-        setCaseId={setCaseId}
-        setQuestion={setQuestion}
         setSelection={setSelection}
         setTab={setTab}
       />
@@ -2227,118 +2224,6 @@ function filterEvents(
       );
     })
     .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-}
-
-interface AssistantPanelProps {
-  answer: Answer | undefined;
-  ask: (text?: string) => Promise<void>;
-  asking: boolean;
-  highlighted: boolean;
-  question: string;
-  setCaseId: (value: string | undefined) => void;
-  setQuestion: (value: string) => void;
-  setSelection: (value: Selection | undefined) => void;
-  setTab: (value: string) => void;
-}
-function AssistantPanel({
-  answer,
-  asking,
-  highlighted,
-  question,
-  ask,
-  setQuestion,
-  setTab,
-  setSelection,
-  setCaseId,
-}: AssistantPanelProps) {
-  return (
-    <section
-      className={`assistant-card ${highlighted ? "is-demo-focus" : ""}`}
-      data-demo-target="assistant"
-    >
-      <div className="assistant-heading">
-        <span className="assistant-icon">
-          <Sparkles size={19} />
-        </span>
-        <div>
-          <h2>Ask the process</h2>
-          <p>Answers grounded in the observations.</p>
-        </div>
-        <span className="beta">AI</span>
-      </div>
-      {answer ? (
-        <div aria-live="polite" className="answer">
-          <span className="answer-label">
-            {answer.mode === "ai" ? "ARIADNE · WORKERS AI" : "COMPUTED SUMMARY"}
-          </span>
-          {Boolean(answer.notice) && <small>{answer.notice}</small>}
-          <p>{answer.answer}</p>
-          <button
-            className="text-link"
-            onClick={() => {
-              setTab("events");
-              setSelection(undefined);
-              setCaseId(undefined);
-            }}
-            type="button"
-          >
-            Inspect supporting event log <ArrowUpRight size={12} />
-          </button>
-        </div>
-      ) : (
-        <div className="suggestions">
-          <button
-            onClick={() =>
-              ask("What is the most common path, and who approves requests?")
-            }
-            type="button"
-          >
-            What normally happens? <ArrowUpRight size={13} />
-          </button>
-          <button
-            onClick={() =>
-              ask("Which paths are unusual, and what evidence supports that?")
-            }
-            type="button"
-          >
-            Where does the process branch? <ArrowUpRight size={13} />
-          </button>
-        </div>
-      )}
-      <form
-        className="question-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          ask();
-        }}
-      >
-        <input
-          aria-label="Ask a question about this process"
-          disabled={asking}
-          maxLength={400}
-          onChange={(e) => setQuestion(e.target.value)}
-          placeholder="What would you like to understand?"
-          value={question}
-        />
-        <button
-          aria-label="Send question"
-          disabled={asking || !question.trim()}
-          type="submit"
-        >
-          {asking ? (
-            <LoaderCircle className="spin" size={17} />
-          ) : (
-            <Send size={17} />
-          )}
-        </button>
-      </form>
-      <div className="assistant-footnote">
-        {asking
-          ? "Reading the process evidence…"
-          : "Read-only answers · Synthetic data · No actions executed"}
-      </div>
-    </section>
-  );
 }
 
 interface VariantsPanelProps {

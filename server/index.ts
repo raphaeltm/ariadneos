@@ -565,7 +565,8 @@ app.post("/api/ask", async (c) => {
   } catch {
     return c.json({ error: "Invalid JSON." }, 400);
   }
-  if (!isValidAskBody(body)) {
+  const workflow = readAskWorkflow(body);
+  if (!(workflow && isValidAskBody(body))) {
     return c.json(
       { error: "Choose a workflow and enter a question up to 400 characters." },
       400
@@ -580,7 +581,6 @@ app.post("/api/ask", async (c) => {
       400
     );
   }
-  const workflow = body.workflow as WorkflowId;
   const question = body.question.trim();
   const memoryScope = askMemoryScope(
     c.env,
@@ -759,9 +759,12 @@ function askMemoryScope(
   };
 }
 
-function isValidAskBody(
-  value: unknown
-): value is { question: string; thread_id?: string; workflow: string } {
+function isValidAskBody(value: unknown): value is {
+  question: string;
+  thread_id?: string;
+  workflow?: string;
+  workflow_id?: string;
+} {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
@@ -769,15 +772,31 @@ function isValidAskBody(
     question?: unknown;
     thread_id?: unknown;
     workflow?: unknown;
+    workflow_id?: unknown;
   };
   return (
-    typeof body.workflow === "string" &&
-    isWorkflow(body.workflow) &&
+    readAskWorkflow(body) !== null &&
     typeof body.question === "string" &&
     Boolean(body.question.trim()) &&
     body.question.length <= 400 &&
     (body.thread_id === undefined || typeof body.thread_id === "string")
   );
+}
+
+function readAskWorkflow(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const body = value as { workflow?: unknown; workflow_id?: unknown };
+  const candidate =
+    typeof body.workflow === "string" ? body.workflow : body.workflow_id;
+  if (typeof candidate !== "string") {
+    return null;
+  }
+  const workflow = candidate.startsWith("wf_")
+    ? candidate.slice("wf_".length)
+    : candidate;
+  return isWorkflow(workflow) ? workflow : null;
 }
 
 function agentContextForPrompt(messages: readonly AgentMessageWindowItem[]) {

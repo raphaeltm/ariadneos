@@ -1,80 +1,87 @@
 export const workflows = [
   {
+    description: "From a new vendor request to a signed agreement.",
+    icon: "briefcase",
     id: "vendor",
     name: "Vendor onboarding",
-    description: "From a new vendor request to a signed agreement.",
     prefix: "VEN",
-    icon: "briefcase",
   },
   {
+    description: "Follow a customer request through review and resolution.",
+    icon: "refund",
     id: "refund",
     name: "Customer refunds",
-    description: "Follow a customer request through review and resolution.",
     prefix: "REF",
-    icon: "refund",
   },
   {
+    description: "Understand how teammates get the tools they need.",
+    icon: "key",
     id: "access",
     name: "Access requests",
-    description: "Understand how teammates get the tools they need.",
     prefix: "ACC",
-    icon: "key",
   },
 ] as const;
 export type WorkflowId = (typeof workflows)[number]["id"];
-export type ActivityEvent = {
-  id: string;
-  caseId: string;
-  workflow: WorkflowId;
-  actor: string;
-  role: string;
+export interface ActivityEvent {
   action: string;
+  actor: string;
   artifact: string;
-  timestamp: string;
-  source: "simulation";
-  sequence: number;
-};
-export type ProcessEdge = {
+  caseId: string;
   id: string;
+  role: string;
+  sequence: number;
+  source: "simulation";
+  timestamp: string;
+  workflow: WorkflowId;
+}
+export interface ProcessEdge {
+  cases: number;
+  count: number;
+  evidence: { from: string; to: string; caseId: string }[];
+  id: string;
+  medianMinutes: number;
+  probability: number;
   source: string;
   target: string;
+}
+export interface ProcessNode {
+  actors: string[];
   count: number;
-  cases: number;
-  probability: number;
-  medianMinutes: number;
-  evidence: { from: string; to: string; caseId: string }[];
-};
-export type ProcessNode = {
   id: string;
   label: string;
-  count: number;
-  actors: string[];
   role: string;
   terminal: boolean;
-};
-export type CaseTrace = {
-  id: string;
+}
+export interface CaseTrace {
   artifact: string;
-  events: ActivityEvent[];
   durationMinutes: number;
-  variant: string;
-};
-export type ProcessModel = ReturnType<typeof mine>;
-export type Snapshot = {
-  workflow: (typeof workflows)[number];
-  model: ProcessModel;
   events: ActivityEvent[];
+  id: string;
+  variant: string;
+}
+export type ProcessModel = ReturnType<typeof mine>;
+export interface Snapshot {
+  events: ActivityEvent[];
+  generatedAt: string;
+  model: ProcessModel;
   remainingRuns: number;
   source: "simulation";
-  generatedAt: string;
-};
+  workflow: (typeof workflows)[number];
+}
 export function isWorkflow(value: string): value is WorkflowId {
   return workflows.some((w) => w.id === value);
 }
 export function median(values: number[]) {
   const s = [...values].sort((a, b) => a - b);
   const m = Math.floor(s.length / 2);
-  return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : 0;
+  const middle = s[m];
+  if (middle === undefined) {
+    return 0;
+  }
+  if (s.length % 2) {
+    return middle;
+  }
+  return ((s[m - 1] ?? middle) + middle) / 2;
 }
 export function mine(input: ActivityEvent[]) {
   const unique = [...new Map(input.map((e) => [e.id, e])).values()];
@@ -104,90 +111,102 @@ export function mine(input: ActivityEvent[]) {
       (a, b) =>
         a.timestamp.localeCompare(b.timestamp) ||
         a.sequence - b.sequence ||
-        a.id.localeCompare(b.id),
+        a.id.localeCompare(b.id)
     );
+    const [first] = events;
+    const last = events.at(-1);
+    if (!(first && last)) {
+      continue;
+    }
     const path = events.map((e) => e.action);
     const signature = path.join(" → ");
-    const variant = variants.get(signature) ?? { path, count: 0, caseIds: [] };
-    variant.count++;
-    variant.caseIds.push(events[0].caseId);
+    const variant = variants.get(signature) ?? { caseIds: [], count: 0, path };
+    variant.count += 1;
+    variant.caseIds.push(first.caseId);
     variants.set(signature, variant);
     traces.push({
-      id: events[0].caseId,
-      artifact: events[0].artifact,
-      events,
+      artifact: first.artifact,
       durationMinutes:
-        (Date.parse(events.at(-1)!.timestamp) -
-          Date.parse(events[0].timestamp)) /
-        60000,
+        (Date.parse(last.timestamp) - Date.parse(first.timestamp)) / 60_000,
+      events,
+      id: first.caseId,
       variant: signature,
     });
     events.forEach((e, i) => {
       const node = nodes.get(e.action) ?? {
+        actors: [],
+        count: 0,
         id: e.action,
         label: e.action,
-        count: 0,
-        actors: [],
         role: e.role,
         terminal: true,
       };
-      node.count++;
-      if (!node.actors.includes(e.actor)) node.actors.push(e.actor);
-      if (i < events.length - 1) node.terminal = false;
+      node.count += 1;
+      if (!node.actors.includes(e.actor)) {
+        node.actors.push(e.actor);
+      }
+      if (i < events.length - 1) {
+        node.terminal = false;
+      }
       nodes.set(e.action, node);
       const next = events[i + 1];
-      if (!next) return;
-      if (next.actor !== e.actor) handoffs++;
+      if (!next) {
+        return;
+      }
+      if (next.actor !== e.actor) {
+        handoffs += 1;
+      }
       const id = `${e.action}::${next.action}`;
       const link = links.get(id) ?? {
+        evidence: [],
         source: e.action,
         target: next.action,
         times: [],
-        evidence: [],
       };
       link.times.push(
-        (Date.parse(next.timestamp) - Date.parse(e.timestamp)) / 60000,
+        (Date.parse(next.timestamp) - Date.parse(e.timestamp)) / 60_000
       );
-      link.evidence.push({ from: e.id, to: next.id, caseId: e.caseId });
+      link.evidence.push({ caseId: e.caseId, from: e.id, to: next.id });
       links.set(id, link);
     });
   }
   const outgoing = new Map<string, number>();
-  for (const link of links.values())
+  for (const link of links.values()) {
     outgoing.set(
       link.source,
-      (outgoing.get(link.source) ?? 0) + link.times.length,
+      (outgoing.get(link.source) ?? 0) + link.times.length
     );
+  }
   const edges: ProcessEdge[] = [...links.entries()].map(([id, l]) => ({
+    cases: new Set(l.evidence.map((e) => e.caseId)).size,
+    count: l.times.length,
+    evidence: l.evidence,
     id,
+    medianMinutes: median(l.times),
+    probability: l.times.length / (outgoing.get(l.source) ?? 1),
     source: l.source,
     target: l.target,
-    count: l.times.length,
-    cases: new Set(l.evidence.map((e) => e.caseId)).size,
-    probability: l.times.length / (outgoing.get(l.source) ?? 1),
-    medianMinutes: median(l.times),
-    evidence: l.evidence,
   }));
   const rankedVariants = [...variants.values()].sort(
-    (a, b) => b.count - a.count || a.path.join().localeCompare(b.path.join()),
+    (a, b) => b.count - a.count || a.path.join().localeCompare(b.path.join())
   );
   return {
-    nodes: [...nodes.values()],
     edges,
-    traces: traces.sort((a, b) =>
-      b.events[0].timestamp.localeCompare(a.events[0].timestamp),
-    ),
-    variants: rankedVariants,
+    nodes: [...nodes.values()],
     stats: {
       cases: traces.length,
-      events: unique.length,
-      variants: variants.size,
-      handoffs,
-      medianMinutes: median(traces.map((t) => t.durationMinutes)),
       dominantShare: traces.length
         ? (rankedVariants[0]?.count ?? 0) / traces.length
         : 0,
+      events: unique.length,
+      handoffs,
+      medianMinutes: median(traces.map((t) => t.durationMinutes)),
+      variants: variants.size,
     },
+    traces: traces.sort((a, b) =>
+      (b.events[0]?.timestamp ?? "").localeCompare(a.events[0]?.timestamp ?? "")
+    ),
+    variants: rankedVariants,
   };
 }
 export function duration(minutes: number) {

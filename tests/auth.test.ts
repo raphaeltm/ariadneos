@@ -1,33 +1,36 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
 const getSession = vi.hoisted(() => vi.fn());
-vi.mock("../server/auth", () => ({
-  authConfigured: (env: { BETTER_AUTH_SECRET?: string }) =>
-    Boolean(env.BETTER_AUTH_SECRET),
+vi.mock("../server/auth.ts", () => ({
+  authConfigured: (bindings: { BETTER_AUTH_SECRET?: string }) =>
+    Boolean(bindings.BETTER_AUTH_SECRET),
   createAuth: () => ({
     api: { getSession },
     handler: () => new Response("auth handler"),
   }),
 }));
-import worker from "../server/index";
+
+import worker from "../server/index.ts";
+
 const first = vi.fn();
 const all = vi.fn().mockResolvedValue({ results: [] });
 const bind = vi.fn();
-const prepare = vi.fn(() => ({ first, bind, all }));
+const prepare = vi.fn(() => ({ all, bind, first }));
 const env = {
-  DB: { prepare },
-  BETTER_AUTH_SECRET: "configured",
   ASSETS: { fetch: vi.fn() },
+  BETTER_AUTH_SECRET: "configured",
+  DB: { prepare },
 };
 const request = (path: string, init?: RequestInit, bindings = env) =>
   worker.fetch(
     new Request(`https://ariadneos.com${path}`, init),
-    bindings as never,
+    bindings as never
   );
 beforeEach(() => {
   vi.clearAllMocks();
   getSession.mockResolvedValue(null);
   first.mockResolvedValue(null);
-  bind.mockReturnValue({ first, all });
+  bind.mockReturnValue({ all, first });
 });
 describe("Slack authentication boundary", () => {
   it("leaves health public", async () => {
@@ -41,12 +44,12 @@ describe("Slack authentication boundary", () => {
       const response = await request(
         path,
         post
-          ? { method: "POST", headers: { Origin: "https://ariadneos.com" } }
-          : undefined,
+          ? { headers: { Origin: "https://ariadneos.com" }, method: "POST" }
+          : undefined
       );
       expect(response.status).toBe(401);
       expect(prepare).not.toHaveBeenCalled();
-    },
+    }
   );
   it("fails closed when credentials are missing", async () => {
     expect(
@@ -55,14 +58,14 @@ describe("Slack authentication boundary", () => {
           ...env,
           BETTER_AUTH_SECRET: "",
         })
-      ).status,
+      ).status
     ).toBe(503);
   });
   it("allows auth callbacks without an existing session", async () => {
     expect(
       await (
         await request("/api/auth/callback/slack?error=access_denied")
-      ).text(),
+      ).text()
     ).toBe("auth handler");
     expect(getSession).not.toHaveBeenCalled();
   });
@@ -70,10 +73,10 @@ describe("Slack authentication boundary", () => {
     expect(
       (
         await request("/api/simulate", {
-          method: "POST",
           headers: { Origin: "https://evil.example" },
+          method: "POST",
         })
-      ).status,
+      ).status
     ).toBe(403);
   });
   it("uses verified account identity instead of legacy anonymous cookies", async () => {
@@ -83,7 +86,7 @@ describe("Slack authentication boundary", () => {
         await request("/api/model", {
           headers: { Cookie: "ariadne_session=attacker-selected-id" },
         })
-      ).status,
+      ).status
     ).toBe(200);
     expect(bind).toHaveBeenCalledWith("vendor", "verified-user");
     expect(bind).toHaveBeenCalledWith("verified-user");

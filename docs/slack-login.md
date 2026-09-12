@@ -1,5 +1,7 @@
 # Slack login
 
+Start with [the complete Slack/GitHub setup checklist](slack-setup.md), including bootstrap and full manifests for both environments.
+
 AriadneOS requires Slack login via Better Auth 1.7.4. Hono handles `/api/auth/*`; all other APIs except `/api/health` require a verified session. D1 stores auth records in `auth_*` tables separately from simulation records. Simulations belong to the authenticated user, not the old browser cookie. All users see the shared synthetic baseline; this is not a Slack workspace data tenancy implementation.
 
 ## Configure
@@ -25,7 +27,7 @@ References: [Better Auth Slack](https://better-auth.com/docs/authentication/slac
 Import `docs/slack-app-staging.yaml` into the Slack app manifest. This subscribes the bot to `message.channels` at `https://staging.ariadneos.com/api/slack/events`. Slack's **Incoming Webhooks** feature sends messages *into Slack*; receiving messages uses **Event Subscriptions** instead.
 
 1. Create the Slack app first using the name/bot/scopes/redirect portion of the manifest if Slack cannot verify the event URL yet.
-2. In **Basic Information → App Credentials**, copy the **Signing Secret** into the GitHub staging environment secret `SLACK_SIGNING_SECRET`. This is distinct from the Client Secret. The deployment workflow syncs it to the staging Worker.
+2. In **Basic Information → App Credentials**, copy the **Signing Secret** into the GitHub staging environment secret `SLACK_SIGNING_SECRET`. This is distinct from the Client Secret. The deployment workflow validates all four app secrets, then syncs them to the staging Worker.
 3. Deploy the branch through GitHub Actions. Migration `0004_slack_message_events.sql` creates the durable message-event table. Webhook delivery is independent of browser login and only needs the signing secret.
 4. Save the full manifest, or enable **Event Subscriptions**, enter the request URL, wait for **Verified**, and add bot event **message.channels**.
 5. **Install App to Workspace** (or reinstall to grant changed scopes), then invite `@AriadneOS` into each public channel to observe. No bot token is required by the receive-only endpoint; Slack grants delivery based on the installed bot scopes. A separate automated bot installation OAuth flow is not yet implemented.

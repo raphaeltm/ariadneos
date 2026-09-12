@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from "react";
 import { createAuthClient } from "better-auth/react";
+import { type ReactNode, useState } from "react";
 
 export const authClient = createAuthClient();
 
@@ -16,27 +16,31 @@ export default function AuthGate({ children }: { children: ReactNode }) {
     setError("");
     try {
       const result = await authClient.signIn.social({
+        callbackURL: "/app",
+        errorCallbackURL: "/app?login=failed",
         provider: "slack",
-        callbackURL: "/",
-        errorCallbackURL: "/?login=failed",
       });
-      if (result.error)
+      if (result.error) {
         setError(
-          result.error.message ?? "Unable to sign in. Please try again.",
+          result.error.message ?? "Unable to sign in. Please try again."
         );
+      }
     } catch {
       setError("Unable to reach Slack login. Please try again.");
     } finally {
       setBusy(false);
     }
   }
-  if (isPending)
+  if (isPending) {
     return (
-      <main className="login-page" aria-busy="true">
+      <main aria-busy="true" className="login-page">
         Checking your session…
       </main>
     );
-  if (session) return <>{children}</>;
+  }
+  if (session) {
+    return <>{children}</>;
+  }
   return (
     <main className="login-page">
       <section className="login-card">
@@ -46,10 +50,10 @@ export default function AuthGate({ children }: { children: ReactNode }) {
         <h1>Your work has a story.</h1>
         <p>Sign in with Slack to explore the processes behind it.</p>
         <button
-          type="button"
           className="slack-login"
           disabled={busy}
           onClick={signIn}
+          type="button"
         >
           {busy ? "Connecting…" : "Sign in with Slack"}
         </button>
@@ -80,7 +84,9 @@ export function AccountMenu() {
     setBusy(true);
     try {
       const result = await authClient.signOut();
-      if (result.error) setError("Unable to sign out. Try again.");
+      if (result.error) {
+        setError("Unable to sign out. Try again.");
+      }
     } catch {
       setError("Unable to sign out. Try again.");
     } finally {
@@ -90,10 +96,10 @@ export function AccountMenu() {
   return (
     <div className="account-menu">
       <span>{session?.user.name}</span>
-      <button type="button" disabled={busy} onClick={signOut}>
+      <button disabled={busy} onClick={signOut} type="button">
         Sign out
       </button>
-      {error && <p role="alert">{error}</p>}
+      {error ? <p role="alert">{error}</p> : null}
     </div>
   );
 }

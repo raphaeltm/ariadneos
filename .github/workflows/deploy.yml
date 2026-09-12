@@ -27,24 +27,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
+      - uses: astral-sh/ruff-action@146cd51f235777a9bc491eead18e0d5a4b05406a # v3
+        with:
+          version: '0.16.7'
+          args: --version
       - run: npm ci
-      - run: npm run lint --if-present
-      - run: npm test
-      - run: npm run typecheck
-      - run: npm run build
-      - name: Run shared repository gates when available
-        run: |
-          if [ -f scripts/check_quality.py ]; then
-            python3 scripts/check_quality.py
-          fi
-      - uses: actions/upload-artifact@v4
+        env:
+          HUSKY: '0'
+      - run: npm exec --no -- playwright install --with-deps chromium
+      - name: Run complete quality gates before deployment
+        run: npm run check:repo
+        env:
+          HUSKY: '0'
+          CI: 'true'
+          WRANGLER_SEND_METRICS: 'false'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: site-${{ github.sha }}
           path: dist
@@ -59,35 +63,35 @@ jobs:
       name: staging
       url: https://staging.ariadneos.com
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: site-${{ github.sha }}
           path: dist
+      - name: Validate required deployment secrets
+        run: npx --no-install tsx scripts/deployment-config.ts check
+        env:
+          DEPLOY_ENV: staging
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
+          SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
       - name: Apply staging migrations
         run: npx --no-install wrangler d1 migrations apply DB --env staging --remote
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      - name: Sync configured authentication secrets
-        shell: bash
-        run: |
-          node --input-type=module <<'JS'
-          import { spawnSync } from 'node:child_process';
-          const names = ['BETTER_AUTH_SECRET', 'SLACK_CLIENT_ID', 'SLACK_CLIENT_SECRET', 'SLACK_SIGNING_SECRET'];
-          const secrets = Object.fromEntries(names.filter(name => process.env[name]).map(name => [name, process.env[name]]));
-          if (Object.keys(secrets).length) {
-            const result = spawnSync('npx', ['--no-install', 'wrangler', 'secret', 'bulk', '--env', process.env.DEPLOY_ENV], { input: JSON.stringify(secrets), encoding: 'utf8', stdio: ['pipe', 'inherit', 'inherit'] });
-            if (result.status !== 0) process.exit(result.status ?? 1);
-          }
-          JS
+      - name: Sync authentication and webhook secrets
+        run: npx --no-install tsx scripts/deployment-config.ts sync
         env:
           DEPLOY_ENV: staging
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -103,7 +107,9 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - name: Verify staging revision and readiness
         run: node scripts/check-deployment.mjs https://staging.ariadneos.com staging "$GITHUB_SHA"
-      - name: Verify staging simulation and isolation
+        env:
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+      - name: Verify staging anonymous access is blocked
         run: node scripts/smoke.mjs https://staging.ariadneos.com
 
   production:
@@ -115,35 +121,35 @@ jobs:
       name: production
       url: https://ariadneos.com
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: site-${{ github.sha }}
           path: dist
+      - name: Validate required deployment secrets
+        run: npx --no-install tsx scripts/deployment-config.ts check
+        env:
+          DEPLOY_ENV: production
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
+          SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
       - name: Apply production migrations
         run: npx --no-install wrangler d1 migrations apply DB --env production --remote
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      - name: Sync configured authentication secrets
-        shell: bash
-        run: |
-          node --input-type=module <<'JS'
-          import { spawnSync } from 'node:child_process';
-          const names = ['BETTER_AUTH_SECRET', 'SLACK_CLIENT_ID', 'SLACK_CLIENT_SECRET', 'SLACK_SIGNING_SECRET'];
-          const secrets = Object.fromEntries(names.filter(name => process.env[name]).map(name => [name, process.env[name]]));
-          if (Object.keys(secrets).length) {
-            const result = spawnSync('npx', ['--no-install', 'wrangler', 'secret', 'bulk', '--env', process.env.DEPLOY_ENV], { input: JSON.stringify(secrets), encoding: 'utf8', stdio: ['pipe', 'inherit', 'inherit'] });
-            if (result.status !== 0) process.exit(result.status ?? 1);
-          }
-          JS
+      - name: Sync authentication and webhook secrets
+        run: npx --no-install tsx scripts/deployment-config.ts sync
         env:
           DEPLOY_ENV: production
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -159,6 +165,8 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - name: Verify production revision and readiness
         run: node scripts/check-deployment.mjs https://ariadneos.com production "$GITHUB_SHA"
+        env:
+          SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
       - name: Verify canonical redirect
         run: |
           node --input-type=module <<'JS'

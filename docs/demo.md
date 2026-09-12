@@ -1,12 +1,14 @@
 # Running the AriadneOS demo
 
-Live URL: **https://ariadneos.com**
+Marketing homepage: **https://ariadneos.com**
+
+Application: **https://ariadneos.com/app**
 
 This preview implements the observation → discovery → explanation loop using a synthetic organization. It has three workflows (vendor onboarding, refunds, and access requests), 72 baseline cases, and 316 stored events. The graph, variants, counts, cycle times, and evidence links are computed from those events.
 
 **Try it:** choose a workflow, inspect a node or transition, open its source events, explore a variant, and run a simulation. Each run adds six cases to your browser's workspace. Reloading preserves your observations; another browser starts with its own baseline. Ask a question to get a Workers AI explanation, or export the model as JSON.
 
-**Implemented stack:** React/Vite and React Flow/Dagre in Workers Static Assets; Hono API; Cloudflare D1; a shared TypeScript miner; Workers AI. The initial demo uses SQL migrations and D1 prepared statements directly. Queues, R2, Drizzle, Notion ingestion, live collaboration, autonomous execution, and durable Workflows remain proposed extensions, not deployed features.
+**Implemented stack:** React/Vite and React Flow/Dagre in Workers Static Assets; Hono API; Cloudflare D1; a shared TypeScript miner; Workers AI. The initial demo uses SQL migrations and D1 prepared statements directly. Queues, R2, Drizzle, Slack ingestion, live collaboration, autonomous execution, and durable Workflows remain proposed extensions, not deployed features.
 
 ## Local development
 
@@ -18,7 +20,7 @@ npm run db:local
 npm run dev
 ```
 
-Open the URL printed by Wrangler (normally `http://localhost:8787`). `npm run dev` builds the frontend before starting the Worker. For frontend hot reload, keep the Worker running and run `npm run dev:ui` in another terminal; Vite proxies `/api` to the local Worker.
+Open `/app` on the URL printed by Wrangler (normally `http://localhost:8787/app`). The root `/` is the marketing homepage. `npm run dev` builds the frontend before starting the Worker. For frontend hot reload, keep the Worker running and run `npm run dev:ui` in another terminal; Vite proxies `/api` to the local Worker.
 
 The AI binding calls Cloudflare even during local development. Authenticate Wrangler or supply `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in your shell. No token is embedded in the frontend or repository. If inference fails, the UI explicitly labels its response as a computed statistical summary. A failed AI call never prevents browsing or mining.
 
@@ -71,7 +73,7 @@ Each browser session allows five simulation runs. Atomic D1 counters cap shared 
 
 A daily Worker cron removes sessions older than 24 hours, their events, and old usage counters. Consequently, temporary data can remain for up to about 48 hours. Baseline observations are never deleted by cleanup. Closing the browser does not immediately delete data. Workers observability is enabled; inspect ingestion or inference failures with `npx wrangler tail`.
 
-The miner groups explicit cases, deduplicates event IDs, orders by timestamp/sequence, counts adjacent activities, and preserves event pairs for every transition. Probabilities are conditional on an observed next event. Demo traces are complete; the system does not infer causality, concurrency, real process compliance, or execution permission. Notion fidelity and inferred case correlation are unimplemented and must be evaluated independently when a live connector is added.
+The miner groups explicit cases, deduplicates event IDs, orders by timestamp/sequence, counts adjacent activities, and preserves event pairs for every transition. Probabilities are conditional on an observed next event. Demo traces are complete; the system does not infer causality, concurrency, real process compliance, or execution permission. Slack observation fidelity and inferred case correlation are unimplemented and must be evaluated independently when a live connector is added.
 
 ## Deployment verification — 2026-09-12
 
@@ -83,7 +85,7 @@ Deployed Worker version `3bda34ca-15e0-4b8f-86e9-f219287c8fd8` to the original w
 - Mobile verification at 390 × 844 confirmed no horizontal page overflow.
 - Workers AI returned real model-generated answers locally and on the live endpoint. The live refund answer correctly identified the dominant path and James Wilson in Finance as the actor issuing refunds.
 
-Not yet validated: long-term traffic/load, a scheduled cleanup observed in production, live Notion ingestion, or real organization permissions. This is a working synthetic-data demo.
+Not yet validated: long-term traffic/load, a scheduled cleanup observed in production, live Slack ingestion, or real organization permissions. This is a working synthetic-data demo.
 
 
 ## Custom domain

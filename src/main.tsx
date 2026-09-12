@@ -1,13 +1,34 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App";
-import AuthGate from "./AuthGate";
-import "@xyflow/react/dist/style.css";
+import React, { lazy, Suspense } from "react";
+import { createRoot } from "react-dom/client";
+import AuthGate from "./auth-gate.tsx";
+import Homepage from "./homepage.tsx";
 import "./style.css";
-ReactDOM.createRoot(document.getElementById("root")!).render(
+
+const App = lazy(() => import("./app.tsx"));
+const isApp = /^\/app(?:\/|$)/.test(window.location.pathname);
+document.title = isApp
+  ? "AriadneOS — Process explorer"
+  : "AriadneOS — Follow the work in Slack";
+const root = document.getElementById("root");
+if (!root) {
+  throw new Error("Missing application root");
+}
+createRoot(root).render(
   <React.StrictMode>
-    <AuthGate>
-      <App />
-    </AuthGate>
-  </React.StrictMode>,
+    {isApp ? (
+      <Suspense
+        fallback={
+          <div className="loading-state" role="status">
+            Loading your workspace…
+          </div>
+        }
+      >
+        <AuthGate>
+          <App />
+        </AuthGate>
+      </Suspense>
+    ) : (
+      <Homepage />
+    )}
+  </React.StrictMode>
 );

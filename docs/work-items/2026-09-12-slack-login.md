@@ -1,3 +1,24 @@
+# Better Auth and Slack message ingestion
+
+Status: in-review
+Owner: Codex for Raphael
+Source: User requested required Slack login, then live webhook message storage and staging deployment.
+Branch: sam/look-agents-working-betterauth-mqjv37
+
+## Intent
+Implement Slack authentication and persistent message observations on the existing Cloudflare stack.
+
+## Acceptance criteria
+- Verify login on staging with real Slack credentials.
+- Receive signed Slack messages durably and deduplicate retries.
+
+## Decisions and rationale
+- Better Auth handles identity; Slack signatures authenticate server event delivery.
+- Store message changes as an append-only history separate from synthetic simulations.
+
+## Changes
+The following historical notes record implementation and verification milestones.
+
 # Better Auth with required Slack login
 
 - Task: Configure BetterAuth with Slack login integration
@@ -20,3 +41,14 @@ Staging Actions run 34691134416 deployed revision 7e1b763; live `/api/health` co
 User expanded scope to webhook delivery and storing messages as they arrive. Added `/api/slack/events` before browser-only Origin/session middleware with independent raw-body HMAC verification, five-minute replay protection, signed URL verification, and a 1 MiB body bound. Acknowledges message events only after D1 persistence; failed writes allow Slack retries. Migration 0004 stores an append-only observation history of messages/edits/deletions, keyed by workspace and Slack event ID, isolated from simulation data. No read endpoint is exposed without a workspace authorization design. Added full staging manifest with `message.channels` and workflow synchronization of SLACK_SIGNING_SECRET.
 
 Validation includes real SQLite schema/storage tests for duplicate retries, workspace separation, out-of-order edits/deletions, bad/stale signatures, missing configuration, signed challenges, payload limits, and storage failures. Staging webhook activation requires the Slack Signing Secret, manifest URL verification, workspace app installation, and inviting the bot into public channels. No private-message access or automated bot installation flow added.
+
+
+## Validation
+- Prior implementation: 26 tests, build, migrations, and Worker dry-run passed; staging revision db80797 and message table verified.
+- Current integration/audit validation is recorded in 2026-09-12-slack-deployment-config.md.
+
+## Risks and rollback
+- Slack app secrets and real provider acceptance tests remain outstanding. Revert Worker code to roll back; keep additive auth/message tables and signing secrets stable.
+
+## Next steps
+- Complete GitHub environment audit and integration with main, then supply Slack credentials and verify login/event delivery.

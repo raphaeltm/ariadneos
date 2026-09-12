@@ -12,8 +12,10 @@ import { simulate } from "../shared/simulation.ts";
 
 interface Env {
   AI: Ai;
+  APP_ENV: string;
   ASSETS: Fetcher;
   DB: D1Database;
+  RELEASE_SHA: string;
 }
 const app = new Hono<{ Bindings: Env }>();
 app.use("*", async (c, next) => {
@@ -77,7 +79,13 @@ async function quota(db: D1Database, kind: string, limit: number) {
 }
 app.get("/api/health", async (c) => {
   await c.env.DB.prepare("SELECT 1").first();
-  return c.json({ ok: true, source: "simulation", storage: "D1" });
+  return c.json({
+    environment: c.env.APP_ENV ?? "local",
+    ok: true,
+    revision: c.env.RELEASE_SHA ?? "local",
+    source: "simulation",
+    storage: "D1",
+  });
 });
 app.get("/api/model", async (c) => {
   const workflow = c.req.query("workflow") ?? "vendor";

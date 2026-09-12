@@ -26,8 +26,9 @@ def main():
     }
     env["WRANGLER_SEND_METRICS"] = "false"
     with tempfile.TemporaryDirectory(prefix="ariadneos-smoke-") as directory:
-        config = json.loads(Path("wrangler.jsonc").read_text())
+        config = json.loads(subprocess.check_output(["node", "scripts/read-wrangler-config.mjs"]))
         config.pop("routes", None)
+        config.pop("env", None)
         config.pop(
             "ai", None
         )  # AI success requires remote credentials; unit tests cover boundaries.

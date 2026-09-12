@@ -39,7 +39,7 @@
       }
     },
     {
-      "includes": ["scripts/smoke.mjs"],
+      "includes": ["scripts/smoke.mjs", "scripts/check-deployment.mjs"],
       "linter": {
         "rules": {
           "suspicious": {

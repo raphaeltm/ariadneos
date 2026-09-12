@@ -14,7 +14,7 @@ The longer-term idea is **process mining as context engineering for agents**. Ra
 
 A basic implementation is now included: interactive process maps, variants, event evidence, persistent simulations, JSON agent context, and Workers AI explanations. It uses a synthetic organization; Notion is not connected yet.
 
-See [demo setup, deployment, and verification](docs/demo.md).
+See [demo setup and verification](docs/demo.md) and [automatic staging/production deployment](docs/deployment.md).
 
 ```sh
 npm ci
@@ -137,3 +137,8 @@ A realistic hackathon demo would be:
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) for PR checks, review gates, and deployment evidence. Humans and agents keep decisions, validation, and handoffs in [work items](docs/work-items/README.md); agents start with [AGENTS.md](AGENTS.md).
 See the [proposed Cloudflare stack](docs/cloudflare-stack.md) for researched technology choices, connector constraints, and a one-day implementation plan.
+
+## Research
+
+See the [research index](research/README.md) for integration explorations,
+including [Exa and CopilotKit](research/exa-copilotkit/README.md).

@@ -15,7 +15,7 @@ Enforce consistent formatting, linting, type safety, tests, and secure contribut
 - Agent instructions explain the repair/verify/handoff loop and prohibit weakening gates to pass.
 
 ## Decisions and rationale
-- Stack PR 2 on demo PR 3 so app checks are exercised against real code without duplicating application development. Merge PR 3 first and retarget PR 2 to main.
+- Initially stacked on demo PR 3; after PR 3 merged, retargeted PR 2 to main and integrated b199b1e, including the deployment pipeline and research records.
 - Use Ultracite's Biome core/React presets as the primary JS/TS/CSS/JSON formatter and linter; keep TypeScript and behavior tests as independent checks.
 
 ## Changes
@@ -33,7 +33,12 @@ Enforce consistent formatting, linting, type safety, tests, and secure contribut
 
 ## Risks and rollback
 - Formatting will touch existing app files. Review behavior fixes separately from mechanical changes.
-- No deployment is requested or performed. Revert tooling/fixes to restore the previous development setup.
+- No deployment command is run manually. The existing main-branch deployment pipeline automatically publishes staging for eligible PRs after full validation; production remains gated on main. Revert tooling/fixes to restore the previous development setup.
 
 ## Next steps
-- Maintainer: merge demo PR 3 first, retarget PR 2 to main, review tooling and application fixes, then enable documented required checks.
+- Maintainer: review PR 2 against main, inspect CI/security findings and staging results, then enable documented required checks.
+
+## Main integration
+- Preserved staging/production environment variables and deployment scripts introduced on main; its validation job now installs Ruff/Chromium and runs the full suite before publishing assets. Pinned the deployment action references.
+- Applied the same standalone-probe lint exceptions to the deployment readiness script and used jsonc-parser to read Wrangler comments/trailing commas safely in isolated tests.
+- Normalized the merged research work-item headings without changing its findings.

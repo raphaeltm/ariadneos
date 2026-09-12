@@ -879,6 +879,13 @@ async function modelEditResponse(
   if ("response" in graph) {
     return graph.response;
   }
+  await commitGraphJournal(
+    c.env,
+    c.env.DB,
+    channelScope,
+    graph,
+    `graph-edit:${edit.id}`
+  );
   const designed = buildGraphView({
     data: emptyScopedData(),
     effectiveWorkflow: effective.workflow,
@@ -2237,12 +2244,14 @@ async function commitGraphJournal(
     opKey: `rebuild:${requestId ?? crypto.randomUUID()}`,
     payload: {
       base_revision: graph.revision,
+      conformance: graph.conformance,
       edges_added: graph.edges,
       edges_removed: [],
       edges_updated: [],
       nodes_added: graph.nodes,
       nodes_removed: [],
       nodes_updated: [],
+      replace: true,
       revision: graph.revision,
       view_key: graph.key,
     },

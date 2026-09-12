@@ -43,6 +43,11 @@ function channelCoordinatorReadiness(env: Env) {
   }
   return configuredChannelScope(env) ? "ready" : "unconfigured";
 }
+function activeDeploymentTarget(env: Env) {
+  return env.APP_ENV === "staging" || env.APP_ENV === "production"
+    ? env.APP_ENV
+    : "local";
+}
 
 app.use("*", async (c, next) => {
   const url = new URL(c.req.url);
@@ -129,6 +134,62 @@ app.use("/api/*", async (c, next) => {
   }
   c.set("userId", session.user.id);
   return await next();
+});
+app.get("/api/settings", (c) => {
+  const scope = configuredChannelScope(c.env);
+  const activeTarget = activeDeploymentTarget(c.env);
+  return c.json({
+    auth: {
+      provider: "Slack",
+      status: authConfigured(c.env) ? "configured" : "missing",
+    },
+    channelCoordinator: channelCoordinatorReadiness(c.env),
+    deployment: {
+      activeTarget,
+      controls: [
+        {
+          enabled: true,
+          id: "refresh",
+          label: "Refresh runtime",
+        },
+        {
+          enabled: true,
+          id: "export",
+          label: "Export model",
+        },
+        {
+          enabled: true,
+          href: "https://github.com/raphaeltm/ariadneos/actions/workflows/deploy.yml",
+          id: "actions",
+          label: "Open deploy workflow",
+        },
+      ],
+      targets: [
+        {
+          database: "ariadneos-staging",
+          domain: "staging.ariadneos.com",
+          environment: "staging",
+          selected: activeTarget === "staging",
+          worker: "ariadneos-staging",
+        },
+        {
+          database: "ariadneos-demo",
+          domain: "ariadneos.com",
+          environment: "production",
+          selected: activeTarget === "production",
+          worker: "ariadneos-demo",
+        },
+      ],
+    },
+    environment: activeTarget,
+    generatedAt: new Date().toISOString(),
+    releaseSha: c.env.RELEASE_SHA ?? "local",
+    slack: {
+      channel: scope?.channel ?? null,
+      status: scope ? "scoped" : "unconfigured",
+      workspaceId: scope?.workspaceId ?? null,
+    },
+  });
 });
 app.get("/api/model", async (c) => {
   const workflow = c.req.query("workflow") ?? "vendor";

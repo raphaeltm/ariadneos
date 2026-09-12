@@ -91,7 +91,17 @@ test("exposes shell navigation, project switching, and mobile layout", async ({
   ).toBeVisible();
   await page.getByRole("button", { exact: true, name: "Settings" }).click();
   await expect(
-    page.getByRole("heading", { name: "Demo workspace controls" })
+    page.getByRole("heading", { name: "Workspace configuration" })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Deployment configuration" })
+  ).toBeVisible();
+  await expect(page.getByText("staging.ariadneos.com")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Refresh runtime" })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Deploy workflow" })
   ).toBeVisible();
   await page.getByLabel("Switch project").selectOption("refund");
   await expect(

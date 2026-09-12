@@ -7,12 +7,17 @@ import {
   ArrowUpRight,
   Check,
   Clock3,
+  Cloud,
+  ExternalLink,
   GitBranch,
   Layers3,
   LoaderCircle,
   Play,
+  RefreshCw,
   Search,
   Send,
+  ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Waypoints,
   X,
@@ -61,6 +66,37 @@ interface Answer {
   evidence: string[];
   mode: "ai" | "summary";
   notice?: string;
+}
+interface WorkspaceSettings {
+  auth: {
+    provider: string;
+    status: "configured" | "missing";
+  };
+  channelCoordinator: "ready" | "unbound" | "unconfigured";
+  deployment: {
+    activeTarget: "local" | "production" | "staging";
+    controls: {
+      enabled: boolean;
+      href?: string;
+      id: "actions" | "export" | "refresh";
+      label: string;
+    }[];
+    targets: {
+      database: string;
+      domain: string;
+      environment: "production" | "staging";
+      selected: boolean;
+      worker: string;
+    }[];
+  };
+  environment: "local" | "production" | "staging";
+  generatedAt: string;
+  releaseSha: string;
+  slack: {
+    channel: string | null;
+    status: "scoped" | "unconfigured";
+    workspaceId: string | null;
+  };
 }
 async function api<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(
@@ -115,6 +151,10 @@ export default function App() {
   const [asking, setAsking] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [curationEdits, setCurationEdits] = useState<CurationDraft[]>([]);
+  const [settings, setSettings] = useState<WorkspaceSettings | null>(null);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsError, setSettingsError] = useState("");
+  const [settingsRefresh, setSettingsRefresh] = useState(0);
   const currentWorkflow = useRef(workflow);
   currentWorkflow.current = workflow;
   // biome-ignore lint/correctness/useExhaustiveDependencies: Refresh intentionally invalidates this request after a simulation.
@@ -148,6 +188,30 @@ export default function App() {
       active = false;
     };
   }, [workflow, refresh]);
+  useEffect(() => {
+    let active = true;
+    setSettingsLoading(true);
+    setSettingsError("");
+    api<WorkspaceSettings>(`/api/settings?refresh=${settingsRefresh}`)
+      .then((result) => {
+        if (active) {
+          setSettings(result);
+        }
+      })
+      .catch((e) => {
+        if (active) {
+          setSettingsError((e as Error).message);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setSettingsLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [settingsRefresh]);
   async function run() {
     setBusy(true);
     setError("");
@@ -374,11 +438,13 @@ export default function App() {
             handleUndoCuration={handleUndoCuration}
             model={model}
             onAbout={() => setInfo(true)}
+            onExport={exportModel}
             onGraphSelect={(selected) => {
               setSelection(selected);
               setCaseId(undefined);
               setShellView("inspector");
             }}
+            onRefreshSettings={() => setSettingsRefresh((x) => x + 1)}
             onReload={() => setRefresh((x) => x + 1)}
             question={question}
             search={search}
@@ -390,6 +456,9 @@ export default function App() {
             setSearch={setSearch}
             setSelection={setSelection}
             setTab={setTab}
+            settings={settings}
+            settingsError={settingsError}
+            settingsLoading={settingsLoading}
             tab={tab}
             workflow={workflow}
             workspace={workspace}
@@ -480,7 +549,9 @@ interface LoadedWorkspaceProps {
   handleUndoCuration: () => void;
   model: ProcessModel;
   onAbout: () => void;
+  onExport: () => void;
   onGraphSelect: (selection: Selection) => void;
+  onRefreshSettings: () => void;
   onReload: () => void;
   question: string;
   search: string;
@@ -492,6 +563,9 @@ interface LoadedWorkspaceProps {
   setSearch: (value: string) => void;
   setSelection: (value: Selection | undefined) => void;
   setTab: (value: string) => void;
+  settings: WorkspaceSettings | null;
+  settingsError: string;
+  settingsLoading: boolean;
   tab: string;
   workflow: WorkflowId;
   workspace: string;
@@ -505,7 +579,12 @@ function LoadedWorkspace(props: LoadedWorkspaceProps) {
         <SettingsPanel
           data={props.data}
           onAbout={props.onAbout}
+          onExport={props.onExport}
+          onRefreshSettings={props.onRefreshSettings}
           onReload={props.onReload}
+          settings={props.settings}
+          settingsError={props.settingsError}
+          settingsLoading={props.settingsLoading}
           workflow={props.workflow}
           workspace={props.workspace}
         />
@@ -1182,29 +1261,56 @@ function SettingsPanel({
   workflow,
   workspace,
   onAbout,
+  onExport,
   onReload,
+  onRefreshSettings,
+  settings,
+  settingsError,
+  settingsLoading,
 }: {
   data: Snapshot;
   workflow: WorkflowId;
   workspace: string;
   onAbout: () => void;
+  onExport: () => void;
   onReload: () => void;
+  onRefreshSettings: () => void;
+  settings: WorkspaceSettings | null;
+  settingsError: string;
+  settingsLoading: boolean;
 }) {
   const workspaceLabel = workspace === "demo" ? "Acme Studio" : workspace;
+  const deployWorkflow = settings?.deployment.controls.find(
+    (control) => control.id === "actions"
+  );
   return (
     <section className="settings-panel">
-      <div>
-        <div className="section-kicker">WORKSPACE SETTINGS</div>
-        <h2>Demo workspace controls</h2>
-        <p>
-          Scope, source, and navigation state for the current process explorer.
-        </p>
+      <div className="settings-heading">
+        <div>
+          <div className="section-kicker">WORKSPACE SETTINGS</div>
+          <h2>Workspace configuration</h2>
+          <p>
+            Scope, source, deployment target, and runtime controls for the
+            current process explorer.
+          </p>
+        </div>
+        <span className={`settings-health ${settings?.environment ?? "local"}`}>
+          <span className="online-dot" />
+          {settingsLoading
+            ? "Checking runtime"
+            : `Runtime ${settings?.environment ?? "local"}`}
+        </span>
       </div>
       <div className="settings-grid">
         <article>
           <span>Workspace</span>
           <strong>{workspaceLabel}</strong>
-          <small>Synthetic observations · Slack auth gated</small>
+          <small>
+            {settings?.slack.workspaceId
+              ? `Slack ${settings.slack.workspaceId}`
+              : "Demo scope"}{" "}
+            · Slack auth gated
+          </small>
         </article>
         <article>
           <span>Project</span>
@@ -1219,16 +1325,105 @@ function SettingsPanel({
           <small>{data.remainingRuns} simulation runs left</small>
         </article>
         <article>
-          <span>Client state</span>
-          <strong>Scoped updates</strong>
+          <span>Slack events</span>
+          <strong>{settings?.slack.status ?? "checking"}</strong>
           <small>
-            Selection and view state stay inside the active workspace
+            {settings?.slack.channel
+              ? `Channel ${settings.slack.channel}`
+              : "No channel scope configured"}
+          </small>
+        </article>
+        <article>
+          <span>Coordinator</span>
+          <strong>{settings?.channelCoordinator ?? "checking"}</strong>
+          <small>Durable Object schedule and stream coordination</small>
+        </article>
+        <article>
+          <span>Release</span>
+          <strong>{shortSha(settings?.releaseSha)}</strong>
+          <small>
+            {settings?.generatedAt
+              ? `Observed ${time(settings.generatedAt)}`
+              : "Waiting for runtime settings"}
           </small>
         </article>
       </div>
+      <div className="deployment-panel">
+        <div className="deployment-heading">
+          <span className="deployment-icon">
+            <Cloud size={18} />
+          </span>
+          <div>
+            <h3>Deployment configuration</h3>
+            <p>
+              GitHub Actions deploys staging and production to separate
+              Cloudflare Workers and D1 databases.
+            </p>
+          </div>
+        </div>
+        {settingsError ? (
+          <div className="settings-warning" role="alert">
+            <ShieldCheck size={16} />
+            {settingsError}
+          </div>
+        ) : null}
+        <div className="deployment-targets">
+          {(settings?.deployment.targets ?? []).map((target) => (
+            <article
+              className={target.selected ? "selected" : ""}
+              key={target.environment}
+            >
+              <span>{target.environment}</span>
+              <strong>{target.domain}</strong>
+              <small>
+                Worker {target.worker} · D1 {target.database}
+              </small>
+              {target.selected ? <em>Active runtime</em> : null}
+            </article>
+          ))}
+          {!settings && (
+            <article>
+              <span>Configuration</span>
+              <strong>{settingsLoading ? "Loading" : "Unavailable"}</strong>
+              <small>Runtime deployment metadata has not loaded yet.</small>
+            </article>
+          )}
+        </div>
+      </div>
       <div className="settings-actions">
+        <button
+          className="button secondary"
+          disabled={settingsLoading}
+          onClick={onRefreshSettings}
+          type="button"
+        >
+          {settingsLoading ? (
+            <LoaderCircle className="spin" size={14} />
+          ) : (
+            <RefreshCw size={14} />
+          )}
+          Refresh runtime
+        </button>
         <button className="button secondary" onClick={onReload} type="button">
+          <SlidersHorizontal size={14} />
           Reload workspace
+        </button>
+        <button className="button secondary" onClick={onExport} type="button">
+          <ArrowDownToLine size={14} />
+          Export model
+        </button>
+        <button
+          className="button secondary"
+          disabled={!deployWorkflow?.href}
+          onClick={() => {
+            if (deployWorkflow?.href) {
+              window.open(deployWorkflow.href, "_blank", "noopener,noreferrer");
+            }
+          }}
+          type="button"
+        >
+          <ExternalLink size={14} />
+          Deploy workflow
         </button>
         <button className="button secondary" onClick={onAbout} type="button">
           About this demo <ArrowUpRight size={14} />
@@ -1236,6 +1431,13 @@ function SettingsPanel({
       </div>
     </section>
   );
+}
+
+function shortSha(value: string | undefined) {
+  if (!value || value === "local") {
+    return "local";
+  }
+  return value.slice(0, 7);
 }
 
 function filterEvents(

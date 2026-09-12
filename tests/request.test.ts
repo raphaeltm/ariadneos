@@ -55,6 +55,17 @@ describe("request boundaries", () => {
       (await request("/api/ask", { question: "x".repeat(5000) })).status
     ).toBe(413);
   });
+  it("rejects malformed agent thread identifiers before storage", async () => {
+    expect(
+      (
+        await request("/api/ask", {
+          question: "What changed?",
+          thread_id: "../other-thread",
+          workflow: "vendor",
+        })
+      ).status
+    ).toBe(400);
+  });
   it("preserves path and query on canonical redirects", async () => {
     const response = await worker.fetch(
       new Request("http://www.ariadneos.com/api/health?check=1"),

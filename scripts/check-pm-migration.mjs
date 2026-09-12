@@ -110,6 +110,8 @@ function assertPmTables(configPath, persistDir) {
   );
   const tableNames = rows.map((row) => row.name);
   for (const required of [
+    "pm_agent_message",
+    "pm_agent_thread",
     "pm_activity",
     "pm_graph_revision",
     "pm_graph_view",

@@ -1,9 +1,10 @@
 # Persist designed-graph edits
 
-Status: in-progress
+Status: in-review
 Owner: Codex / SAM task 01M2AYXZG5DDC7HWK19F38ZF7J
 Source: User request to implement GitHub issue #34 as “Persist designed-graph edits through D1 with revision history.” Current GitHub issue #34 is titled “Expose graph repair toolbar and an undoable reconciliation diff,” while issue #33 contains the matching edit persistence/API scope. This work follows the user and SAM task scope and will reference the mismatch for reviewers.
 Branch: sam/implement-github-issue-34-38zf7j
+PR: https://github.com/raphaeltm/ariadneos/pull/75
 
 ## Intent
 Add D1-backed designed-graph edit persistence for scoped workflow edits, keep immutable authored KB data as the base model, reduce an ordered audit log into the effective designed graph, and return revisioned graph/conformance responses through authenticated process APIs.
@@ -46,3 +47,4 @@ Add D1-backed designed-graph edit persistence for scoped workflow edits, keep im
 
 ## Next steps
 - Open the PR, monitor CI, and merge only when required checks are green. Staging verification is intentionally skipped per user request for this time-critical task.
+- Monitor PR #75 checks and merge only when required checks are green.

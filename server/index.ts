@@ -30,17 +30,20 @@ import {
 import { type AuthEnv, authConfigured, createAuth } from "./auth.ts";
 import { ChannelCoordinator as ChannelCoordinatorClass } from "./channel-coordinator.ts";
 import { processRoutes } from "./routes/process.ts";
+import { simulationRoutes } from "./routes/simulation.ts";
 import {
   type ChannelCoordinatorEnv,
   configuredChannelScope,
   wakeChannelCoordinator,
 } from "./runtime/channel.ts";
 import { type SlackEventsEnv, slackEvents } from "./slack-events.ts";
+import type { SlackPostEnv } from "./slack/post.ts";
 
 interface Env
   extends AgentModelEnv,
     AuthEnv,
     SlackEventsEnv,
+    SlackPostEnv,
     ChannelCoordinatorEnv {
   AI: Ai;
   APP_ENV: string;
@@ -974,6 +977,7 @@ app.post("/api/ask", async (c) => {
     });
   }
 });
+app.route("/api", simulationRoutes);
 app.route("/api", processRoutes);
 app.all("/api/*", (c) => c.json({ error: "Not found." }, 404));
 app.get("*", (c) => c.env.ASSETS.fetch(c.req.raw));

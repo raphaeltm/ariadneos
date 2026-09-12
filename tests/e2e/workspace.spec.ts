@@ -9,7 +9,7 @@ const EVIDENCE = /Inspect .* source events/;
 test("opens the dialog, contains focus, and restores it on Escape", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto("/app");
   const opener = page.getByRole("button", { name: "About this demo" });
   await opener.click();
   const dialog = page.getByRole("dialog");
@@ -35,7 +35,7 @@ test("refreshes persisted simulation results and exposes evidence", async ({
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto("/");
+  await page.goto("/app");
   await expect(page.getByRole("heading", { name: VENDOR })).toBeVisible();
   const cases = page
     .locator(".stat")

@@ -34,7 +34,7 @@ Serve the existing application at https://ariadneos.com with managed HTTPS and a
 - HTTP apex, HTTPS www, and HTTP www returned 308 to the HTTPS apex, preserving `/api/health?domain=check` (or the tested root query).
 - `node scripts/smoke.mjs https://ariadneos.com` passed all checks, including persistence, session isolation, graph evidence, validation, and limits.
 - The first www lookup returned NXDOMAIN during propagation; a later normal DNS/TLS request verified the redirect successfully.
-- Browser verification is recorded below.
+- Browser opened https://ariadneos.com, rendered the process graph, and reported no browser errors.
 
 ## Risks and rollback
 - DNS/certificate activation can take time. The workers.dev URL remains available.

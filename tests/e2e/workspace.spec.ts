@@ -82,6 +82,46 @@ test("refreshes persisted simulation results and exposes evidence", async ({
   expect(errors).toEqual([]);
 });
 
+test("auto-plays the guided demo walkthrough and supports beat jumps", async ({
+  page,
+}) => {
+  await page.goto("/app");
+  const cases = page
+    .locator(".stat")
+    .filter({ hasText: CASE_COUNT })
+    .locator(".stat-value");
+  await expect(cases).not.toHaveText("");
+  const initialCases = Number(await cases.textContent());
+  await page
+    .getByRole("button", { exact: true, name: "Start walkthrough" })
+    .click();
+  await expect(
+    page.getByText("Open on the process that people think they run")
+  ).toBeVisible();
+  await page.keyboard.press("2");
+  await expect(
+    page.getByText("Let the Slack-shaped workflow unfold")
+  ).toBeVisible();
+  await expect(page.getByText(UPDATED)).toBeVisible();
+  await expect(cases).toHaveText(String(initialCases + 6));
+  await page.keyboard.press("5");
+  await expect(
+    page.getByText("Claims stay attached to evidence")
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: EVIDENCE })).toBeVisible();
+  await page.keyboard.press("6");
+  await expect(
+    page.getByText("The same workflow now has visible paths")
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "The ways this process unfolds" })
+  ).toBeVisible();
+  await page.keyboard.press("Space");
+  await expect(
+    page.getByRole("button", { exact: true, name: "Resume walkthrough" })
+  ).toBeVisible();
+});
+
 test("exposes shell navigation, project switching, and mobile layout", async ({
   page,
 }) => {

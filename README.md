@@ -8,6 +8,18 @@ AriadneOS observes **actors, actions, artifacts, and interactions**, then applie
 
 The longer-term idea is **process mining as context engineering for agents**. Rather than giving an agent a giant static prompt describing the company, AriadneOS can provide the relevant slice of organizational context for the task at hand — and eventually allow an agent to execute or reproduce workflows that it has observed.
 
+## Working preview
+
+A basic implementation is now included: interactive process maps, variants, event evidence, persistent simulations, JSON agent context, and Workers AI explanations. It uses a synthetic organization; Notion is not connected yet.
+
+See [demo setup, deployment, and verification](docs/demo.md).
+
+```sh
+npm ci
+npm run db:local
+npm run dev
+```
+
 ## Conceptual flow
 
 ```text

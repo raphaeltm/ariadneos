@@ -6,10 +6,15 @@
   "workers_dev": true,
   "dev": { "host": "localhost" },
   "compatibility_flags": ["nodejs_compat"],
-  "vars": { "BETTER_AUTH_URL": "https://ariadneos.com" },
   "routes": [
-    { "pattern": "ariadneos.com", "custom_domain": true },
-    { "pattern": "www.ariadneos.com", "custom_domain": true },
+    {
+      "pattern": "ariadneos.com",
+      "custom_domain": true,
+    },
+    {
+      "pattern": "www.ariadneos.com",
+      "custom_domain": true,
+    },
   ],
   "assets": {
     "directory": "./dist",
@@ -25,7 +30,82 @@
       "migrations_dir": "migrations",
     },
   ],
-  "ai": { "binding": "AI" },
-  "observability": { "enabled": true },
-  "triggers": { "crons": ["17 3 * * *"] },
+  "ai": {
+    "binding": "AI",
+  },
+  "observability": {
+    "enabled": true,
+  },
+  "triggers": {
+    "crons": ["17 3 * * *"],
+  },
+  "vars": {
+    "APP_ENV": "production",
+    "BETTER_AUTH_URL": "https://ariadneos.com",
+    "RELEASE_SHA": "local",
+  },
+  "env": {
+    "staging": {
+      "name": "ariadneos-staging",
+      "workers_dev": true,
+      "routes": [
+        {
+          "pattern": "staging.ariadneos.com",
+          "custom_domain": true,
+        },
+      ],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "ariadneos-staging",
+          "database_id": "157ed4f8-e4bd-4ce4-9282-a1e0702ba08b",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "ai": {
+        "binding": "AI",
+      },
+      "vars": {
+        "APP_ENV": "staging",
+        "BETTER_AUTH_URL": "https://staging.ariadneos.com",
+        "RELEASE_SHA": "local",
+      },
+      "triggers": {
+        "crons": ["27 3 * * *"],
+      },
+    },
+    "production": {
+      "name": "ariadneos-demo",
+      "workers_dev": true,
+      "routes": [
+        {
+          "pattern": "ariadneos.com",
+          "custom_domain": true,
+        },
+        {
+          "pattern": "www.ariadneos.com",
+          "custom_domain": true,
+        },
+      ],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "ariadneos-demo",
+          "database_id": "ac5322ab-e51d-4d27-b4dc-5c69b6a8e979",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "ai": {
+        "binding": "AI",
+      },
+      "vars": {
+        "APP_ENV": "production",
+        "BETTER_AUTH_URL": "https://ariadneos.com",
+        "RELEASE_SHA": "local",
+      },
+      "triggers": {
+        "crons": ["17 3 * * *"],
+      },
+    },
+  },
 }

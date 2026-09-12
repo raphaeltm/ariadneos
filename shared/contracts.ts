@@ -1,3 +1,14 @@
+import type {
+  AgentEvent,
+  Conformance,
+  DesignedModel,
+  MessageRef,
+  PipelineEvent,
+  ProcessEdge,
+  WorkflowLink,
+  WorkspaceDto,
+} from "./process.ts";
+
 export type EntityId =
   | ActivityId
   | ArtifactId
@@ -449,6 +460,28 @@ export interface Snapshot {
   messages: Message[];
   sessions: ProcessSession[];
   steps: Step[];
+}
+
+export type {
+  AgentEvent as Spec08AgentEvent,
+  Conformance as Spec08Conformance,
+  DesignedModel as Spec08DesignedModel,
+  MessageRef as Spec08MessageRef,
+  PipelineEvent as Spec08PipelineEvent,
+  ProcessEdge as Spec08DesignedEdge,
+  WorkflowLink as Spec08WorkflowLink,
+  WorkspaceDto as Spec08Workspace,
+} from "./process.ts";
+
+export interface Spec08CompatibilityBridge {
+  agentEvents?: AgentEvent[];
+  conformance?: Conformance;
+  designed?: DesignedModel;
+  designedEdges?: ProcessEdge[];
+  links?: WorkflowLink[];
+  messages?: MessageRef[];
+  pipelineEvents?: PipelineEvent[];
+  workspace?: WorkspaceDto;
 }
 
 export type Command =

@@ -1,6 +1,6 @@
 # Final integration pass
 
-Status: ready-for-review
+Status: in-review
 Owner: Codex via SAM task 01M2B2RYWXWZSTPSXMMXEGY1VP for Raphael
 Source: User requested a priority final integration pass after independently implemented issues #14-#44, wiring the merged frontend, backend APIs, conformance, curation, demo mode and agent runtime into one working `/app` product.
 Branch: sam/priority-final-integration-pass-egy1vp
@@ -25,7 +25,7 @@ Bring the currently merged Roman-spec features together on the latest `main`: fi
 - Store non-secret local/staging/production demo Slack scope defaults in `wrangler.jsonc`; without these values the live snapshot route has no configured channel scope in the local worker harness.
 
 ## Changes
-- Replaced the `/app` placeholder with a live app shell that loads settings, fetches `/api/snapshot`, subscribes to `/api/stream`, renders the React Flow process graph, opens the inspector with evidence and conformance details, exposes curation accept/reject controls, shows activity evidence, switches workspaces and routes settings through the shell.
+- Replaced the `/app` placeholder with a live app shell that loads settings, fetches `/api/snapshot`, subscribes to `/api/stream`, renders the React Flow process graph, opens the inspector with evidence and conformance details, exposes curation accept/reject controls, shows activity evidence, switches workspaces and routes settings through the shell. After merging the newer main branch, kept the live API path integrated with the guided demo walkthrough, how-it-works entry point, canvas accessibility updates and inspector refinements from the other completed tasks.
 - Added a D1-backed `/api/sim/run` route that generates deterministic synthetic demo transcripts, persists sessions/messages/steps/evidence, publishes journal entries, recalculates conformance, rebuilds graph data and returns the refreshed graph/conformance payload.
 - Connected demo mode in the client to the real simulator route and refreshes the live snapshot after the persisted run completes.
 - Added agent chat in the app shell using the existing `/api/ask` route so the agent memory and model runtime remain callable from the process workspace.
@@ -41,10 +41,11 @@ Bring the currently merged Roman-spec features together on the latest `main`: fi
 - `npm run typecheck`: passed.
 - `npx vitest run tests/process-routes.test.ts tests/client-state.test.ts tests/inspector.test.ts tests/process-canvas.test.ts`: passed, 31 tests.
 - `npx vitest run tests/process-routes.test.ts`: passed, 11 tests.
-- `npm run check`: passed after integration changes; lint, typecheck, fixture validation, 182 coverage tests, guardrails, migration check and production build all passed.
-- `npm run test:e2e`: passed after installing Playwright Chromium in the workspace; isolated API smoke and 6 Chromium browser tests passed.
-- `npm run check:repo`: passed with Ruff 0.16.7 installed locally for the required Python checks; work-item context, Ruff, `npm run check`, dependency audit and browser smoke all passed.
-- `python3 scripts/check_quality.py`: passed with the same locked Ruff 0.16.7 on PATH; work-item context, Ruff, `npm run check`, dependency audit and browser smoke all passed.
+- Merged the latest `origin/main` into the PR branch after PR #84 reported conflicts; resolved the `src/app.tsx` conflict by keeping the live `/api/` application shell and integrating the newer guided walkthrough, how-it-works route, canvas accessibility and inspector updates from main.
+- `npm run check`: passed after the latest-main merge; lint, typecheck, fixture validation, 189 coverage tests across 26 files, guardrails, migration check and production build all passed.
+- `npm run test:e2e`: passed after the latest-main merge; isolated API smoke and 13 Chromium browser tests passed, including `/app` settings, persisted demo mode, activity evidence, guided walkthrough, project switching, canvas keyboard selection and sign-out rejection.
+- `npm run check:repo`: passed with Ruff 0.16.7 installed locally for the required Python checks; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 13 browser tests all passed.
+- `python3 scripts/check_quality.py`: passed with the same locked Ruff 0.16.7 on PATH; work-item context, Ruff, nested `npm run check`, dependency audit, API smoke and 13 browser tests all passed.
 
 ## Risks and rollback
 - Open PRs still exist for adjacent graph editing, agent chat and dependency updates. This branch integrates the capabilities already present on `origin/main` and keeps mappings narrow where later PRs may introduce richer first-class process/agent workspace models.
@@ -52,4 +53,4 @@ Bring the currently merged Roman-spec features together on the latest `main`: fi
 - Rollback is a PR revert of this integration branch. No new database migrations were added.
 
 ## Next steps
-- Wait for PR #84 CI to pass, then merge to `main` if branch protection permits.
+- Push the merge-resolution commit, wait for PR #84 CI to pass, then merge to `main` if branch protection permits.

@@ -3,20 +3,26 @@ import {
   ArrowDownToLine,
   ArrowUpRight,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Cloud,
   GitBranch,
   Layers3,
   LoaderCircle,
+  MonitorPlay,
+  Pause,
   Play,
   RefreshCw,
+  RotateCcw,
   Search,
   Send,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Square,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   Message,
   ProcessSession,
@@ -39,6 +45,16 @@ import {
 } from "./components/inspector/inspector-data.ts";
 import { ProcessInspector } from "./components/inspector/process-inspector.tsx";
 import { WorkflowCanvas } from "./components/process-canvas/workflow-canvas.tsx";
+import {
+  clampDemoStepIndex,
+  type DemoPlaybackState,
+  type DemoTarget,
+  type DemoWalkthroughStep,
+  demoStepLabel,
+  demoWalkthroughSteps,
+  firstDemoWalkthroughStep,
+  nextDemoStepIndex,
+} from "./demo-walkthrough.ts";
 import { createSseClient } from "./sse.ts";
 import {
   type AppSelection,
@@ -119,6 +135,22 @@ const legacyAskWorkflow: Record<string, string> = {
   wf_p1_incident: "vendor",
 };
 
+const demoStepKeyPattern = /^[1-6]$/;
+
+function isTextEntryTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement
+    ? target.matches("input, textarea, select, [contenteditable='true']")
+    : false;
+}
+
+function isCanvasClearKey(key: string) {
+  return key === "backspace" || key === "delete" || key === "escape";
+}
+
+function isUndoShortcut(event: KeyboardEvent, key: string) {
+  return (event.metaKey || event.ctrlKey) && key === "z";
+}
+
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: The route component coordinates the app shell, snapshot/SSE lifecycle, simulator, curation and agent controls.
 export default function App() {
   const adapter = useMemo(() => createProductionApiAdapter(), []);
@@ -134,6 +166,10 @@ export default function App() {
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
   const [answer, setAnswer] = useState<AskAnswer | null>(null);
+  const [demoMode, setDemoMode] = useState<DemoPlaybackState>("idle");
+  const [demoStepIndex, setDemoStepIndex] = useState(0);
+  const demoRunStarted = useRef(false);
+  const lastCanvasSelection = useRef<AppSelection | null>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
   const { scope: snapshotScope } = state;
@@ -303,7 +339,10 @@ export default function App() {
   };
 
   const select = (selection: AppSelection) => {
-    setShellView("inspector");
+    const opensInspectorView = Boolean(
+      selection.case_id || selection.message_id
+    );
+    setShellView(opensInspectorView ? "inspector" : "graph");
     setState((current) => ({
       ...current,
       selection: {
@@ -313,12 +352,60 @@ export default function App() {
     }));
   };
 
-  const clearSelection = () => {
+  const clearSelection = useCallback(() => {
     setState((current) => ({
       ...current,
       selection: { workflow_id: current.scope.workflow_id },
     }));
-  };
+  }, []);
+
+  const hasActiveCanvasSelection = useCallback(
+    () =>
+      Boolean(
+        stateRef.current.selection.edge_id || stateRef.current.selection.node_id
+      ),
+    []
+  );
+
+  const restoreLastCanvasSelection = useCallback((event: KeyboardEvent) => {
+    const previous = lastCanvasSelection.current;
+    if (!previous) {
+      return;
+    }
+    event.preventDefault();
+    setState((current) => ({
+      ...current,
+      selection: {
+        ...previous,
+        workflow_id: previous.workflow_id ?? current.scope.workflow_id,
+      },
+    }));
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isTextEntryTarget(event.target) || shellView !== "graph") {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (isUndoShortcut(event, key)) {
+        restoreLastCanvasSelection(event);
+        return;
+      }
+      if (hasActiveCanvasSelection() && isCanvasClearKey(key)) {
+        event.preventDefault();
+        clearSelection();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", onKeyDown, { capture: true });
+  }, [
+    clearSelection,
+    hasActiveCanvasSelection,
+    restoreLastCanvasSelection,
+    shellView,
+  ]);
 
   const runSimulation = async () => {
     setSimulating(true);
@@ -348,6 +435,158 @@ export default function App() {
       setSimulating(false);
     }
   };
+
+  const demoStep: DemoWalkthroughStep =
+    demoWalkthroughSteps[demoStepIndex] ?? firstDemoWalkthroughStep;
+  const activeDemoTarget = demoMode === "idle" ? undefined : demoStep.target;
+  const canRunDemo =
+    !simulating &&
+    state.loading.requestId === null &&
+    state.scope.project_id === "proj_helios";
+  const isDemoTarget = (target: DemoTarget) =>
+    activeDemoTarget === target ? "is-demo-focus" : "";
+  const goToDemoStep = useCallback((index: number) => {
+    setDemoStepIndex(clampDemoStepIndex(index));
+    setDemoMode((current) => (current === "idle" ? "playing" : current));
+  }, []);
+  const advanceDemoStep = useCallback((direction: -1 | 1) => {
+    setDemoStepIndex((current) => nextDemoStepIndex(current, direction));
+    setDemoMode((current) => (current === "idle" ? "playing" : current));
+  }, []);
+  const stopDemo = useCallback(() => {
+    setDemoMode("idle");
+    setDemoStepIndex(0);
+    demoRunStarted.current = false;
+    clearSelection();
+    setNotice("");
+  }, [clearSelection]);
+  const restartDemo = useCallback(() => {
+    setDemoStepIndex(0);
+    demoRunStarted.current = false;
+    setDemoMode("playing");
+    setShellView("graph");
+    clearSelection();
+    setNotice("");
+  }, [clearSelection]);
+  const toggleDemo = useCallback(() => {
+    if (demoMode === "idle") {
+      restartDemo();
+      return;
+    }
+    setDemoMode((current) => (current === "playing" ? "paused" : "playing"));
+  }, [demoMode, restartDemo]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Walkthrough effects intentionally react to the visible step and live graph state while using stable app actions.
+  useEffect(() => {
+    if (demoMode === "idle") {
+      return;
+    }
+    switch (demoStep.action) {
+      case "ask":
+        ask("Which observations show process drift?").catch(() => undefined);
+        break;
+      case "events":
+        setShellView("activity");
+        break;
+      case "graph":
+        setShellView("graph");
+        break;
+      case "run":
+        setShellView("graph");
+        if (!(demoRunStarted.current || !canRunDemo)) {
+          demoRunStarted.current = true;
+          runSimulation().catch(() => undefined);
+        }
+        break;
+      case "select-edge": {
+        const edge = graph?.edges[0];
+        if (edge) {
+          setShellView("inspector");
+          setState((current) => ({
+            ...current,
+            selection: {
+              edge_id: edge.id,
+              workflow_id: current.scope.workflow_id,
+            },
+          }));
+        }
+        break;
+      }
+      case "select-node": {
+        const node =
+          graph?.nodes.find((item) =>
+            item.activity.label.toLowerCase().includes("root cause")
+          ) ?? graph?.nodes[0];
+        if (node) {
+          setShellView("inspector");
+          setState((current) => ({
+            ...current,
+            selection: {
+              node_id: node.id,
+              workflow_id: current.scope.workflow_id,
+            },
+          }));
+        }
+        break;
+      }
+      case "variants":
+        setShellView("graph");
+        break;
+      default:
+        break;
+    }
+  }, [canRunDemo, demoMode, demoStep.action, graph]);
+
+  useEffect(() => {
+    if (demoMode !== "playing") {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setDemoStepIndex((current) => {
+        if (current === demoWalkthroughSteps.length - 1) {
+          setDemoMode("paused");
+          return current;
+        }
+        return nextDemoStepIndex(current, 1);
+      });
+    }, demoStep.durationMs);
+    return () => window.clearTimeout(timer);
+  }, [demoMode, demoStep.durationMs]);
+
+  useEffect(() => {
+    if (demoMode === "idle") {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.matches("input, textarea, select, [contenteditable='true']")
+      ) {
+        return;
+      }
+      if (demoStepKeyPattern.test(event.key)) {
+        event.preventDefault();
+        goToDemoStep(Number(event.key) - 1);
+        return;
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        advanceDemoStep(1);
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        advanceDemoStep(-1);
+        return;
+      }
+      if (event.key === " ") {
+        event.preventDefault();
+        toggleDemo();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [demoMode, goToDemoStep, advanceDemoStep, toggleDemo]);
 
   const curate = async (
     item: InspectorCurationItem,
@@ -474,8 +713,11 @@ export default function App() {
         },
       ]}
     >
-      <main>
-        <div className="page-heading">
+      <main className={demoMode === "idle" ? "" : "demo-active"}>
+        <div
+          className={`page-heading ${isDemoTarget("overview")}`}
+          data-demo-target="overview"
+        >
           <div>
             <div className="eyebrow">
               <span />
@@ -498,7 +740,8 @@ export default function App() {
               Export snapshot
             </button>
             <button
-              className="button primary"
+              className={`button primary ${isDemoTarget("run")}`}
+              data-demo-target="run"
               disabled={simulating}
               onClick={runSimulation}
               type="button"
@@ -512,6 +755,15 @@ export default function App() {
             </button>
           </div>
         </div>
+        <DemoWalkthrough
+          advanceDemoStep={advanceDemoStep}
+          goToDemoStep={goToDemoStep}
+          mode={demoMode}
+          restartDemo={restartDemo}
+          stepIndex={demoStepIndex}
+          stopDemo={stopDemo}
+          toggleDemo={toggleDemo}
+        />
         {state.connection.error ? (
           <div className="banner error" role="alert">
             {state.connection.error}
@@ -537,6 +789,7 @@ export default function App() {
           </div>
         ) : null}
         <LiveStats
+          focusClass={isDemoTarget("overview")}
           graph={graph}
           messages={messages}
           sessions={sessions}
@@ -585,6 +838,7 @@ export default function App() {
               <div className="main-panel">
                 {shellView === "graph" ? (
                   <MapPanel
+                    focusClass={isDemoTarget("graph")}
                     graph={graph}
                     onModeChange={(view) =>
                       setState((current) => {
@@ -613,6 +867,7 @@ export default function App() {
                 ) : null}
                 {shellView === "activity" ? (
                   <ActivityPanel
+                    focusClass={isDemoTarget("conversation")}
                     messages={messages}
                     onSearchMessage={(message) =>
                       select({
@@ -635,25 +890,38 @@ export default function App() {
                   />
                 ) : null}
               </div>
-              <ProcessInspector
-                details={inspectorDetails}
-                onClearSelection={clearSelection}
-                onCuration={curate}
-                onInspectSources={() => setShellView("activity")}
-                onOpenContext={() => setShellView("activity")}
-              />
+              <div
+                className={isDemoTarget("inspector")}
+                data-demo-target="inspector"
+              >
+                <ProcessInspector
+                  details={inspectorDetails}
+                  onClearSelection={clearSelection}
+                  onCuration={curate}
+                  onInspectSources={() => setShellView("activity")}
+                  onOpenContext={() => setShellView("activity")}
+                />
+              </div>
             </div>
           </section>
         )}
         {shellView === "settings" ? null : (
           <div className="bottom-grid">
-            <RecentEvidence messages={messages} onSelect={select} />
+            <RecentEvidence
+              focusClass={isDemoTarget("conversation")}
+              messages={messages}
+              onSelect={select}
+            />
             <AssistantPanel
               answer={answer}
               ask={ask}
               asking={asking}
               question={question}
               setQuestion={setQuestion}
+            />
+            <VariantSummary
+              focusClass={isDemoTarget("variants")}
+              graph={graph}
             />
           </div>
         )}
@@ -671,13 +939,180 @@ export default function App() {
   );
 }
 
+function DemoWalkthrough({
+  advanceDemoStep,
+  goToDemoStep,
+  mode,
+  restartDemo,
+  stepIndex,
+  stopDemo,
+  toggleDemo,
+}: {
+  advanceDemoStep: (direction: -1 | 1) => void;
+  goToDemoStep: (index: number) => void;
+  mode: DemoPlaybackState;
+  restartDemo: () => void;
+  stepIndex: number;
+  stopDemo: () => void;
+  toggleDemo: () => void;
+}) {
+  const step = demoWalkthroughSteps[stepIndex] ?? firstDemoWalkthroughStep;
+  let toggleLabel = "Resume";
+  if (mode === "idle") {
+    toggleLabel = "Start";
+  } else if (mode === "playing") {
+    toggleLabel = "Pause";
+  }
+  return (
+    <section
+      aria-label="Demo auto-play walkthrough"
+      className={`demo-walkthrough ${mode === "idle" ? "collapsed" : ""} ${
+        mode !== "idle" && step.target === "run" ? "is-demo-focus" : ""
+      }`}
+      data-demo-target="run"
+    >
+      <div className="demo-walkthrough__control">
+        <span className="demo-walkthrough__icon">
+          <MonitorPlay size={18} />
+        </span>
+        <div>
+          <span className="section-kicker">GUIDED DEMO</span>
+          <h2>Auto-play walkthrough</h2>
+        </div>
+        <button
+          aria-label={`${toggleLabel} walkthrough`}
+          className="button primary"
+          onClick={toggleDemo}
+          type="button"
+        >
+          {mode === "playing" ? <Pause size={14} /> : <Play size={14} />}
+          {toggleLabel} walkthrough
+        </button>
+        <button
+          aria-label="Restart walkthrough"
+          className="button secondary"
+          onClick={restartDemo}
+          type="button"
+        >
+          <RotateCcw size={14} />
+          Restart
+        </button>
+        <button
+          aria-label="Stop walkthrough"
+          className="button secondary"
+          disabled={mode === "idle"}
+          onClick={stopDemo}
+          type="button"
+        >
+          <Square size={14} />
+          Stop
+        </button>
+      </div>
+      {mode === "idle" ? null : (
+        <div aria-live="polite" className="demo-walkthrough__stage">
+          <div className="demo-walkthrough__annotation">
+            <span>{demoStepLabel(stepIndex)}</span>
+            <div>
+              <strong>{step.title}</strong>
+              <p>{step.detail}</p>
+            </div>
+          </div>
+          <div className="demo-walkthrough__nav">
+            <button
+              aria-label="Previous walkthrough step"
+              disabled={stepIndex === 0}
+              onClick={() => advanceDemoStep(-1)}
+              type="button"
+            >
+              <ChevronLeft size={15} />
+            </button>
+            <div className="demo-beats">
+              {demoWalkthroughSteps.map((item, index) => (
+                <button
+                  aria-label={`Jump to ${item.label}`}
+                  aria-pressed={index === stepIndex}
+                  key={item.id}
+                  onClick={() => goToDemoStep(index)}
+                  type="button"
+                >
+                  {demoStepLabel(index)}
+                </button>
+              ))}
+            </div>
+            <button
+              aria-label="Next walkthrough step"
+              disabled={stepIndex === demoWalkthroughSteps.length - 1}
+              onClick={() => advanceDemoStep(1)}
+              type="button"
+            >
+              <ChevronRight size={15} />
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function VariantSummary({
+  focusClass,
+  graph,
+}: {
+  focusClass?: string;
+  graph: ReturnType<typeof selectCurrentGraph>;
+}) {
+  const nodeLabel = new Map(
+    (graph?.nodes ?? []).map((node) => [node.id, node.activity.label])
+  );
+  const variants = (graph?.edges ?? [])
+    .slice()
+    .sort((a, b) => b.observed_support - a.observed_support)
+    .slice(0, 4);
+  return (
+    <section
+      className={`variants-panel ${focusClass ?? ""}`}
+      data-demo-target="variants"
+    >
+      <div className="card-heading">
+        <h2>
+          <GitBranch size={17} />
+          The ways this process unfolds
+        </h2>
+      </div>
+      <div className="variant-list">
+        {variants.length ? (
+          variants.map((edge) => {
+            const from = nodeLabel.get(edge.from) ?? edge.from;
+            const to = nodeLabel.get(edge.to) ?? edge.to;
+            return (
+              <article className="variant-row" key={edge.id}>
+                <strong>
+                  {from} → {to}
+                </strong>
+                <span>
+                  {edge.observed_support} observed transition
+                  {edge.observed_support === 1 ? "" : "s"}
+                </span>
+              </article>
+            );
+          })
+        ) : (
+          <div className="empty">Run demo mode to discover variants.</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function MapPanel({
+  focusClass,
   graph,
   onModeChange,
   onReload,
   onSelect,
   selection,
 }: {
+  focusClass?: string;
   graph: ReturnType<typeof selectCurrentGraph>;
   onModeChange: (view: ConnectionScope["view"]) => void;
   onReload: () => void;
@@ -696,27 +1131,34 @@ function MapPanel({
   }
   return (
     <>
-      <div className="graph-hint">
+      <div
+        className={`graph-hint ${focusClass ?? ""}`}
+        data-demo-target="graph"
+      >
         <span className="tiny-dot" />
         Live overlay from /api/snapshot
         <span>Click a node or edge to inspect evidence and conformance.</span>
       </div>
-      <WorkflowCanvas
-        graph={graph}
-        onModeChange={onModeChange}
-        onSelectionChange={onSelect}
-        selection={selection}
-      />
+      <div className={focusClass ?? ""} data-demo-target="graph">
+        <WorkflowCanvas
+          graph={graph}
+          onModeChange={onModeChange}
+          onSelectionChange={onSelect}
+          selection={selection}
+        />
+      </div>
     </>
   );
 }
 
 function LiveStats({
+  focusClass,
   graph,
   messages,
   sessions,
   state,
 }: {
+  focusClass?: string;
   graph: ReturnType<typeof selectCurrentGraph>;
   messages: Message[];
   sessions: ProcessSession[];
@@ -724,7 +1166,10 @@ function LiveStats({
 }) {
   const conformance = graph?.conformance;
   return (
-    <div className="stats-row">
+    <div
+      className={`stats-row ${focusClass ?? ""}`}
+      data-demo-target="overview"
+    >
       <Stat
         icon={<Layers3 size={17} />}
         label="Graph activities"
@@ -758,12 +1203,14 @@ function LiveStats({
 }
 
 function ActivityPanel({
+  focusClass,
   messages,
   onSearchMessage,
   selectedSession,
   sessions,
   setSelectedSession,
 }: {
+  focusClass?: string;
   messages: Message[];
   onSearchMessage: (message: Message) => void;
   selectedSession: ProcessSession | undefined;
@@ -779,7 +1226,10 @@ function ActivityPanel({
     return matchesSession && haystack.includes(search.toLowerCase());
   });
   return (
-    <div className="events-panel">
+    <div
+      className={`events-panel ${focusClass ?? ""}`}
+      data-demo-target="conversation"
+    >
       <div className="event-controls">
         <label>
           <Search size={16} />
@@ -838,14 +1288,19 @@ function ActivityPanel({
 }
 
 function RecentEvidence({
+  focusClass,
   messages,
   onSelect,
 }: {
+  focusClass?: string;
   messages: Message[];
   onSelect: (selection: AppSelection) => void;
 }) {
   return (
-    <section className="recent-card">
+    <section
+      className={`recent-card ${focusClass ?? ""}`}
+      data-demo-target="conversation"
+    >
       <div className="card-heading">
         <h2>
           <Activity size={17} />

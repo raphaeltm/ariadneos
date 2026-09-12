@@ -26,6 +26,7 @@ const HELIOS = /Helios Payments/;
 const ATLAS = /Atlas Self-Serve Billing/;
 const UPDATED = /Demo simulation persisted as/;
 const EVIDENCE = /Evidence messages/;
+const INSPECT_SOURCES = /Inspect .* source events?/;
 
 test("opens settings from the shell help action", async ({ page }) => {
   await page.goto("/app");
@@ -69,6 +70,49 @@ test("refreshes persisted simulation results and exposes evidence", async ({
     .click();
   await expect(page.getByRole("heading", { name: ATLAS })).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test("auto-plays the guided demo walkthrough and supports beat jumps", async ({
+  page,
+}) => {
+  await page.goto("/app");
+  const cases = page
+    .locator(".stat")
+    .filter({ hasText: EVIDENCE })
+    .locator(".stat-value");
+  await expect(cases).not.toHaveText("");
+  const initialCases = Number(await cases.textContent());
+  await page
+    .getByRole("button", { exact: true, name: "Start walkthrough" })
+    .click();
+  await expect(
+    page.getByText("Open on the process that people think they run")
+  ).toBeVisible();
+  await page.keyboard.press("2");
+  await expect(
+    page.getByText("Let the Slack-shaped workflow unfold")
+  ).toBeVisible();
+  await expect
+    .poll(async () => Number(await cases.textContent()), { timeout: 15_000 })
+    .toBeGreaterThan(initialCases);
+  await page.keyboard.press("5");
+  await expect(
+    page.getByText("Claims stay attached to evidence")
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: INSPECT_SOURCES }).first()
+  ).toBeVisible();
+  await page.keyboard.press("6");
+  await expect(
+    page.getByText("The same workflow now has visible paths")
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "The ways this process unfolds" })
+  ).toBeVisible();
+  await page.keyboard.press("Space");
+  await expect(
+    page.getByRole("button", { exact: true, name: "Resume walkthrough" })
+  ).toBeVisible();
 });
 
 test("exposes shell navigation, project switching, and mobile layout", async ({
@@ -116,6 +160,20 @@ test("exposes shell navigation, project switching, and mobile layout", async ({
       () => document.documentElement.scrollWidth <= window.innerWidth
     )
   ).toBe(true);
+});
+
+test("supports keyboard selection and clearing on the process canvas", async ({
+  page,
+}) => {
+  await page.goto("/app");
+  const canvas = page.getByRole("application", {
+    name: "Workflow graph nodes and edges",
+  });
+  await canvas.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByText("SELECTION INSPECTOR").first()).toBeVisible();
+  await page.getByRole("button", { name: "Clear selection" }).first().click();
+  await expect(page.getByText("PROCESS INSPECTOR").first()).toBeVisible();
 });
 
 test("signs out and rejects the previous session", async ({

@@ -22,6 +22,78 @@ import type {
 
 const NODE_WIDTH = 200;
 const NODE_HEIGHT = 80;
+const TEXT_ENTRY_TAGS = new Set(["INPUT", "SELECT", "TEXTAREA"]);
+const BASE_SHORTCUTS = new Map<string, CanvasKeyboardAction>([
+  ["arrowdown", "select_next"],
+  ["arrowleft", "select_previous"],
+  ["arrowright", "select_next"],
+  ["arrowup", "select_previous"],
+  ["backspace", "clear_selection"],
+  ["delete", "clear_selection"],
+  ["end", "select_last"],
+  ["escape", "clear_selection"],
+  ["home", "select_first"],
+  ["0", "fit_view"],
+  ["+", "zoom_in"],
+  ["=", "zoom_in"],
+  ["-", "zoom_out"],
+  ["_", "zoom_out"],
+]);
+const COMMAND_SHORTCUTS = new Map<string, CanvasKeyboardAction>([
+  ["0", "fit_view"],
+  ["+", "zoom_in"],
+  ["=", "zoom_in"],
+  ["-", "zoom_out"],
+  ["_", "zoom_out"],
+  ["z", "restore_selection"],
+]);
+const PAN_SHORTCUTS = new Map<string, CanvasKeyboardAction>([
+  ["arrowdown", "pan_down"],
+  ["arrowleft", "pan_left"],
+  ["arrowright", "pan_right"],
+  ["arrowup", "pan_up"],
+]);
+
+export const canvasShortcutInstructions =
+  "Use arrow keys to select graph items, Shift plus arrow keys to pan, plus and minus to zoom, 0 to fit the graph, Delete to clear the current selection, and Control or Command Z to restore the previous selection.";
+
+export type CanvasKeyboardAction =
+  | "clear_selection"
+  | "fit_view"
+  | "pan_down"
+  | "pan_left"
+  | "pan_right"
+  | "pan_up"
+  | "restore_selection"
+  | "select_first"
+  | "select_last"
+  | "select_next"
+  | "select_previous"
+  | "zoom_in"
+  | "zoom_out";
+
+export type CanvasKeyboardTarget =
+  | {
+      id: ActivityId | StepId;
+      kind: "node";
+      label: string;
+    }
+  | {
+      id: GraphEdge["id"];
+      kind: "edge";
+      label: string;
+    };
+
+export interface CanvasShortcutInput {
+  altKey?: boolean;
+  ctrlKey?: boolean;
+  key: string;
+  metaKey?: boolean;
+  shiftKey?: boolean;
+  targetIsContentEditable?: boolean;
+  targetRole?: string | null;
+  targetTagName?: string;
+}
 
 export function filterCanvasGraph(
   graph: GraphView,
@@ -143,6 +215,69 @@ export function selectionForConformanceIssue(
   return edge ? selectionForEdge(graph, edge) : null;
 }
 
+export function canvasKeyboardTargets(
+  visible: VisibleCanvasGraph,
+  graph: GraphView
+): CanvasKeyboardTarget[] {
+  return [
+    ...visible.nodes.map((node) => ({
+      id: node.id,
+      kind: "node" as const,
+      label: describeCanvasNode(node, visible.edges),
+    })),
+    ...visible.edges.map((edge) => ({
+      id: edge.id,
+      kind: "edge" as const,
+      label: describeCanvasEdge(edge, graph),
+    })),
+  ];
+}
+
+export function nextCanvasKeyboardTarget(
+  targets: readonly CanvasKeyboardTarget[],
+  selectedId: string | undefined,
+  direction: -1 | 1
+): CanvasKeyboardTarget | undefined {
+  if (targets.length === 0) {
+    return undefined;
+  }
+  const currentIndex = targets.findIndex((target) => target.id === selectedId);
+  if (currentIndex === -1) {
+    return direction === 1 ? targets[0] : targets.at(-1);
+  }
+  const nextIndex =
+    (currentIndex + direction + targets.length) % targets.length;
+  return targets[nextIndex];
+}
+
+export function edgeForKeyboardTarget(
+  graph: GraphView,
+  target: CanvasKeyboardTarget
+): GraphEdge | undefined {
+  return target.kind === "edge"
+    ? graph.edges.find((edge) => edge.id === target.id)
+    : undefined;
+}
+
+export function shortcutActionForCanvas(
+  input: CanvasShortcutInput
+): CanvasKeyboardAction | null {
+  if (isTextEntryShortcutTarget(input)) {
+    return null;
+  }
+  const key = input.key.toLowerCase();
+  const command = Boolean(input.ctrlKey || input.metaKey);
+  if (input.altKey) {
+    return null;
+  }
+  if (command) {
+    return input.shiftKey ? null : (COMMAND_SHORTCUTS.get(key) ?? null);
+  }
+  return input.shiftKey
+    ? (PAN_SHORTCUTS.get(key) ?? null)
+    : (BASE_SHORTCUTS.get(key) ?? null);
+}
+
 function nodeVisible(
   node: GraphNode,
   mode: WorkflowCanvasMode,
@@ -208,6 +343,7 @@ function toCanvasNodeData(
   return {
     annotationLabel: annotation.label,
     annotationTitle: annotation.title,
+    ariaLabel: describeCanvasNode(node, edges),
     diffKind: annotation.diffKind,
     groundedCount,
     groundingRatio,
@@ -239,6 +375,7 @@ function toCanvasEdgeData(edge: GraphEdge, graph: GraphView): CanvasEdgeData {
   return {
     annotationLabel: annotation.label,
     annotationTitle: annotation.title,
+    ariaLabel: describeCanvasEdge(edge, graph),
     cases: edge.cases,
     diffKind: annotation.diffKind,
     isBackEdge: edge.is_back_edge,
@@ -428,6 +565,94 @@ function activitySlugForId(
   id: GraphEdge["from"] | GraphEdge["to"]
 ): string | null {
   return graph.nodes.find((node) => node.id === id)?.activity.slug ?? null;
+}
+
+function describeCanvasNode(
+  node: GraphNode,
+  edges: readonly GraphEdge[]
+): string {
+  const relevantViolations = edges.filter(
+    (edge) =>
+      edge.violates.length > 0 && (edge.from === node.id || edge.to === node.id)
+  );
+  const groundedCount = Math.min(
+    node.activity.occurrences,
+    Math.max(0, node.activity.occurrences - node.unreconciled.length)
+  );
+  const groundingRatio =
+    node.activity.occurrences === 0
+      ? 0
+      : Math.round((groundedCount / node.activity.occurrences) * 100);
+  const details = [
+    node.activity.label,
+    `${planeLabel(node.activity.plane)} activity`,
+    `${node.activity.role_expected ?? "unknown"} role`,
+    `${node.activity.support} support`,
+    `${groundingRatio}% grounded`,
+  ];
+  if (node.role_deviations.length > 0) {
+    details.push(`${node.role_deviations.length} role deviations`);
+  }
+  if (node.unreconciled.length > 0) {
+    details.push(`${node.unreconciled.length} unreconciled steps`);
+  }
+  if (relevantViolations.length > 0) {
+    details.push(`${relevantViolations.length} policy violations`);
+  }
+  return details.join(", ");
+}
+
+function describeCanvasEdge(edge: GraphEdge, graph: GraphView): string {
+  const from = activityLabelForId(graph, edge.from) ?? edge.from;
+  const to = activityLabelForId(graph, edge.to) ?? edge.to;
+  const support = edge.observed_support || edge.weight;
+  const details = [
+    `${from} to ${to}`,
+    `${planeLabel(edge.plane)} ${edge.kind} transition`,
+    `${support} support`,
+  ];
+  if (edge.probability !== null) {
+    details.push(`${Math.round(edge.probability * 100)}% probability`);
+  }
+  if (edge.is_back_edge) {
+    details.push("rework path");
+  }
+  if (edge.violates.length > 0) {
+    details.push(`violates ${edge.violates.join(", ")}`);
+  }
+  return details.join(", ");
+}
+
+function activityLabelForId(
+  graph: GraphView,
+  id: GraphEdge["from"] | GraphEdge["to"]
+): string | null {
+  return graph.nodes.find((node) => node.id === id)?.activity.label ?? null;
+}
+
+function planeLabel(plane: GraphNode["activity"]["plane"]) {
+  switch (plane) {
+    case "both":
+      return "documented and observed";
+    case "designed":
+      return "documented";
+    case "discovered":
+      return "discovered";
+    default:
+      return assertNever(plane);
+  }
+}
+
+function isTextEntryShortcutTarget(input: CanvasShortcutInput): boolean {
+  if (input.targetIsContentEditable) {
+    return true;
+  }
+  if (input.targetRole === "textbox") {
+    return true;
+  }
+  return input.targetTagName
+    ? TEXT_ENTRY_TAGS.has(input.targetTagName.toUpperCase())
+    : false;
 }
 
 function assertNever(value: never): never {

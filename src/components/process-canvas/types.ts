@@ -24,6 +24,7 @@ export type CanvasPositionCache = Record<string, CanvasPosition>;
 export interface CanvasNodeData {
   annotationLabel: string | null;
   annotationTitle: string | null;
+  ariaLabel: string;
   diffKind: CanvasNodeDiffKind;
   groundedCount: number;
   groundingRatio: number;
@@ -43,6 +44,7 @@ export interface CanvasNodeData {
 export interface CanvasEdgeData {
   annotationLabel: string | null;
   annotationTitle: string | null;
+  ariaLabel: string;
   cases: string[];
   diffKind: CanvasEdgeDiffKind;
   isBackEdge: boolean;

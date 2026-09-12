@@ -1,9 +1,10 @@
 # App shell layout
 
-Status: in-progress
+Status: in-review
 Owner: Codex agent for SAM task 01M2AWE14S8T9T4YBTA0MRKTAK
 Source: GitHub issue #25 requests the `/app` shell, top bar, sidebar, responsive layout, workspace/project switching UI, and graph/inspector/settings navigation. The user requested starting from current main, using the existing React/Vite setup, preparing for #23 client state integration, skipping staging verification for speed, and delivering PR evidence.
 Branch: sam/implement-github-issue-25-mrktak
+PR: https://github.com/raphaeltm/ariadneos/pull/67
 
 ## Intent
 Build the owned app shell component subtree around the current authenticated `/app` experience without changing the graph algorithm, authentication, backend APIs, marketing homepage, or #23 client-state internals. The shell should give downstream graph, inspector, and settings work a stable layout/navigation boundary.
@@ -46,4 +47,4 @@ Build the owned app shell component subtree around the current authenticated `/a
 - Staging verification is intentionally skipped per the user's time-critical instruction. Rollback is a straight revert of the shell component, app composition, styles, browser test, and this work item.
 
 ## Next steps
-- Stage this task's files, run the work-item context check against `origin/main`, open the PR with `Closes #25`, monitor CI, and merge only when required checks are green.
+- Monitor PR #67 CI and merge only when required checks are green. Staging verification remains skipped per the time-critical user instruction.

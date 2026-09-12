@@ -1,6 +1,6 @@
 # Spec 08 compatibility contracts
 
-Status: in-progress
+Status: in-review
 Owner: Codex agent for SAM task 01M2ATA6BXC0QWRYD3DYV6CB42
 Source: GitHub issue #31 requests an additive Spec 08 bridge between the current vendor/refund/access demo and the process-mining contracts, with compatibility fixtures for designed workflows, grounding, curation, lifecycle and agent events.
 Branch: sam/implement-github-issue-31-v6cb42
@@ -42,10 +42,11 @@ Add the optional interface vocabulary needed by Spec 08 consumers without changi
 - After rebasing onto #14: `npm run test -- tests/spec08-compatibility.test.ts tests/fixtures.test.ts tests/process.test.ts` passed, 30 tests.
 - After rebasing onto #14: `npm run check` passed lint, typecheck, `fixtures:validate`, 68 coverage tests, guardrails, `test:migration` and production build.
 - After rebasing onto #14: `PATH="/home/node/.local/bin:$PATH" npm run check:repo` passed work-item unit tests, work-item context, Ruff, npm checks, dependency audit, isolated D1/API smoke with migrations through `0005_pm_foundation.sql`, and 5 Chromium browser tests.
+- PR: https://github.com/raphaeltm/ariadneos/pull/58.
 
 ## Risks and rollback
 - No route, algorithm, live extraction, UI or persistence behavior changed. Rollback is a code revert; fixture and type additions have no remote runtime side effects.
 - The bridge intentionally keeps demo workflow ids (`vendor`, `refund`, `access`) separate from #14's canonical `wf_*` ids by using `Spec08*` aliases rather than replacing the foundation graph vocabulary.
 
 ## Next steps
-- Open a PR with `Closes #31`, monitor CI through required checks, skip staging verification per the time-critical user instruction, and merge only once CI is green.
+- Monitor PR #58 CI, skip staging verification per the time-critical user instruction, and merge only once CI is green.

@@ -41,3 +41,9 @@ Make Slack setup reproducible for staging and production, identify missing crede
 ## Next steps
 - Slack credentials were supplied in both GitHub environments during the audit. User completes Slack URL verification, workspace installation, channel invitations, and real login/message-delivery acceptance tests.
 - A repository administrator may add production environment main-only branch restriction; workflow already enforces it.
+
+## Merge acceptance — 2026-09-12
+- User explicitly authorized merging PR #5 after reviewing staging login and webhook delivery findings.
+- Real Slack login succeeded at 12:13:42 UTC. Slack deliveries at 12:34–12:35 reached staging but returned 403 after main deployments replaced the integration branch. No message rows were stored at that check.
+- Merged current origin/main (a0ccbcd) without conflicts; incoming changes are specifications and work records. Run complete gates before merging and verify both Actions deployments, including signed Slack URL challenges.
+- Merge validation: `npm run check:repo` passed, including all 5 Chromium tests; work-item context and whitespace checks passed. Real Slack login is confirmed; message persistence awaits the restored receiver deployment and a new Slack delivery.

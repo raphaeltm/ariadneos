@@ -22,34 +22,112 @@ export const workflows = [
   },
 ] as const;
 export type WorkflowId = (typeof workflows)[number]["id"];
+export const DEFAULT_EVENT_CONFIDENCE = 1;
+export const DEFAULT_WORKSPACE = "demo";
+export type ActivityGroundingState =
+  | "confirmed"
+  | "grounded"
+  | "inferred"
+  | "proposed"
+  | "rejected";
+export type ActivityLifecycleState =
+  | "abandoned"
+  | "committed"
+  | "done"
+  | "requested"
+  | "skipped";
+export type ActivityModality =
+  | "committed"
+  | "negated"
+  | "reported"
+  | "requested";
+export type ActivityCurationStatus = "confirmed" | "proposed" | "rejected";
+export type GraphPlane = "both" | "designed" | "discovered";
+export interface MessageRef {
+  author: string;
+  authorId: string;
+  channel: string;
+  permalink: string;
+  text: string;
+  ts: string;
+  workspace?: string;
+}
 export interface ActivityEvent {
   action: string;
   actor: string;
   artifact: string;
   caseId: string;
+  confidence?: number;
   id: string;
+  messages?: MessageRef[];
+  modality?: ActivityModality;
   role: string;
   sequence: number;
-  source: "simulation";
+  source: "simulation" | "slack";
+  state?: ActivityLifecycleState;
+  status?: ActivityCurationStatus;
   timestamp: string;
   workflow: WorkflowId;
+  workspace?: string;
+}
+export interface Policy {
+  after?: string;
+  before?: string;
+  id: string;
+  kind: "approval" | "mandatory" | "ordering" | "threshold";
+  roles?: string[];
+  text: string;
+  workflow: WorkflowId;
+}
+export interface DesignedModel {
+  activities: {
+    label: string;
+    role: string;
+    slug: string;
+    synonyms?: string[];
+  }[];
+  entry: string;
+  matrix: number[][];
+  policies: Policy[];
+  workflow: WorkflowId;
+}
+export interface Conformance {
+  extra: { count: number; slug: string }[];
+  fitness: number;
+  grounded: number;
+  missing: { of: number; seenIn: number; slug: string }[];
+  orderBreaks: { expectedBetween: string; from: string; to: string }[];
+  precision: number;
+  roleDeviations: { expected: string; observed: string[]; slug: string }[];
+  violations: {
+    caseIds: string[];
+    evidence: MessageRef[];
+    policyId: string;
+    quote?: string;
+  }[];
 }
 export interface ProcessEdge {
   cases: number;
   count: number;
   evidence: { from: string; to: string; caseId: string }[];
   id: string;
+  isBackEdge?: boolean;
   medianMinutes: number;
+  plane?: GraphPlane;
   probability: number;
   source: string;
   target: string;
+  violates?: string[];
 }
 export interface ProcessNode {
   actors: string[];
   count: number;
+  grounded?: number;
   id: string;
   label: string;
+  plane?: GraphPlane;
   role: string;
+  roleExpected?: string;
   terminal: boolean;
 }
 export interface CaseTrace {
@@ -68,6 +146,100 @@ export interface Snapshot {
   source: "simulation";
   workflow: (typeof workflows)[number];
 }
+export interface AgentEvent {
+  caseId?: string;
+  citations: MessageRef[];
+  createdAt: string;
+  id: string;
+  kind: "answer" | "drift" | "playbook";
+  nodes: string[];
+  pauses: boolean;
+  policyId?: string;
+  resolution?: "approve" | "hold" | "reject";
+  text: string;
+  workflow: WorkflowId;
+}
+export interface PipelineEvent {
+  activity?: string;
+  caseId?: string;
+  confidence?: number;
+  createdAt: string;
+  id: string;
+  kind: "agent" | "canon" | "extract" | "graph" | "ground" | "message";
+  message?: MessageRef;
+  messages?: MessageRef[];
+  nodes?: string[];
+  text: string;
+  workflow: WorkflowId;
+  workspace?: string;
+}
+export interface WorkspaceDto {
+  channel: string;
+  id: string;
+  name: string;
+  workflows: WorkflowId[];
+}
+export interface WorkflowLink {
+  artifact: string;
+  cases: { source: string; target: string }[];
+  count: number;
+  source: WorkflowId;
+  target: WorkflowId;
+}
+export function activityConfidence(event: ActivityEvent) {
+  return event.confidence ?? DEFAULT_EVENT_CONFIDENCE;
+}
+export function activityGrounding(
+  event: ActivityEvent
+): ActivityGroundingState {
+  if (event.status === "rejected") {
+    return "rejected";
+  }
+  if (event.status === "proposed" || activityConfidence(event) < 0.4) {
+    return "proposed";
+  }
+  if (event.status === "confirmed") {
+    return "confirmed";
+  }
+  if (event.messages?.some((message) => message.permalink)) {
+    return "grounded";
+  }
+  return "inferred";
+}
+export function activityWorkspace(event: ActivityEvent) {
+  return event.workspace ?? DEFAULT_WORKSPACE;
+}
+export function designedEdgesFrom(designed: DesignedModel): ProcessEdge[] {
+  const edges: ProcessEdge[] = [];
+  designed.matrix.forEach((row, rowIndex) => {
+    const source = designed.activities[rowIndex];
+    if (!source) {
+      return;
+    }
+    row.forEach((weight, columnIndex) => {
+      const target = designed.activities[columnIndex];
+      if (!(target && weight > 0)) {
+        return;
+      }
+      edges.push({
+        cases: 0,
+        count: 0,
+        evidence: [],
+        id: `${source.slug}::${target.slug}`,
+        medianMinutes: 0,
+        plane: "designed",
+        probability: weight,
+        source: source.slug,
+        target: target.slug,
+      });
+    });
+  });
+  return edges;
+}
+export function isAggregateEligible(event: ActivityEvent) {
+  const grounding = activityGrounding(event);
+  return grounding !== "proposed" && grounding !== "rejected";
+}
 export function isWorkflow(value: string): value is WorkflowId {
   return workflows.some((w) => w.id === value);
 }
@@ -83,7 +255,7 @@ export function median(values: number[]) {
   }
   return ((s[m - 1] ?? middle) + middle) / 2;
 }
-export function mine(input: ActivityEvent[]) {
+export function mine(input: ActivityEvent[], designed?: DesignedModel) {
   const unique = [...new Map(input.map((e) => [e.id, e])).values()];
   const groups = new Map<string, ActivityEvent[]>();
   for (const e of unique) {
@@ -191,6 +363,7 @@ export function mine(input: ActivityEvent[]) {
     (a, b) => b.count - a.count || a.path.join().localeCompare(b.path.join())
   );
   return {
+    ...(designed ? { designedEdges: designedEdgesFrom(designed) } : {}),
     edges,
     nodes: [...nodes.values()],
     stats: {

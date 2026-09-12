@@ -5,6 +5,7 @@ import {
   loadKb,
   readAuthoredKbNodes,
   readDesignedGraph,
+  readKbState,
   seedKb,
 } from "../server/kb.ts";
 
@@ -21,6 +22,12 @@ class FakeD1Database {
   readonly activities = new Map<string, StoredRow>();
   readonly follows = new Map<string, StoredRow>();
   readonly nodes = new Map<string, StoredRow>();
+  state: {
+    source: string;
+    state_hash: string;
+    summary_json: string;
+    updated_at: string;
+  } | null = null;
 
   batch(statements: FakeD1Statement[]) {
     for (const statement of statements) {
@@ -88,6 +95,16 @@ class FakeD1Database {
         source: String(source),
         weight: Number(weight),
       });
+      return;
+    }
+    if (statement.sql.includes("pm_kb_state")) {
+      const [source, stateHash, summaryJson, updatedAt] = statement.bindings;
+      this.state = {
+        source: String(source),
+        state_hash: String(stateHash),
+        summary_json: String(summaryJson),
+        updated_at: String(updatedAt),
+      };
     }
   }
 }
@@ -148,6 +165,9 @@ class FakeD1Statement {
   }
 
   first() {
+    if (this.sql.includes("FROM pm_kb_state")) {
+      return this.db.state;
+    }
     const workflowId = String(this.bindings[0]);
     return this.db.nodes.get(`workflow:${workflowId}`) ?? null;
   }
@@ -218,11 +238,25 @@ describe("KB D1 helpers", () => {
       payload: JSON.stringify({ id: "pol_curated_only" }),
       source: "curated",
     });
-    await seedKb(asD1(db), "2026-09-12T00:00:00.000Z");
+    const first = await seedKb(asD1(db), "2026-09-12T00:00:00.000Z");
     const firstMembership = authoredMembership(db);
-    await seedKb(asD1(db), "2026-09-12T00:00:00.000Z");
+    const second = await seedKb(asD1(db), "2026-09-12T00:01:00.000Z");
     expect(authoredMembership(db)).toEqual(firstMembership);
+    expect(second.stateHash).toBe(first.stateHash);
     expect(db.nodes.get("policy:pol_curated_only")?.source).toBe("curated");
+  });
+
+  it("persists a single authored KB state row", async () => {
+    const db = new FakeD1Database();
+    const result = await seedKb(asD1(db), "2026-09-12T00:00:00.000Z");
+    await seedKb(asD1(db), "2026-09-12T00:00:00.000Z");
+    const state = await readKbState(asD1(db));
+
+    expect(state).toMatchObject({
+      source: "authored",
+      stateHash: result.stateHash,
+      summary: { people: 6, workflows: 5 },
+    });
   });
 
   it("reads designed graph inputs with zero observations", async () => {

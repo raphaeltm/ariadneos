@@ -111,6 +111,12 @@ function assertPmTables(configPath, persistDir) {
   const tableNames = rows.map((row) => row.name);
   for (const required of [
     "pm_activity",
+    "pm_graph_revision",
+    "pm_graph_view",
+    "pm_kb_nodes",
+    "pm_kb_state",
+    "pm_kb_workflow_activities",
+    "pm_kb_workflow_follows",
     "pm_message",
     "pm_step",
     "pm_step_evidence",

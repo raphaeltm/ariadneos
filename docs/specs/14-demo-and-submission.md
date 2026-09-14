@@ -1,3 +1,7 @@
+> **Historical input spec — superseded.** The simulation, demo-workspace and
+> checked-in knowledge base described here are not part of the application. See
+> [../decisions/2026-09-14-no-simulated-data.md](../decisions/2026-09-14-no-simulated-data.md).
+
 # Spec 14 — Demo & Submission
 
 > The last spec. Everything here is executable by a presenter reading it once.

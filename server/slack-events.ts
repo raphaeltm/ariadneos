@@ -4,19 +4,25 @@ import {
   type ChannelCoordinatorEnv,
   wakeChannelCoordinator,
 } from "./runtime/channel.ts";
+import { SlackClient } from "./slack/client.ts";
 import { normalizeSlackObservation } from "./slack-observations.ts";
+import {
+  readChannel,
+  readInstall,
+  revokeInstall,
+  upsertChannel,
+} from "./tenant/installs.ts";
 
 export interface SlackEventsEnv extends ChannelCoordinatorEnv {
   DB: D1Database;
-  SLACK_PROJECT_ID?: "proj_helios" | "proj_atlas";
   SLACK_SIGNING_SECRET?: string;
-  SLACK_WORKSPACE?: string;
 }
 const TIMESTAMP = /^\d+$/;
 const SIGNATURE = /^v0=[a-f0-9]{64}$/;
 const HEX_PAIR = /../g;
 const MESSAGE_TIMESTAMP = /^\d+\.\d+$/;
 const encoder = new TextEncoder();
+
 interface SlackMessageEventRecord {
   channel: string;
   eventTs: string | null;
@@ -80,15 +86,13 @@ function messageEventRecord(
   };
 }
 
-async function persistSlackMessageEvent(
+async function persistRawEvent(
   env: SlackEventsEnv,
   envelope: Record<string, unknown>,
   event: Record<string, unknown>,
-  record: SlackMessageEventRecord
+  record: SlackMessageEventRecord,
+  receivedAt: number
 ) {
-  const teamId = envelope.team_id as string;
-  const eventId = envelope.event_id as string;
-  const receivedAt = Date.now();
   await env.DB.prepare(
     `INSERT INTO slack_message_events
     (team_id, event_id, channel_id, message_ts, event_ts, subtype, user_id, text, payload, received_at)
@@ -96,8 +100,8 @@ async function persistSlackMessageEvent(
     ON CONFLICT(team_id, event_id) DO NOTHING`
   )
     .bind(
-      teamId,
-      eventId,
+      envelope.team_id as string,
+      envelope.event_id as string,
       record.channel,
       record.timestamp,
       record.eventTs,
@@ -108,7 +112,51 @@ async function persistSlackMessageEvent(
       receivedAt
     )
     .run();
-  await normalizeSlackObservation(
+}
+
+async function handleMessageEvent(
+  env: SlackEventsEnv,
+  envelope: Record<string, unknown>,
+  event: Record<string, unknown>
+) {
+  const record = messageEventRecord(event);
+  if (!record) {
+    return { error: "Missing message identity.", status: 400 as const };
+  }
+  const teamId = envelope.team_id as string;
+  const eventId = envelope.event_id as string;
+  const receivedAt = Date.now();
+  // Store the raw event first so a later configuration change can replay it, and
+  // so Slack retries deduplicate on (team_id, event_id).
+  await persistRawEvent(env, envelope, event, record, receivedAt);
+
+  const install = await readInstall(env.DB, teamId);
+  if (!install) {
+    // Unknown workspace: the raw event is kept for diagnosis but no process data
+    // is derived, so an event from a revoked or foreign install cannot enter a
+    // tenant's graph.
+    return { ok: true as const };
+  }
+  const channel = await readChannel(env.DB, teamId, record.channel);
+  if (!channel) {
+    // The bot was added to a channel nobody has configured. Record it so it can
+    // be enabled from the setup UI, but do not mine it.
+    await upsertChannel(env.DB, {
+      channel_id: record.channel,
+      channel_name: record.channel,
+      workspace_id: teamId,
+    });
+    return { ok: true as const };
+  }
+  if (!(channel.enabled && channel.project_id)) {
+    return { ok: true as const };
+  }
+  const workflowId = await workflowForProject(
+    env.DB,
+    teamId,
+    channel.project_id
+  );
+  const normalized = await normalizeSlackObservation(
     env.DB,
     {
       channel: record.channel,
@@ -120,11 +168,31 @@ async function persistSlackMessageEvent(
       workspace: teamId,
     },
     {
-      projectId: env.SLACK_PROJECT_ID,
-      slackWorkspace: env.SLACK_WORKSPACE,
+      channel,
+      client: new SlackClient(install.bot_token),
+      teamDomain: install.team_domain,
+      workflowId,
     }
   );
-  return { channelId: record.channel, teamId };
+  return {
+    normalized,
+    ok: true as const,
+    scope: { channel: record.channel, teamId },
+  };
+}
+
+async function workflowForProject(
+  db: D1Database,
+  workspaceId: string,
+  projectId: string
+) {
+  const row = await db
+    .prepare(
+      "SELECT workflow_id FROM tenant_project WHERE workspace_id = ? AND id = ?"
+    )
+    .bind(workspaceId, projectId)
+    .first<{ workflow_id: string | null }>();
+  return row?.workflow_id ?? null;
 }
 
 // Mounted before browser Origin/session middleware: Slack authenticates with HMAC.
@@ -136,6 +204,48 @@ slackEvents.use(
     onError: (c) => c.json({ error: "Event too large." }, 413),
   })
 );
+/**
+ * Handles the lifecycle events that change what Ariadne observes. Returns true
+ * when the event was fully handled here.
+ */
+async function handleLifecycleEvent(
+  env: SlackEventsEnv,
+  teamId: string,
+  event: Record<string, unknown>
+) {
+  // A workspace that uninstalls the app must stop being observed immediately.
+  if (event.type === "app_uninstalled" || event.type === "tokens_revoked") {
+    await revokeInstall(env.DB, teamId);
+    return true;
+  }
+  // Keep the selectable channel list current as channels are renamed.
+  if (event.type === "channel_rename" && object(event.channel)) {
+    const renamed = event.channel;
+    if (nonempty(renamed.id)) {
+      await upsertChannel(env.DB, {
+        channel_id: renamed.id,
+        channel_name: nonempty(renamed.name) ? renamed.name : renamed.id,
+        workspace_id: teamId,
+      });
+    }
+    return true;
+  }
+  return false;
+}
+
+function parseEnvelope(body: string) {
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(body);
+  } catch {
+    return { error: "Invalid JSON.", status: 400 as const };
+  }
+  if (!object(envelope)) {
+    return { error: "Invalid event.", status: 400 as const };
+  }
+  return { envelope };
+}
+
 slackEvents.post("/", async (c) => {
   c.header("Cache-Control", "no-store");
   if (!c.env.SLACK_SIGNING_SECRET) {
@@ -145,15 +255,11 @@ slackEvents.post("/", async (c) => {
   if (!(await verified(c.req.raw.headers, body, c.env.SLACK_SIGNING_SECRET))) {
     return c.json({ error: "Invalid Slack signature." }, 401);
   }
-  let envelope: unknown;
-  try {
-    envelope = JSON.parse(body);
-  } catch {
-    return c.json({ error: "Invalid JSON." }, 400);
+  const parsed = parseEnvelope(body);
+  if ("error" in parsed) {
+    return c.json({ error: parsed.error }, parsed.status);
   }
-  if (!object(envelope)) {
-    return c.json({ error: "Invalid event." }, 400);
-  }
+  const { envelope } = parsed;
   if (envelope.type === "url_verification") {
     if (!nonempty(envelope.challenge)) {
       return c.json({ error: "Missing challenge." }, 400);
@@ -173,32 +279,22 @@ slackEvents.post("/", async (c) => {
     return c.json({ error: "Missing event identity." }, 400);
   }
   const { event } = envelope;
+  if (await handleLifecycleEvent(c.env, envelope.team_id, event)) {
+    return c.json({ ok: true });
+  }
   if (event.type !== "message") {
     return c.json({ ok: true });
   }
-  const record = messageEventRecord(event);
-  if (!record) {
-    return c.json({ error: "Missing message identity." }, 400);
+
+  const outcome = await handleMessageEvent(c.env, envelope, event);
+  if ("error" in outcome) {
+    return c.json({ error: outcome.error }, outcome.status);
   }
-  // Append observed changes rather than overwriting messages: edits, deletions and
-  // out-of-order deliveries retain their source evidence. Slack retries deduplicate.
-  const persisted = await persistSlackMessageEvent(
-    c.env,
-    envelope,
-    event,
-    record
-  );
-  if (
-    c.env.CHANNEL_COORDINATOR &&
-    (!c.env.SLACK_ALLOWED_TEAM_ID ||
-      c.env.SLACK_ALLOWED_TEAM_ID === persisted.teamId) &&
-    (!c.env.SLACK_ALLOWED_CHANNEL_ID ||
-      c.env.SLACK_ALLOWED_CHANNEL_ID === persisted.channelId)
-  ) {
+  if (outcome.normalized && outcome.scope && c.env.CHANNEL_COORDINATOR) {
     c.executionCtx.waitUntil(
       wakeChannelCoordinator(c.env, {
-        channel: persisted.channelId,
-        workspaceId: persisted.teamId,
+        channel: outcome.scope.channel,
+        workspaceId: outcome.scope.teamId,
       })
     );
   }

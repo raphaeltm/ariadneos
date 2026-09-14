@@ -65,7 +65,7 @@ export function ProcessInspector({
   };
 
   return (
-    <aside className={`inspector ${className}`} data-demo-target="inspector">
+    <aside className={`inspector ${className}`}>
       <div className="inspector-label">
         {selected ? "SELECTION INSPECTOR" : "PROCESS INSPECTOR"}
         {selected && onClearSelection ? (

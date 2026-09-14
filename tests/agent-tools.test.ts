@@ -1,6 +1,4 @@
-import { readFileSync } from "node:fs";
-import type { SQLInputValue } from "node:sqlite";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentToolError,
@@ -16,45 +14,22 @@ import {
   triggerExtraction,
 } from "../server/agent/tools/index.ts";
 import type { ModelAdapter, ModelJsonCall } from "../server/models.ts";
+import {
+  createTestDatabase,
+  type SqliteD1,
+  seedPerson,
+  seedTenant,
+  TEST_CHANNEL,
+  TEST_PROJECT,
+  TEST_WORKFLOW,
+  TEST_WORKSPACE,
+} from "./helpers/tenant.ts";
 
-interface BoundStatement {
-  all: <T>() => Promise<{ results: T[] }>;
-  first: <T>() => Promise<T | null>;
-  run: () => Promise<unknown>;
-}
-
-class SqliteD1 {
-  private readonly db: DatabaseSync;
-
-  constructor(db: DatabaseSync) {
-    this.db = db;
-  }
-
-  prepare(sql: string) {
-    const create = (values: unknown[]): BoundStatement => ({
-      all: async <T>() => ({
-        results: this.db
-          .prepare(sql)
-          .all(...(values as SQLInputValue[])) as T[],
-      }),
-      first: async <T>() =>
-        (this.db.prepare(sql).get(...(values as SQLInputValue[])) as
-          | T
-          | undefined) ?? null,
-      run: async () => this.db.prepare(sql).run(...(values as SQLInputValue[])),
-    });
-    return {
-      all: create([]).all,
-      bind: (...values: unknown[]) => create(values),
-      first: create([]).first,
-      run: create([]).run,
-    };
-  }
-
-  async batch(statements: BoundStatement[]) {
-    return await Promise.all(statements.map((statement) => statement.run()));
-  }
-}
+const TRIAGE_TS = "1726152000.000100";
+const EXTRACT_TS = "1726152005.000100";
+const SESSION_ID = "ses_case_1";
+const STEP_ID = "stp_triage";
+const PERMALINK = `https://testworkspace.slack.com/archives/${TEST_CHANNEL}/p1726152000000100`;
 
 class FakeModel implements ModelAdapter {
   calls: ModelJsonCall[] = [];
@@ -65,10 +40,10 @@ class FakeModel implements ModelAdapter {
       steps: [
         {
           activity_slug: "triage_incident",
-          actor_person_id: "per_nia",
+          actor_person_id: "per_u0nia",
           artifact_id: null,
           confidence: 0.9,
-          evidence: ["1726152000.000100"],
+          evidence: [EXTRACT_TS],
           handoff_to_person_id: null,
           intent: "Triage the incident",
           label: "Triage incident",
@@ -80,27 +55,27 @@ class FakeModel implements ModelAdapter {
   }
 }
 
+let d1: SqliteD1;
 let sqlite: DatabaseSync;
 let requestContext: AgentToolRequestContext;
 
 beforeEach(() => {
-  sqlite = new DatabaseSync(":memory:");
-  sqlite.exec(readFileSync("migrations/0005_pm_foundation.sql", "utf8"));
-  sqlite.exec(
-    readFileSync("migrations/0006_channel_coordinator_runtime.sql", "utf8")
-  );
-  sqlite.exec(readFileSync("migrations/0007_graph_kb_persistence.sql", "utf8"));
-  sqlite.exec(readFileSync("migrations/0008_agent_tools.sql", "utf8"));
-  seedProcessRows(sqlite);
+  ({ d1, sqlite } = createTestDatabase());
+  seedTenant(sqlite);
+  const personId = seedPerson(sqlite, {
+    name: "Nia",
+    role: "support",
+    slackUserId: "U0NIA",
+  });
+  seedProcessRows(sqlite, personId);
   requestContext = {
     actorId: "agent:test",
     env: {
       AGENT_ENABLED: "true",
-      DB: new SqliteD1(sqlite) as unknown as D1Database,
-      SLACK_ALLOWED_CHANNEL_ID: "C1",
-      SLACK_ALLOWED_TEAM_ID: "T1",
+      DB: d1 as unknown as D1Database,
     },
-    now: () => "2026-09-12T12:00:10.000Z",
+    now: () => "2026-09-14T12:00:10.000Z",
+    workspaceId: TEST_WORKSPACE,
   };
 });
 
@@ -126,11 +101,11 @@ describe("Ariadne Mastra tools", () => {
 
   it("queries the scoped graph and rejects cross-scope requests", async () => {
     await expect(
-      queryProcessGraph({ workspace_id: "T2" }, requestContext)
+      queryProcessGraph({ workspace_id: "T0OTHERTEAM" }, requestContext)
     ).rejects.toMatchObject({ code: "forbidden_scope", status: 403 });
 
     const graph = await queryProcessGraph(
-      { workflow_id: "wf_p1_incident" },
+      { workflow_id: TEST_WORKFLOW },
       requestContext
     );
     expect(graph.nodes.map((node) => node.activity.slug)).toContain(
@@ -140,14 +115,11 @@ describe("Ariadne Mastra tools", () => {
   });
 
   it("returns evidence messages for a scoped step", async () => {
-    const evidence = await getEvidence(
-      { step_id: "stp_triage" },
-      requestContext
-    );
+    const evidence = await getEvidence({ step_id: STEP_ID }, requestContext);
     expect(evidence.messages).toMatchObject([
       {
         author_label: "Nia",
-        permalink: "https://slack.example/archives/C1/p1726152000000100",
+        permalink: PERMALINK,
       },
     ]);
   });
@@ -166,11 +138,8 @@ describe("Ariadne Mastra tools", () => {
     expect(workspace.activities.map((activity) => activity.slug)).toContain(
       "triage_incident"
     );
-    const cases = await searchWorkspace(
-      { query: "ses_helios" },
-      requestContext
-    );
-    expect(cases.cases.map((session) => session.id)).toContain("ses_helios_1");
+    const cases = await searchWorkspace({ query: SESSION_ID }, requestContext);
+    expect(cases.cases.map((session) => session.id)).toContain(SESSION_ID);
   });
 
   it("blocks extraction when the agent is disabled", async () => {
@@ -180,7 +149,7 @@ describe("Ariadne Mastra tools", () => {
       model: new FakeModel(),
     };
     const result = await triggerExtraction(
-      { session_id: "ses_helios_1", workflow_id: "wf_p1_incident" },
+      { session_id: SESSION_ID, workflow_id: TEST_WORKFLOW },
       disabledContext
     );
     expect(result).toMatchObject({
@@ -194,7 +163,7 @@ describe("Ariadne Mastra tools", () => {
   it("runs extraction through the existing extractor boundary", async () => {
     const model = new FakeModel();
     const result = await triggerExtraction(
-      { session_id: "ses_helios_1", workflow_id: "wf_p1_incident" },
+      { session_id: SESSION_ID, workflow_id: TEST_WORKFLOW },
       { ...requestContext, model }
     );
     expect(result).toMatchObject({
@@ -214,7 +183,7 @@ describe("Ariadne Mastra tools", () => {
         payload: { node_id: "act_improvise_hotfix" },
         rationale: "Observed in repeated incident cases.",
         request_id: "proposal-1",
-        workflow_id: "wf_p1_incident",
+        workflow_id: TEST_WORKFLOW,
       },
       requestContext
     );
@@ -224,7 +193,7 @@ describe("Ariadne Mastra tools", () => {
         payload: { node_id: "act_improvise_hotfix" },
         rationale: "Observed in repeated incident cases.",
         request_id: "proposal-1",
-        workflow_id: "wf_p1_incident",
+        workflow_id: TEST_WORKFLOW,
       },
       requestContext
     );
@@ -246,7 +215,7 @@ describe("Ariadne Mastra tools", () => {
         nodes: ["act_triage_incident"],
         request_id: "event-1",
         text: "Triage is supported by one observed message.",
-        workflow_id: "wf_p1_incident",
+        workflow_id: TEST_WORKFLOW,
       },
       requestContext
     );
@@ -266,7 +235,7 @@ describe("Ariadne Mastra tools", () => {
   it("blocks disabled Slack posts and rate-limits enabled post intents", async () => {
     await expect(
       postToSlack(
-        { text: "Ariadne answer", workflow_id: "wf_p1_incident" },
+        { text: "Ariadne answer", workflow_id: TEST_WORKFLOW },
         {
           ...requestContext,
           env: { ...requestContext.env, AGENT_ENABLED: "false" },
@@ -278,7 +247,7 @@ describe("Ariadne Mastra tools", () => {
       {
         request_id: "slack-1",
         text: "First Ariadne answer",
-        workflow_id: "wf_p1_incident",
+        workflow_id: TEST_WORKFLOW,
       },
       requestContext
     );
@@ -288,7 +257,7 @@ describe("Ariadne Mastra tools", () => {
         {
           request_id: "slack-2",
           text: "Second Ariadne answer",
-          workflow_id: "wf_p1_incident",
+          workflow_id: TEST_WORKFLOW,
         },
         requestContext
       )
@@ -296,32 +265,57 @@ describe("Ariadne Mastra tools", () => {
   });
 });
 
-function seedProcessRows(db: DatabaseSync) {
+function seedProcessRows(db: DatabaseSync, personId: string) {
   db.prepare(
     `INSERT INTO pm_session
      (id, workspace_id, channel, project_id, workflow_id, status, source, started_ts)
-     VALUES ('ses_helios_1', 'T1', 'C1', 'proj_helios', 'wf_p1_incident', 'closed', 'human', '2026-09-12T12:00:00.000Z')`
-  ).run();
+     VALUES (?, ?, ?, ?, ?, 'closed', 'human', '2026-09-14T12:00:00.000Z')`
+  ).run(SESSION_ID, TEST_WORKSPACE, TEST_CHANNEL, TEST_PROJECT, TEST_WORKFLOW);
   db.prepare(
     `INSERT INTO pm_message
      (workspace_id, channel, ts, id, session_id, author_person_id, author_label,
       text, permalink, received_at)
-     VALUES ('T1', 'C1', '1726152000.000100', 'T1:C1:1726152000.000100',
-      'ses_helios_1', 'per_nia', 'Nia', 'I triaged the incident.',
-      'https://slack.example/archives/C1/p1726152000000100',
-      '2026-09-12T12:00:01.000Z')`
-  ).run();
+     VALUES (?, ?, ?, ?, ?, ?, 'Nia', 'I triaged the incident.', ?, '2026-09-14T12:00:01.000Z')`
+  ).run(
+    TEST_WORKSPACE,
+    TEST_CHANNEL,
+    TRIAGE_TS,
+    `${TEST_WORKSPACE}:${TEST_CHANNEL}:${TRIAGE_TS}`,
+    SESSION_ID,
+    personId,
+    PERMALINK
+  );
   db.prepare(
     `INSERT INTO pm_step
      (id, session_id, seq, activity_id, actor_person_id, intent, type, modality,
       lifecycle_state, curation_status, confidence, ts_start)
-     VALUES ('stp_triage', 'ses_helios_1', 1, 'act_triage_incident',
-      'per_nia', 'triage incident', 'action', 'reported', 'done', 'confirmed',
-      0.92, '2026-09-12T12:00:01.000Z')`
-  ).run();
+     VALUES (?, ?, 1, 'act_triage_incident', ?, 'triage incident', 'action', 'reported',
+      'done', 'confirmed', 0.92, '2026-09-14T12:00:01.000Z')`
+  ).run(STEP_ID, SESSION_ID, personId);
   db.prepare(
     `INSERT INTO pm_step_evidence
      (step_id, workspace_id, channel, message_ts, message_revision)
-     VALUES ('stp_triage', 'T1', 'C1', '1726152000.000100', 1)`
-  ).run();
+     VALUES (?, ?, ?, ?, 1)`
+  ).run(STEP_ID, TEST_WORKSPACE, TEST_CHANNEL, TRIAGE_TS);
+  db.prepare(
+    `INSERT INTO pm_message
+     (workspace_id, channel, ts, id, session_id, author_person_id, author_label,
+      text, permalink, received_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'Nia', 'The fix still needs a deploy.', ?, '2026-09-14T12:00:06.000Z')`
+  ).run(
+    TEST_WORKSPACE,
+    TEST_CHANNEL,
+    EXTRACT_TS,
+    `${TEST_WORKSPACE}:${TEST_CHANNEL}:${EXTRACT_TS}`,
+    SESSION_ID,
+    personId,
+    `https://testworkspace.slack.com/archives/${TEST_CHANNEL}/p1726152005000100`
+  );
+  db.prepare(
+    `INSERT INTO tenant_policy
+     (workspace_id, id, project_id, workflow_id, kind, activity_slug, text,
+      params_json, created_at)
+     VALUES (?, 'pol_sec_review', ?, ?, 'approval', 'security_review',
+      'Security review requires manager approval.', '{}', '2026-09-14T00:00:00.000Z')`
+  ).run(TEST_WORKSPACE, TEST_PROJECT, TEST_WORKFLOW);
 }

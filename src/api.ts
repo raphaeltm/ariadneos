@@ -27,15 +27,6 @@ import type {
   WorkflowId,
   WorkspaceId,
 } from "../shared/contracts.ts";
-import {
-  fixtureMessages,
-  fixtureSnapshot,
-  fixtureSteps,
-  overlayGraph,
-  removalDelta,
-} from "../shared/fixtures.ts";
-
-const WORKFLOW_ID_PREFIX = /^wf_/;
 
 export type {
   ActivityId,
@@ -161,6 +152,7 @@ export type ModelEditAction =
   | "merge"
   | "merge_nodes"
   | "promote"
+  | "reject"
   | "remove_edge"
   | "remove_node"
   | "rename"
@@ -207,32 +199,11 @@ export interface ModelEditResponse {
   revision: number;
 }
 
-export interface SimulationRequest {
-  request_id: string;
-  scenario_id: string;
-  scope: ConnectionScope;
-  variant: string;
-}
-
-export interface SimulationResponse {
-  session_id: ProcessSessionId;
-}
-
 export interface ApiAdapter {
   applyModelEdit: (request: ModelEditRequest) => Promise<ModelEditResponse>;
   ask: (request: AskRequest, signal?: AbortSignal) => Promise<RagAnswer>;
   buildStreamUrl: (scope: ConnectionScope, after?: JournalId) => string;
   fetchSnapshot: (request: SnapshotRequest) => Promise<Snapshot>;
-  pauseSimulation: (
-    sessionId: ProcessSessionId,
-    scope: ConnectionScope,
-    reason: string
-  ) => Promise<void>;
-  resumeSimulation: (
-    sessionId: ProcessSessionId,
-    scope: ConnectionScope
-  ) => Promise<void>;
-  runSimulation: (request: SimulationRequest) => Promise<SimulationResponse>;
   updateStepStatus: (request: StepStatusRequest) => Promise<void>;
 }
 
@@ -246,16 +217,6 @@ export class ApiError extends Error {
     this.code = code;
     this.status = status;
   }
-}
-
-export interface ClientFixtures {
-  atlasSnapshot: Snapshot;
-  baseSnapshot: Snapshot;
-  duplicateReplay: JournalEvent[];
-  finalSnapshot: Snapshot;
-  replay: JournalEvent[];
-  revisionMismatch: JournalEvent;
-  scope: ConnectionScope;
 }
 
 export function createProductionApiAdapter(
@@ -311,12 +272,7 @@ export function createProductionApiAdapter(
       request<RagAnswer>(
         "/api/ask",
         {
-          body: JSON.stringify({
-            ...body,
-            workflow: body.workflow_id
-              ? legacyWorkflowId(body.workflow_id)
-              : undefined,
-          }),
+          body: JSON.stringify(body),
           headers: { "Content-Type": "application/json" },
           method: "POST",
         },
@@ -345,27 +301,6 @@ export function createProductionApiAdapter(
           signal
         )
       ),
-    pauseSimulation: async (sessionId, scope, reason) => {
-      await post<void>("/api/sim/pause", {
-        project_id: scope.project_id,
-        reason,
-        session_id: sessionId,
-      });
-    },
-    resumeSimulation: async (sessionId, scope) => {
-      await post<void>("/api/sim/resume", {
-        project_id: scope.project_id,
-        session_id: sessionId,
-      });
-    },
-    runSimulation: ({ request_id, scenario_id, scope, variant }) =>
-      post<SimulationResponse>("/api/sim/run", {
-        project_id: scope.project_id,
-        request_id,
-        scenario_id,
-        variant,
-        workflow_id: scope.workflow_id,
-      }),
     updateStepStatus: ({ request_id, scope, status, step_id }) =>
       post<void>(`/api/steps/${encodeURIComponent(step_id)}/status`, {
         project_id: scope.project_id,
@@ -375,233 +310,9 @@ export function createProductionApiAdapter(
   };
 }
 
-function legacyWorkflowId(workflowId: WorkflowId): string {
-  const compatibility: Partial<Record<WorkflowId, string>> = {
-    wf_access: "access",
-    wf_feature_intake: "refund",
-    wf_p1_incident: "vendor",
-    wf_refund: "refund",
-    wf_vendor: "vendor",
-  };
-  return (
-    compatibility[workflowId] ?? workflowId.replace(WORKFLOW_ID_PREFIX, "")
-  );
-}
-
-export function createFixtureApiAdapter(
-  fixtures = createClientFixtures()
-): ApiAdapter {
-  return {
-    applyModelEdit: ({ action, payload, request_id, scope }) => {
-      const { graph } = fixtures.finalSnapshot;
-      const node = graph.nodes.find(
-        (item) =>
-          item.activity.slug === payload.slug ||
-          item.activity.id === payload.activity_id
-      );
-      return Promise.resolve({
-        conformance: graph.conformance,
-        designed: {
-          edges: [],
-          nodes: [],
-          workflow_id: scope.workflow_id ?? "wf_p1_incident",
-        },
-        edit: {
-          action,
-          actor: "fixture",
-          base_revision: graph.revision - 1,
-          created_at: "2026-09-12T00:00:00.000Z",
-          id: `edt_${request_id.replaceAll("-", "_")}`,
-          payload,
-          request_id,
-          revision: graph.revision,
-          target_edit_id: null,
-          undone: false,
-          workflow: scope.workflow_id ?? "wf_p1_incident",
-        },
-        graph: node ? graph : fixtures.baseSnapshot.graph,
-        graph_revision: graph.revision,
-        revision: graph.revision,
-      });
-    },
-    ask: async (request) => ({
-      answer: `Fixture answer for ${request.project_id}.`,
-      citations: [{ id: "pol_sec_review", kind: "kb" }],
-      nodes: ["act_security_review"],
-      subgraph: fixtures.finalSnapshot.graph,
-    }),
-    buildStreamUrl: (scope, after) => {
-      const url = new URL("https://fixtures.invalid/api/stream");
-      url.searchParams.set("project_id", scope.project_id);
-      url.searchParams.set("view", scope.view);
-      if (scope.workflow_id) {
-        url.searchParams.set("workflow_id", scope.workflow_id);
-      }
-      if (after !== undefined) {
-        url.searchParams.set("after", String(after));
-      }
-      return `${url.pathname}${url.search}`;
-    },
-    fetchSnapshot: async ({ scope }) =>
-      scope.project_id === "proj_atlas"
-        ? fixtures.atlasSnapshot
-        : fixtures.finalSnapshot,
-    pauseSimulation: async () => undefined,
-    resumeSimulation: async () => undefined,
-    runSimulation: async () => ({ session_id: "ses_helios_skip_review" }),
-    updateStepStatus: async () => undefined,
-  };
-}
-
-export function createClientFixtures(): ClientFixtures {
-  const scope: ConnectionScope = {
-    channel: "C_SYNTH_PROCESS",
-    min_support: 1,
-    project_id: "proj_helios",
-    view: "overlay",
-    workflow_id: "wf_p1_incident",
-    workspace_id: "T_SYNTH_FIXTURE",
-  };
-  const ghostRemovalDelta: GraphDelta = {
-    ...removalDelta,
-    nodes_updated: removalDelta.nodes_updated.map((item) =>
-      item.id === "act_security_review"
-        ? {
-            ...item,
-            activity: {
-              ...item.activity,
-              occurrences: 0,
-              plane: "designed",
-              support: 0,
-            },
-          }
-        : item
-    ),
-  };
-  const baseSnapshot = normalizeSnapshot({
-    ...fixtureSnapshot,
-    cursor: 100,
-    graph: overlayGraph,
-    messages: fixtureMessages.filter(
-      (item) => item.id !== "T_SYNTH_FIXTURE:C_SYNTH_PROCESS:100100.000400"
-    ),
-    steps: fixtureSteps.filter(
-      (item) => item.id !== "stp_helios_skip_negated_security"
-    ),
-  });
-  const finalSnapshot = normalizeSnapshot({
-    ...fixtureSnapshot,
-    cursor: 103,
-    graph: applyDeltaToGraph(overlayGraph, ghostRemovalDelta),
-  });
-  const atlasSessionIds = new Set(
-    fixtureSnapshot.sessions
-      .filter((item) => item.project_id === "proj_atlas")
-      .map((item) => item.id)
-  );
-  const messageEventPayload = fixtureMessages.find(
-    (item) => item.id === "T_SYNTH_FIXTURE:C_SYNTH_PROCESS:100100.000400"
-  );
-  const stepEventPayload = fixtureSteps.find(
-    (item) => item.id === "stp_helios_skip_negated_security"
-  );
-  if (!(messageEventPayload && stepEventPayload)) {
-    throw new Error("Fixture replay payloads are missing.");
-  }
-  const replay: JournalEvent[] = [
-    envelope(101, "message", messageEventPayload),
-    envelope(102, "step", stepEventPayload),
-    envelope(103, "graph_delta", ghostRemovalDelta),
-  ];
-  return {
-    atlasSnapshot: normalizeSnapshot({
-      ...fixtureSnapshot,
-      graph: {
-        ...fixtureSnapshot.graph,
-        project_id: "proj_atlas",
-        workflow_id: "wf_feature_intake",
-      },
-      messages: fixtureSnapshot.messages.filter((item) =>
-        atlasSessionIds.has(item.session_id)
-      ),
-      sessions: fixtureSnapshot.sessions.filter((item) =>
-        atlasSessionIds.has(item.id)
-      ),
-      steps: fixtureSnapshot.steps.filter((item) =>
-        atlasSessionIds.has(item.session_id)
-      ),
-    }),
-    baseSnapshot,
-    duplicateReplay: [
-      ...replay,
-      replay[1] as JournalEvent,
-      replay[2] as JournalEvent,
-    ],
-    finalSnapshot,
-    replay,
-    revisionMismatch: envelope(104, "graph_delta", {
-      ...ghostRemovalDelta,
-      base_revision: 4,
-      revision: 9,
-    }),
-    scope,
-  };
-}
-
 interface ClientSnapshotExtras {
   agent_posts: AgentPost[];
   pipeline_events: PipelineEvent[];
-}
-
-function applyDeltaToGraph(graph: GraphView, delta: GraphDelta): GraphView {
-  const removedEdges = new Set(delta.edges_removed);
-  const removedNodes = new Set(delta.nodes_removed);
-  const nodeUpdates = new Map(
-    delta.nodes_updated.map((item) => [item.id, item])
-  );
-  const edgeUpdates = new Map(
-    delta.edges_updated.map((item) => [item.id, item])
-  );
-  return {
-    ...graph,
-    edges: [
-      ...graph.edges
-        .filter(
-          (item) =>
-            !(
-              removedEdges.has(item.id) ||
-              removedNodes.has(item.from) ||
-              removedNodes.has(item.to)
-            )
-        )
-        .map((item) => edgeUpdates.get(item.id) ?? item),
-      ...delta.edges_added,
-    ],
-    nodes: [
-      ...graph.nodes
-        .filter((item) => !removedNodes.has(item.id))
-        .map((item) => nodeUpdates.get(item.id) ?? item),
-      ...delta.nodes_added,
-    ],
-    revision: delta.revision,
-  };
-}
-
-function envelope<TKind extends JournalEvent["kind"], TPayload>(
-  id: JournalId,
-  kind: TKind,
-  payload: TPayload
-): JournalEnvelope<TKind, TPayload> {
-  return {
-    channel: "C_SYNTH_PROCESS",
-    id,
-    kind,
-    payload,
-    project_id: "proj_helios",
-    session_id: "ses_helios_skip_review",
-    ts: "2026-09-12T10:03:00.000Z",
-    workspace_id: "T_SYNTH_FIXTURE",
-  };
 }
 
 function isApiError(value: unknown): value is ContractApiError {

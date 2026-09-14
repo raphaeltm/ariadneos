@@ -1,11 +1,5 @@
 import type { KnowledgeBase } from "../../../shared/contracts.ts";
 import type {
-  ActivityEvent,
-  ProcessEdge,
-  ProcessModel,
-  ProcessNode,
-} from "../../../shared/process.ts";
-import type {
   ActivityId,
   GraphEdge,
   GraphNode,
@@ -248,106 +242,14 @@ export function buildContractInspectorDetails({
   };
 }
 
-interface LegacyInspectorInput {
-  events: ActivityEvent[];
-  model: ProcessModel;
-  selectedEdge: ProcessEdge | undefined;
-  selectedNode: ProcessNode | undefined;
-  selection: { id: string; kind: "edge" | "node" } | undefined;
+function stepNodeId(step: Step): ActivityId | StepId {
+  return step.activity_id ?? step.id;
 }
 
-export function buildLegacyInspectorDetails({
-  events,
-  model,
-  selectedEdge,
-  selectedNode,
-  selection,
-}: LegacyInspectorInput): InspectorDetails {
-  if (!(selection && (selectedNode || selectedEdge))) {
-    return {
-      badges: [
-        `${model.stats.variants} variants`,
-        `${model.stats.cases} cases`,
-      ],
-      conformanceSections: [],
-      curationItems: legacyCurationItems(events),
-      evidence: [],
-      metrics: [
-        { label: "Events", value: String(model.stats.events) },
-        { label: "Handoffs", value: String(model.stats.handoffs) },
-        { label: "Main path", value: percent(model.stats.dominantShare) },
-      ],
-      overviewPath: model.variants[0]?.path ?? [],
-      summary:
-        "Select a step or transition to inspect its supporting observations.",
-      title: "Process at a glance",
-      type: "overview",
-    };
-  }
-
-  if (selectedNode) {
-    return {
-      badges: [
-        planeLabel(selectedNode.plane ?? "discovered"),
-        selectedNode.roleExpected ?? selectedNode.role,
-        `${selectedNode.count} observations`,
-      ],
-      conformanceSections: legacyNodeConformance(selectedNode),
-      curationItems: legacyCurationItems(events),
-      evidence: legacyEvidence(events),
-      metrics: [
-        { label: "Observed", value: String(selectedNode.count) },
-        { label: "Actors", value: String(selectedNode.actors.length) },
-        {
-          label: "Grounded",
-          value: `${selectedNode.grounded ?? groundedLegacyEvents(events)}/${events.length}`,
-        },
-      ],
-      overviewPath: [],
-      summary: `${selectedNode.label} is supported by ${selectedNode.count} observation${
-        selectedNode.count === 1 ? "" : "s"
-      } across ${selectedNode.actors.length} actor${
-        selectedNode.actors.length === 1 ? "" : "s"
-      }.`,
-      title: selectedNode.label,
-      type: "node",
-    };
-  }
-
-  if (selectedEdge) {
-    return {
-      badges: [
-        planeLabel(selectedEdge.plane ?? "discovered"),
-        selectedEdge.violates?.length
-          ? `${selectedEdge.violates.length} policy issue`
-          : "no policy issue",
-        `${selectedEdge.cases} cases`,
-      ],
-      conformanceSections: legacyEdgeConformance(selectedEdge),
-      curationItems: legacyCurationItems(events),
-      evidence: legacyEvidence(events),
-      metrics: [
-        { label: "Frequency", value: percent(selectedEdge.probability) },
-        {
-          label: "Median lag",
-          value: `${Math.round(selectedEdge.medianMinutes)}m`,
-        },
-        { label: "Evidence", value: String(selectedEdge.evidence.length) },
-      ],
-      overviewPath: [],
-      summary: `This transition appears ${selectedEdge.count} time${
-        selectedEdge.count === 1 ? "" : "s"
-      } in ${selectedEdge.cases} distinct case${
-        selectedEdge.cases === 1 ? "" : "s"
-      }.`,
-      title: `${selectedEdge.source} -> ${selectedEdge.target}`,
-      type: "edge",
-    };
-  }
-
-  return emptyDetails("Selection is no longer available.");
-}
-
+/**
+ * Steps the current selection points at: a node's own steps, the step pairs that
+ * produced a selected transition, or the steps a selected message is evidence for.
+ */
 function contractSelectedSteps(
   selectedNode: GraphNode | undefined,
   selectedEdge: GraphEdge | undefined,
@@ -526,7 +428,7 @@ function workflowConformanceSections(
       kind: "overlay",
       min_support: 1,
       nodes: [],
-      project_id: "proj_helios",
+      project_id: "" as GraphView["project_id"],
       revision: 0,
     },
     null
@@ -592,93 +494,6 @@ function curationItemsForSteps(steps: Step[]): InspectorCurationItem[] {
     }));
 }
 
-function legacyEvidence(events: ActivityEvent[]): InspectorEvidence[] {
-  return events.flatMap((event) => {
-    if (event.messages?.length) {
-      return event.messages.map((message) => ({
-        author: message.author,
-        caseId: event.caseId,
-        id: `${event.id}:${message.ts}`,
-        permalink: message.permalink || undefined,
-        quote: message.text,
-        timestamp: event.timestamp,
-      }));
-    }
-    return [
-      {
-        author: event.actor,
-        caseId: event.caseId,
-        id: event.id,
-        quote: `${event.action} on ${event.artifact}`,
-        timestamp: event.timestamp,
-      },
-    ];
-  });
-}
-
-function legacyCurationItems(events: ActivityEvent[]): InspectorCurationItem[] {
-  return events
-    .filter((event) => event.status !== "rejected")
-    .map((event) => {
-      let reason = "Confirmed simulation observation";
-      if (event.status === "proposed") {
-        reason = "Needs human curation before it contributes to support.";
-      } else if (event.state) {
-        reason = `${event.state} ${event.modality ?? "reported"} observation`;
-      }
-      return {
-        confidence: event.confidence,
-        id: event.id,
-        label: `${event.action} on ${event.artifact}`,
-        reason,
-        status: event.status ?? "confirmed",
-      };
-    });
-}
-
-function legacyNodeConformance(
-  selectedNode: ProcessNode
-): InspectorConformanceSection[] {
-  const sections: InspectorConformanceSection[] = [];
-  if (selectedNode.plane === "designed" && selectedNode.count === 0) {
-    sections.push({
-      items: [
-        "Documented activity has not been observed in the selected data.",
-      ],
-      title: "Missing work",
-      tone: "warning",
-    });
-  }
-  if (
-    selectedNode.roleExpected &&
-    selectedNode.roleExpected !== selectedNode.role
-  ) {
-    sections.push({
-      items: [
-        `Expected ${selectedNode.roleExpected}; observed ${selectedNode.role}.`,
-      ],
-      title: "Role deviation",
-      tone: "warning",
-    });
-  }
-  return sections;
-}
-
-function legacyEdgeConformance(
-  selectedEdge: ProcessEdge
-): InspectorConformanceSection[] {
-  if (!selectedEdge.violates?.length) {
-    return [];
-  }
-  return [
-    {
-      items: selectedEdge.violates.map((policy) => `${policy} is violated.`),
-      title: "Policy violations",
-      tone: "danger",
-    },
-  ];
-}
-
 function groupStepsBySession(steps: Step[]) {
   const grouped = new Map<string, Step[]>();
   for (const step of steps) {
@@ -693,10 +508,6 @@ function groupStepsBySession(steps: Step[]) {
   return grouped;
 }
 
-function stepNodeId(step: Step): ActivityId | StepId {
-  return step.activity_id ?? step.id;
-}
-
 function selectedCaseCount(steps: Step[]) {
   return new Set(steps.map((step) => step.session_id)).size;
 }
@@ -707,12 +518,6 @@ function groundingMetric(steps: Step[]) {
   }
   const grounded = steps.filter((step) => step.evidence.length > 0).length;
   return `${grounded}/${steps.length}`;
-}
-
-function groundedLegacyEvents(events: ActivityEvent[]) {
-  return events.filter((event) =>
-    event.messages?.some((message) => message.permalink)
-  ).length;
 }
 
 function activityLabel(

@@ -1,23 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { mine } from "../shared/process.ts";
-import { simulate } from "../shared/simulation.ts";
-import { createClientFixtures } from "../src/api.ts";
-import {
-  buildContractInspectorDetails,
-  buildLegacyInspectorDetails,
-} from "../src/components/inspector/inspector-data.ts";
+import { buildContractInspectorDetails } from "../src/components/inspector/inspector-data.ts";
 import { applySnapshot, createInitialState } from "../src/store.ts";
+import { observedClientFixtures, TEST_WORKFLOW } from "./helpers/tenant.ts";
 
-const ACCESS_CASE_ID = /^ACC-/;
+const SLACK_PERMALINK = /^https:\/\/[^/]+\/archives\//;
+
+function loadedState() {
+  const fixtures = observedClientFixtures();
+  const state = applySnapshot(
+    createInitialState(fixtures.scope),
+    fixtures.finalSnapshot as never,
+    fixtures.scope
+  );
+  return { fixtures, state };
+}
 
 describe("process inspector data", () => {
-  it("resolves selected typed graph nodes to evidence and curation detail", () => {
-    const fixtures = createClientFixtures();
-    const state = applySnapshot(
-      createInitialState(fixtures.scope),
-      fixtures.finalSnapshot,
-      fixtures.scope
-    );
+  it("resolves a selected designed activity nobody performed", () => {
+    const { fixtures, state } = loadedState();
     const details = buildContractInspectorDetails({
       conformance: Object.values(state.conformance),
       graph: fixtures.finalSnapshot.graph,
@@ -25,20 +25,17 @@ describe("process inspector data", () => {
       messages: state.messages,
       selection: {
         node_id: "act_security_review",
-        workflow_id: "wf_p1_incident",
+        workflow_id: TEST_WORKFLOW,
       },
       sessions: state.sessions,
       steps: state.steps,
     });
 
     expect(details.title).toBe("Security review");
-    expect(details.metrics).toContainEqual({ label: "Grounded", value: "2/2" });
-    expect(details.evidence.map((entry) => entry.quote)).toContain(
-      "Skipping the security checklist to save time."
-    );
-    expect(details.curationItems.map((item) => item.id)).toContain(
-      "stp_helios_skip_negated_security"
-    );
+    expect(details.type).toBe("node");
+    // Nothing was observed for it, so there is no evidence to show and the
+    // inspector must say so rather than borrowing another activity's evidence.
+    expect(details.evidence).toEqual([]);
     expect(
       details.conformanceSections.some(
         (section) => section.title === "Missing work"
@@ -46,57 +43,68 @@ describe("process inspector data", () => {
     ).toBe(true);
   });
 
-  it("surfaces edge policy violations with source evidence", () => {
-    const fixtures = createClientFixtures();
-    const state = applySnapshot(
-      createInitialState(fixtures.scope),
-      fixtures.finalSnapshot,
-      fixtures.scope
-    );
+  it("resolves an observed activity to its Slack evidence", () => {
+    const { fixtures, state } = loadedState();
     const details = buildContractInspectorDetails({
       conformance: Object.values(state.conformance),
       graph: fixtures.finalSnapshot.graph,
       kb: state.kb,
       messages: state.messages,
       selection: {
-        edge_id: "ged_root_deploy_violation",
-        workflow_id: "wf_p1_incident",
+        node_id: "act_deploy_fix",
+        workflow_id: TEST_WORKFLOW,
       },
       sessions: state.sessions,
       steps: state.steps,
     });
 
-    expect(details.type).toBe("edge");
-    expect(details.badges).toContain("1 policy issue");
+    expect(details.title).toBe("Deploy fix");
     expect(details.evidence.length).toBeGreaterThan(0);
-    expect(
-      details.conformanceSections.find(
-        (section) => section.title === "Policy violations"
-      )?.items[0]
-    ).toContain("security review");
+    for (const entry of details.evidence) {
+      // Every evidence entry must point at a real Slack message.
+      expect(entry.permalink).toMatch(SLACK_PERMALINK);
+      expect(entry.quote).not.toBe("");
+    }
   });
 
-  it("keeps legacy app selections readable while typed snapshot app shell lands", () => {
-    const events = simulate("access", 42, 6);
-    const model = mine(events);
-    const selectedNode = model.nodes.find(
-      (node) => node.id === "Security review"
+  it("resolves a selected transition to the steps that produced it", () => {
+    const { fixtures, state } = loadedState();
+    const [edge] = fixtures.finalSnapshot.graph.edges.filter(
+      (candidate) => candidate.observed_support > 0
     );
-    if (!selectedNode) {
-      throw new Error("Missing simulated security review node.");
+    if (!edge) {
+      throw new Error("Expected an observed transition in the graph.");
     }
-    const details = buildLegacyInspectorDetails({
-      events: events.filter((event) => event.action === selectedNode.id),
-      model,
-      selectedEdge: undefined,
-      selectedNode,
-      selection: { id: selectedNode.id, kind: "node" },
+    const details = buildContractInspectorDetails({
+      conformance: Object.values(state.conformance),
+      graph: fixtures.finalSnapshot.graph,
+      kb: state.kb,
+      messages: state.messages,
+      selection: { edge_id: edge.id, workflow_id: TEST_WORKFLOW },
+      sessions: state.sessions,
+      steps: state.steps,
     });
 
-    expect(details.title).toBe("Security review");
-    expect(details.evidence[0]).toMatchObject({
-      author: "Oliver Park",
-      caseId: expect.stringMatching(ACCESS_CASE_ID),
+    expect(details.type).toBe("edge");
+    expect(details.evidence.length).toBeGreaterThan(0);
+  });
+
+  it("returns an empty detail for a selection that no longer exists", () => {
+    const { fixtures, state } = loadedState();
+    const details = buildContractInspectorDetails({
+      conformance: Object.values(state.conformance),
+      graph: fixtures.finalSnapshot.graph,
+      kb: state.kb,
+      messages: state.messages,
+      selection: {
+        node_id: "act_does_not_exist",
+        workflow_id: TEST_WORKFLOW,
+      },
+      sessions: state.sessions,
+      steps: state.steps,
     });
+
+    expect(details.evidence).toEqual([]);
+    expect(details.curationItems).toEqual([]);
   });
 });

@@ -1,14 +1,3 @@
-import type {
-  AgentEvent,
-  Conformance,
-  DesignedModel,
-  MessageRef,
-  PipelineEvent,
-  ProcessEdge,
-  WorkflowLink,
-  WorkspaceDto,
-} from "./process.ts";
-
 export type EntityId =
   | ActivityId
   | ArtifactId
@@ -61,13 +50,7 @@ export type ArtifactType =
   | "incident"
   | "repo"
   | "ticket";
-export type CommandKind =
-  | "confirm_step"
-  | "pause_simulation"
-  | "rebuild_graph"
-  | "reject_step"
-  | "resume_simulation"
-  | "run_simulation";
+export type CommandKind = "confirm_step" | "rebuild_graph" | "reject_step";
 export type CurationStatus = "confirmed" | "proposed" | "rejected";
 export type EvidenceAvailability = "available" | "deleted" | "redacted";
 export type FollowKind =
@@ -101,8 +84,9 @@ export type Modality = "committed" | "negated" | "reported" | "requested";
 export type OutboxStatus = "failed" | "pending" | "sent" | "uncertain";
 export type PolicyKind = "approval" | "mandatory" | "ordering" | "threshold";
 export type ProcessingStatus = "done" | "error" | "pending";
-export type RoleId = "ceo" | "cpo" | "eng" | "pm" | "pmo" | "support";
-export type SessionSource = "human" | "simulation";
+/** Workspace-authored role identifier, derived from a workflow activity's role. */
+export type RoleId = string;
+export type SessionSource = "human";
 export type SessionStatus = "closed" | "open";
 export type StepType =
   | "action"
@@ -465,58 +449,14 @@ export interface Snapshot {
   steps: Step[];
 }
 
-export type {
-  AgentEvent as Spec08AgentEvent,
-  Conformance as Spec08Conformance,
-  DesignedModel as Spec08DesignedModel,
-  MessageRef as Spec08MessageRef,
-  PipelineEvent as Spec08PipelineEvent,
-  ProcessEdge as Spec08DesignedEdge,
-  WorkflowLink as Spec08WorkflowLink,
-  WorkspaceDto as Spec08Workspace,
-} from "./process.ts";
-
-export interface Spec08CompatibilityBridge {
-  agentEvents?: AgentEvent[];
-  conformance?: Conformance;
-  designed?: DesignedModel;
-  designedEdges?: ProcessEdge[];
-  links?: WorkflowLink[];
-  messages?: MessageRef[];
-  pipelineEvents?: PipelineEvent[];
-  workspace?: WorkspaceDto;
-}
-
 export type Command =
   | ConfirmStepCommand
-  | PauseSimulationCommand
   | RebuildGraphCommand
-  | RejectStepCommand
-  | ResumeSimulationCommand
-  | RunSimulationCommand;
+  | RejectStepCommand;
 
 export interface CommandBase extends ScopedRef {
   kind: CommandKind;
   request_id: string;
-}
-
-export interface RunSimulationCommand extends CommandBase {
-  kind: "run_simulation";
-  scenario_id: string;
-  variant: string;
-}
-
-export interface PauseSimulationCommand extends CommandBase {
-  by: PersonId | "system";
-  kind: "pause_simulation";
-  reason: string;
-  session_id: ProcessSessionId;
-}
-
-export interface ResumeSimulationCommand extends CommandBase {
-  by: PersonId | "system";
-  kind: "resume_simulation";
-  session_id: ProcessSessionId;
 }
 
 export interface ConfirmStepCommand extends CommandBase {
@@ -674,10 +614,6 @@ export interface ObserverInput {
 }
 
 export type ObserverDecision =
-  | {
-      command: PauseSimulationCommand;
-      kind: "pause";
-    }
   | {
       kind: "post";
       outbox: OutboxItem;

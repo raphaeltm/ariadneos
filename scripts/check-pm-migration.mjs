@@ -102,30 +102,88 @@ function countRows(configPath, persistDir, tableName) {
   return Number(rows[0]?.count ?? 0);
 }
 
-function assertPmTables(configPath, persistDir) {
+function tableNames(configPath, persistDir) {
   const rows = executeJson(
     configPath,
     persistDir,
-    "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'pm_%' ORDER BY name;"
+    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
   );
-  const tableNames = rows.map((row) => row.name);
+  return rows.map((row) => row.name);
+}
+
+function assertSchema(configPath, persistDir) {
+  const names = tableNames(configPath, persistDir);
   for (const required of [
     "pm_agent_message",
     "pm_agent_thread",
-    "pm_activity",
     "pm_graph_revision",
     "pm_graph_view",
-    "pm_kb_nodes",
-    "pm_kb_state",
-    "pm_kb_workflow_activities",
-    "pm_kb_workflow_follows",
+    "pm_journal",
     "pm_message",
+    "pm_outbox",
+    "pm_processing",
+    "pm_session",
+    "pm_session_cursor",
+    "pm_session_thread",
     "pm_step",
     "pm_step_evidence",
-    "pm_journal",
+    "slack_channel",
+    "slack_install",
+    "slack_message_events",
+    "tenant_activity",
+    "tenant_edge",
+    "tenant_person",
+    "tenant_policy",
+    "tenant_project",
+    "tenant_role",
+    "tenant_role_repertoire",
+    "tenant_workflow",
   ]) {
-    if (!tableNames.includes(required)) {
-      throw new Error(`Missing ${required} after pm foundation migration`);
+    if (!names.includes(required)) {
+      throw new Error(`Missing ${required} after migrations`);
+    }
+  }
+  // The simulation-era stores and the never-workspace-scoped authored-knowledge
+  // tables must be gone: leaving them would let synthetic or cross-tenant rows
+  // reappear in a graph.
+  for (const removed of [
+    "edits",
+    "events",
+    "graph_canvas_edits",
+    "pm_activity",
+    "pm_kb_nodes",
+    "pm_kb_state",
+    "pm_person",
+    "pm_project",
+    "pm_workflow",
+    "sessions",
+  ]) {
+    if (names.includes(removed)) {
+      throw new Error(`${removed} should have been dropped by the migrations`);
+    }
+  }
+}
+
+function assertProvenanceColumn(configPath, persistDir) {
+  const rows = executeJson(
+    configPath,
+    persistDir,
+    "SELECT name FROM pragma_table_info('pm_message') ORDER BY name;"
+  );
+  const columns = rows.map((row) => row.name);
+  for (const required of ["source", "session_id", "permalink"]) {
+    if (!columns.includes(required)) {
+      throw new Error(`pm_message is missing the ${required} column`);
+    }
+  }
+  const authColumns = executeJson(
+    configPath,
+    persistDir,
+    "SELECT name FROM pragma_table_info('auth_user') ORDER BY name;"
+  ).map((row) => row.name);
+  for (const required of ["slackTeamId", "slackUserId"]) {
+    if (!authColumns.includes(required)) {
+      throw new Error(`auth_user is missing the ${required} column`);
     }
   }
 }
@@ -135,9 +193,19 @@ function smokeFresh() {
   try {
     const configPath = setupConfig(directory);
     applyMigrations(configPath, directory);
-    assertPmTables(configPath, directory);
-    if (countRows(configPath, directory, "events") === 0) {
-      throw new Error("Fresh migration lost seeded demo events");
+    assertSchema(configPath, directory);
+    assertProvenanceColumn(configPath, directory);
+    // A new deployment starts with no process data at all. Anything here would
+    // be data no Slack workspace produced.
+    for (const table of [
+      "pm_session",
+      "pm_message",
+      "pm_step",
+      "tenant_project",
+    ]) {
+      if (countRows(configPath, directory, table) !== 0) {
+        throw new Error(`Fresh database should have no rows in ${table}`);
+      }
     }
   } finally {
     rmSync(directory, { force: true, recursive: true });
@@ -210,25 +278,22 @@ function smokeExisting() {
          1789214400000
        );
        INSERT INTO sessions(id, runs, created_at)
-       VALUES ('existing-demo-session', 2, 1789214400000);`
+       VALUES ('legacy-simulation-session', 2, 1789214400000);`
     );
     const configPath = setupConfig(directory);
     applyMigrations(configPath, directory);
-    assertPmTables(configPath, directory);
-    const existingCounts = {
+    assertSchema(configPath, directory);
+    assertProvenanceColumn(configPath, directory);
+    // Upgrading a deployed database must keep the two things that are real -
+    // signed-in users and raw signature-verified Slack events - and discard the
+    // simulation-era stores.
+    const preserved = {
       auth: countRows(configPath, directory, "auth_user"),
-      events: countRows(configPath, directory, "events"),
-      sessions: countRows(configPath, directory, "sessions"),
       slack: countRows(configPath, directory, "slack_message_events"),
     };
-    if (
-      existingCounts.auth !== 1 ||
-      existingCounts.slack !== 1 ||
-      existingCounts.sessions < 1 ||
-      existingCounts.events === 0
-    ) {
+    if (preserved.auth !== 1 || preserved.slack !== 1) {
       throw new Error(
-        `Existing migration did not preserve data: ${JSON.stringify(existingCounts)}`
+        `Migration did not preserve real data: ${JSON.stringify(preserved)}`
       );
     }
   } finally {

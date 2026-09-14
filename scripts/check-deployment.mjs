@@ -30,6 +30,12 @@ async function check() {
     environment,
     "Wrong environment is serving this hostname"
   );
+  // The deployment must report Slack as its data source, not a simulator.
+  assert.equal(
+    health.source,
+    "slack",
+    "Health must report Slack as the data source"
+  );
   if (revision) {
     assert.equal(health.revision, revision, "Expected commit is not live yet");
   }
@@ -59,11 +65,17 @@ async function check() {
     null,
     "Anonymous requests must not have a session"
   );
+  // Every route that can return observed Slack content must refuse an
+  // anonymous request. A deployment that leaks one of these leaks a customer's
+  // messages, so this is checked on the real revision rather than only in tests.
   for (const path of [
-    "/api/model?workflow=vendor",
-    "/api/model?workflow=refund",
-    "/api/model?workflow=access",
-    "/api/context",
+    "/api/snapshot",
+    "/api/kb",
+    "/api/sessions",
+    "/api/messages",
+    "/api/graph/overlay",
+    "/api/settings",
+    "/api/setup/status",
   ]) {
     const protectedResponse = await fetch(`${base}${path}`, {
       signal: AbortSignal.timeout(15_000),
@@ -71,9 +83,10 @@ async function check() {
     assert.equal(
       protectedResponse.status,
       401,
-      "Process data must require login"
+      `${path} must require login, got ${protectedResponse.status}`
     );
   }
+
   assert.ok(
     process.env.SLACK_SIGNING_SECRET,
     "Webhook signing secret must be supplied to readiness check"

@@ -48,8 +48,8 @@ After deployment, open Slack **App Manifest** and apply the full environment man
 | Login redirect URL | `https://staging.ariadneos.com/api/auth/callback/slack` | `https://ariadneos.com/api/auth/callback/slack` |
 | Events request URL | `https://staging.ariadneos.com/api/slack/events` | `https://ariadneos.com/api/slack/events` |
 | Application URL | `https://staging.ariadneos.com/app` | `https://ariadneos.com/app` |
-| Worker | `ariadneos-staging` | `ariadneos-demo` |
-| Database | `ariadneos-staging` | `ariadneos-demo` |
+| Worker | `ariadneos-staging` | `ariadneos-demo` (historical name; see [deployment](deployment.md)) |
+| Database | `ariadneos-staging` | `ariadneos-demo` (historical name) |
 
 These origins, Worker names, separate D1 bindings, `nodejs_compat`, and per-environment `BETTER_AUTH_URL` are already configured in `wrangler.jsonc`. Actions supplies `RELEASE_SHA`; no GitHub environment variables are required.
 
@@ -63,7 +63,7 @@ Under **OAuth & Permissions**, choose **Install to Workspace** or **Reinstall to
 2. Refresh to verify session persistence; sign out and confirm `/app` shows login again.
 3. In a channel where the bot is a member, post, edit, and delete a test message yourself.
 4. Confirm rows appear in the matching D1 `slack_message_events` table. A read-only metadata query is `SELECT team_id,event_id,channel_id,message_ts,subtype,received_at FROM slack_message_events ORDER BY received_at DESC LIMIT 10;`.
-5. Confirm Slack **Event Subscriptions** shows successful delivery. The current UI still displays simulation data; message display/mining is follow-up work, so verify ingestion in D1.
+5. Confirm Slack **Event Subscriptions** shows successful delivery, then check the app: an enabled channel's messages appear in the activity list and, once extraction runs, as steps on the graph with links back to Slack.
 
 Message storage is an append-only observation history: earlier message contents remain when later edits/deletions arrive. See [implementation details and limits](slack-login.md#live-message-delivery-events-api).
 

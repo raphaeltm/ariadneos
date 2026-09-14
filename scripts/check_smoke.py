@@ -19,6 +19,89 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+SMOKE_WORKSPACE = "T0LOCALSMOKE"
+SMOKE_CHANNEL = "C0LOCALSMOKE"
+SMOKE_PROJECT = "proj_local_smoke"
+SMOKE_WORKFLOW = "wf_local_smoke"
+SMOKE_ACTIVITIES = [
+    ("detect_incident", "Detect incident", "support"),
+    ("triage_incident", "Triage incident", "support"),
+    ("security_review", "Security review", "security"),
+    ("deploy_fix", "Deploy fix", "engineering"),
+    ("notify_customer", "Notify customer", "support"),
+]
+
+
+def provision_tenant(database):
+    """Configure a workspace the way a completed setup leaves it.
+
+    The app renders nothing until a workspace has an install, an enabled channel
+    bound to a project, and an authored workflow, so the browser tests need those
+    rows. It seeds no observations: those must come from the pipeline.
+    """
+    stamp = "2026-09-14T00:00:00.000Z"
+    database.execute(
+        "INSERT INTO slack_install(workspace_id,team_name,team_domain,app_id,bot_user_id,"
+        "bot_token,scopes,installed_by,installed_at,updated_at,revoked_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,NULL)",
+        (
+            SMOKE_WORKSPACE,
+            "Local Test Workspace",
+            "localtest",
+            "A0LOCAL",
+            "U0LOCALBOT",
+            "xoxb-local-smoke-token",
+            "channels:history,channels:read,chat:write,users:read,team:read",
+            "local-test-user-0",
+            stamp,
+            stamp,
+        ),
+    )
+    database.execute(
+        "INSERT INTO slack_channel(workspace_id,channel_id,channel_name,project_id,enabled,"
+        "session_idle_seconds,backfilled_at,last_error,created_at,updated_at) "
+        "VALUES (?,?,?,?,1,3600,NULL,NULL,?,?)",
+        (SMOKE_WORKSPACE, SMOKE_CHANNEL, "local-smoke", SMOKE_PROJECT, stamp, stamp),
+    )
+    database.execute(
+        "INSERT INTO tenant_project(workspace_id,id,name,summary,spec_md,constraints_json,"
+        "workflow_id,created_at,updated_at) VALUES (?,?,?,?,'','[]',?,?,?)",
+        (
+            SMOKE_WORKSPACE,
+            SMOKE_PROJECT,
+            "Local smoke project",
+            "Local smoke coverage",
+            SMOKE_WORKFLOW,
+            stamp,
+            stamp,
+        ),
+    )
+    database.execute(
+        "INSERT INTO tenant_workflow(workspace_id,id,project_id,name,entry_slug,"
+        "exit_slugs_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+        (
+            SMOKE_WORKSPACE,
+            SMOKE_WORKFLOW,
+            SMOKE_PROJECT,
+            "Local smoke workflow",
+            SMOKE_ACTIVITIES[0][0],
+            json.dumps([SMOKE_ACTIVITIES[-1][0]]),
+            stamp,
+            stamp,
+        ),
+    )
+    for rank, (slug, label, role) in enumerate(SMOKE_ACTIVITIES):
+        database.execute(
+            "INSERT INTO tenant_activity(workspace_id,workflow_id,slug,label,description,"
+            "role_expected,rank,synonyms_json) VALUES (?,?,?,?,'',?,?,'[]')",
+            (SMOKE_WORKSPACE, SMOKE_WORKFLOW, slug, label, role, rank),
+        )
+    for role in sorted({role for _, _, role in SMOKE_ACTIVITIES}):
+        database.execute(
+            "INSERT INTO tenant_role(workspace_id,id,name) VALUES (?,?,?)",
+            (SMOKE_WORKSPACE, role, role),
+        )
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -60,7 +143,7 @@ def main():
                 "d1",
                 "migrations",
                 "apply",
-                "ariadneos-demo",
+                "DB",
                 "--local",
                 "--persist-to",
                 directory,
@@ -82,12 +165,26 @@ def main():
         cookies = []
         with sqlite3.connect(database_path) as database:
             now = int(time.time() * 1000)
+            provision_tenant(database)
             for index in range(8):
                 identity = f"local-test-user-{index}"
                 token = secrets.token_urlsafe(32)
+                # Sessions carry the Slack workspace, which is what scopes every
+                # request. A user without one is refused by design.
                 database.execute(
-                    "INSERT INTO auth_user(id,name,email,emailVerified,createdAt,updatedAt) VALUES (?,?,?,?,?,?)",
-                    (identity, "Test User", f"test-{index}@example.test", 1, now, now),
+                    "INSERT INTO auth_user(id,name,email,emailVerified,createdAt,updatedAt,"
+                    "slackTeamId,slackTeamName,slackUserId) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (
+                        identity,
+                        "Test User",
+                        f"test-{index}@example.test",
+                        1,
+                        now,
+                        now,
+                        SMOKE_WORKSPACE,
+                        "Local Test Workspace",
+                        f"U0LOCAL{index}",
+                    ),
                 )
                 database.execute(
                     "INSERT INTO auth_session(id,expiresAt,token,createdAt,updatedAt,userId) VALUES (?,?,?,?,?,?)",

@@ -3,23 +3,17 @@ import {
   ArrowDownToLine,
   ArrowUpRight,
   Check,
-  ChevronLeft,
-  ChevronRight,
   Cloud,
   GitBranch,
+  Hash,
   Layers3,
   LoaderCircle,
-  MonitorPlay,
-  Pause,
-  Play,
   RefreshCw,
-  RotateCcw,
   Search,
   Send,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
-  Square,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -28,7 +22,6 @@ import type {
   ProcessSession,
   ProjectId,
   StepId,
-  WorkflowId,
 } from "../shared/contracts.ts";
 import {
   type ApiAdapter,
@@ -48,16 +41,7 @@ import {
 import { ProcessInspector } from "./components/inspector/process-inspector.tsx";
 import type { GraphEditHandler } from "./components/process-canvas/types.ts";
 import { WorkflowCanvas } from "./components/process-canvas/workflow-canvas.tsx";
-import {
-  clampDemoStepIndex,
-  type DemoPlaybackState,
-  type DemoTarget,
-  type DemoWalkthroughStep,
-  demoStepLabel,
-  demoWalkthroughSteps,
-  firstDemoWalkthroughStep,
-  nextDemoStepIndex,
-} from "./demo-walkthrough.ts";
+import SetupView from "./components/setup/setup-view.tsx";
 import { createSseClient } from "./sse.ts";
 import {
   type AppSelection,
@@ -72,12 +56,18 @@ import {
   selectProject,
 } from "./store.ts";
 
+interface ObservedChannel {
+  id: string;
+  name: string;
+  project_id: string | null;
+  workflow_id: string | null;
+}
+
 interface WorkspaceSettings {
   auth: {
     provider: string;
     status: "configured" | "missing";
   };
-  channelCoordinator: "ready" | "unbound" | "unconfigured";
   deployment: {
     activeTarget: "local" | "production" | "staging";
     controls: {
@@ -86,21 +76,16 @@ interface WorkspaceSettings {
       id: "actions" | "export" | "refresh";
       label: string;
     }[];
-    targets: {
-      database: string;
-      domain: string;
-      environment: "production" | "staging";
-      selected: boolean;
-      worker: string;
-    }[];
   };
   environment: "local" | "production" | "staging";
+  extraction: { configured: boolean };
   generatedAt: string;
   releaseSha: string;
   slack: {
-    channel: string | null;
-    status: "scoped" | "unconfigured";
+    channels: ObservedChannel[];
+    status: "installed" | "not_installed";
     workspaceId: string | null;
+    workspaceName: string | null;
   };
 }
 
@@ -114,32 +99,12 @@ interface AskAnswer {
 const defaultScope: ConnectionScope = {
   channel: "",
   min_support: 1,
-  project_id: "proj_helios",
+  project_id: "" as ProjectId,
   view: "overlay",
-  workflow_id: "wf_p1_incident",
   workspace_id: "",
 };
 
-const projectFallbacks = [
-  {
-    id: "proj_helios" as ProjectId,
-    label: "Helios Payments",
-    workflowId: "wf_p1_incident" as WorkflowId,
-  },
-  {
-    id: "proj_atlas" as ProjectId,
-    label: "Atlas Self-Serve Billing",
-    workflowId: "wf_feature_intake" as WorkflowId,
-  },
-];
-
-const legacyAskWorkflow: Record<string, string> = {
-  wf_feature_intake: "refund",
-  wf_p1_incident: "vendor",
-};
-
 const activityIdPrefixPattern = /^act_/;
-const demoStepKeyPattern = /^[1-6]$/;
 
 function isTextEntryTarget(target: EventTarget | null) {
   return target instanceof HTMLElement
@@ -155,7 +120,7 @@ function isUndoShortcut(event: KeyboardEvent, key: string) {
   return (event.metaKey || event.ctrlKey) && key === "z";
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: The route component coordinates the app shell, snapshot/SSE lifecycle, simulator, curation and agent controls.
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: The route component coordinates the app shell, snapshot/SSE lifecycle, curation and agent controls.
 export default function App() {
   const adapter = useMemo(() => createProductionApiAdapter(), []);
   const [state, setState] = useState(() => createInitialState(defaultScope));
@@ -166,15 +131,11 @@ export default function App() {
   const [reloadToken, setReloadToken] = useState(0);
   const [shellView, setShellView] = useState<AppShellView>("graph");
   const [notice, setNotice] = useState("");
-  const [simulating, setSimulating] = useState(false);
   const [modelEditing, setModelEditing] = useState(false);
   const [addNodeLabel, setAddNodeLabel] = useState("");
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
   const [answer, setAnswer] = useState<AskAnswer | null>(null);
-  const [demoMode, setDemoMode] = useState<DemoPlaybackState>("idle");
-  const [demoStepIndex, setDemoStepIndex] = useState(0);
-  const demoRunStarted = useRef(false);
   const lastCanvasSelection = useRef<AppSelection | null>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -202,9 +163,16 @@ export default function App() {
         if (!active) {
           return;
         }
+        const [firstChannel] = payload.slack.channels;
         const scoped = {
           ...stateRef.current.scope,
-          channel: payload.slack.channel ?? "",
+          channel: firstChannel?.id ?? "",
+          project_id: (stateRef.current.scope.project_id ||
+            firstChannel?.project_id ||
+            "") as ProjectId,
+          workflow_id: (stateRef.current.scope.workflow_id ||
+            firstChannel?.workflow_id ||
+            undefined) as ConnectionScope["workflow_id"],
           workspace_id: payload.slack.workspaceId ?? "",
         };
         setSettings(payload);
@@ -213,6 +181,11 @@ export default function App() {
           scope: scoped,
           scopeKey: scopeKey(scoped),
         }));
+        // Nothing to render until a channel is bound to a project, so land the
+        // user on setup instead of an empty canvas.
+        if (!firstChannel?.project_id) {
+          setShellView("setup");
+        }
       })
       .catch((caught) => {
         if (active) {
@@ -231,7 +204,7 @@ export default function App() {
 
   useEffect(() => {
     const scope = snapshotScope;
-    if (!(scope.project_id && scope.workflow_id)) {
+    if (!scope.project_id) {
       return;
     }
     const controller = new AbortController();
@@ -255,6 +228,10 @@ export default function App() {
   }, [adapter, snapshotScope, reloadToken]);
 
   const graph = selectCurrentGraph(state);
+  const observedChannels = useMemo(
+    () => settings?.slack.channels ?? [],
+    [settings]
+  );
 
   useEffect(() => {
     if (!graph) {
@@ -284,19 +261,17 @@ export default function App() {
     return () => client.stop();
   }, [adapter, graph, state.connection.lastEventId, state.scope]);
 
-  const projectOptions = useMemo(() => {
-    const projects =
+  // Projects come from the workspace's own knowledge base. Before setup runs
+  // there are none, and the setup view is what the user sees instead.
+  const projectOptions = useMemo(
+    () =>
       state.kb?.projects.map((project) => ({
         id: project.id,
         label: project.name,
         workflowId: project.workflow_id,
-      })) ?? projectFallbacks;
-    return projects.map((project) => ({
-      id: project.id,
-      label: project.label,
-      workflowId: project.workflowId,
-    }));
-  }, [state.kb]);
+      })) ?? [],
+    [state.kb]
+  );
   const activeProject = projectOptions.find(
     (project) => project.id === state.scope.project_id
   );
@@ -413,187 +388,6 @@ export default function App() {
     shellView,
   ]);
 
-  const runSimulation = async () => {
-    setSimulating(true);
-    setNotice("");
-    try {
-      const scenario =
-        state.scope.project_id === "proj_atlas"
-          ? {
-              id: "atlas_feature",
-              variant: "v2_roadmap_bypass",
-            }
-          : {
-              id: "helios_p1",
-              variant: "v2_skip_review",
-            };
-      const result = await adapter.runSimulation({
-        request_id: crypto.randomUUID(),
-        scenario_id: scenario.id,
-        scope: state.scope,
-        variant: scenario.variant,
-      });
-      setNotice(`Demo simulation persisted as ${result.session_id}.`);
-      setReloadToken((value) => value + 1);
-    } catch (caught) {
-      setNotice((caught as Error).message);
-    } finally {
-      setSimulating(false);
-    }
-  };
-
-  const demoStep: DemoWalkthroughStep =
-    demoWalkthroughSteps[demoStepIndex] ?? firstDemoWalkthroughStep;
-  const activeDemoTarget = demoMode === "idle" ? undefined : demoStep.target;
-  const canRunDemo =
-    !simulating &&
-    state.loading.requestId === null &&
-    state.scope.project_id === "proj_helios";
-  const isDemoTarget = (target: DemoTarget) =>
-    activeDemoTarget === target ? "is-demo-focus" : "";
-  const goToDemoStep = useCallback((index: number) => {
-    setDemoStepIndex(clampDemoStepIndex(index));
-    setDemoMode((current) => (current === "idle" ? "playing" : current));
-  }, []);
-  const advanceDemoStep = useCallback((direction: -1 | 1) => {
-    setDemoStepIndex((current) => nextDemoStepIndex(current, direction));
-    setDemoMode((current) => (current === "idle" ? "playing" : current));
-  }, []);
-  const stopDemo = useCallback(() => {
-    setDemoMode("idle");
-    setDemoStepIndex(0);
-    demoRunStarted.current = false;
-    clearSelection();
-    setNotice("");
-  }, [clearSelection]);
-  const restartDemo = useCallback(() => {
-    setDemoStepIndex(0);
-    demoRunStarted.current = false;
-    setDemoMode("playing");
-    setShellView("graph");
-    clearSelection();
-    setNotice("");
-  }, [clearSelection]);
-  const toggleDemo = useCallback(() => {
-    if (demoMode === "idle") {
-      restartDemo();
-      return;
-    }
-    setDemoMode((current) => (current === "playing" ? "paused" : "playing"));
-  }, [demoMode, restartDemo]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Walkthrough effects intentionally react to the visible step and live graph state while using stable app actions.
-  useEffect(() => {
-    if (demoMode === "idle") {
-      return;
-    }
-    switch (demoStep.action) {
-      case "ask":
-        setShellView("chat");
-        break;
-      case "events":
-        setShellView("activity");
-        break;
-      case "graph":
-        setShellView("graph");
-        break;
-      case "run":
-        setShellView("graph");
-        if (!(demoRunStarted.current || !canRunDemo)) {
-          demoRunStarted.current = true;
-          runSimulation().catch(() => undefined);
-        }
-        break;
-      case "select-edge": {
-        const edge = graph?.edges[0];
-        if (edge) {
-          setShellView("inspector");
-          setState((current) => ({
-            ...current,
-            selection: {
-              edge_id: edge.id,
-              workflow_id: current.scope.workflow_id,
-            },
-          }));
-        }
-        break;
-      }
-      case "select-node": {
-        const node =
-          graph?.nodes.find((item) =>
-            item.activity.label.toLowerCase().includes("root cause")
-          ) ?? graph?.nodes[0];
-        if (node) {
-          setShellView("inspector");
-          setState((current) => ({
-            ...current,
-            selection: {
-              node_id: node.id,
-              workflow_id: current.scope.workflow_id,
-            },
-          }));
-        }
-        break;
-      }
-      case "variants":
-        setShellView("graph");
-        break;
-      default:
-        break;
-    }
-  }, [canRunDemo, demoMode, demoStep.action, graph]);
-
-  useEffect(() => {
-    if (demoMode !== "playing") {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      setDemoStepIndex((current) => {
-        if (current === demoWalkthroughSteps.length - 1) {
-          setDemoMode("paused");
-          return current;
-        }
-        return nextDemoStepIndex(current, 1);
-      });
-    }, demoStep.durationMs);
-    return () => window.clearTimeout(timer);
-  }, [demoMode, demoStep.durationMs]);
-
-  useEffect(() => {
-    if (demoMode === "idle") {
-      return;
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (
-        target?.matches("input, textarea, select, [contenteditable='true']")
-      ) {
-        return;
-      }
-      if (demoStepKeyPattern.test(event.key)) {
-        event.preventDefault();
-        goToDemoStep(Number(event.key) - 1);
-        return;
-      }
-      if (event.key === "ArrowRight") {
-        event.preventDefault();
-        advanceDemoStep(1);
-        return;
-      }
-      if (event.key === "ArrowLeft") {
-        event.preventDefault();
-        advanceDemoStep(-1);
-        return;
-      }
-      if (event.key === " ") {
-        event.preventDefault();
-        toggleDemo();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [demoMode, goToDemoStep, advanceDemoStep, toggleDemo]);
-
   const curate = async (
     item: InspectorCurationItem,
     status: "confirmed" | "rejected"
@@ -673,10 +467,9 @@ export default function App() {
     try {
       const response = await fetch("/api/ask", {
         body: JSON.stringify({
+          project_id: state.scope.project_id,
           question: prompt,
           thread_id: `${state.scope.project_id.slice(5)}-app`,
-          workflow:
-            legacyAskWorkflow[state.scope.workflow_id ?? ""] ?? "vendor",
         }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
@@ -734,57 +527,58 @@ export default function App() {
       primaryAction={
         <button
           className="button topbar-action"
-          disabled={simulating || state.loading.requestId !== null}
-          onClick={runSimulation}
+          disabled={state.loading.requestId !== null}
+          onClick={() => setReloadToken((value) => value + 1)}
           type="button"
         >
-          {simulating ? (
-            <LoaderCircle className="spin" size={16} />
+          {state.loading.requestId === null ? (
+            <RefreshCw size={14} />
           ) : (
-            <Play fill="currentColor" size={13} />
+            <LoaderCircle className="spin" size={16} />
           )}
-          Run
+          Refresh
         </button>
       }
       projectOptions={projectOptions}
       sidebarAction={
-        <div className="demo-note">
-          <span className="demo-orbit">
-            <Sparkles size={19} />
+        <div className="channel-note">
+          <span className="channel-orbit">
+            <Hash size={19} />
           </span>
-          <strong>Real pipeline demo</strong>
-          <p>Generate Slack-like work and persist it through D1.</p>
-          <button
-            disabled={simulating || state.loading.requestId !== null}
-            onClick={runSimulation}
-            type="button"
-          >
-            Run simulator <ArrowUpRight size={15} />
+          <strong>Observed channels</strong>
+          {observedChannels.length ? (
+            <p>
+              {observedChannels.map((channel) => `#${channel.name}`).join(", ")}
+            </p>
+          ) : (
+            <p>No Slack channel is connected yet.</p>
+          )}
+          <button onClick={() => setShellView("setup")} type="button">
+            Open setup <ArrowUpRight size={15} />
           </button>
         </div>
       }
       workspaceOptions={[
         {
-          detail: settings?.slack.channel ?? "Configured server scope",
+          detail: observedChannels.length
+            ? observedChannels.map((channel) => `#${channel.name}`).join(", ")
+            : "No channel connected",
           id: "configured",
-          label: settings?.slack.workspaceId ?? "Workspace",
+          label: settings?.slack.workspaceName ?? "Workspace",
         },
       ]}
     >
-      <main className={demoMode === "idle" ? "" : "demo-active"}>
-        <div
-          className={`page-heading ${isDemoTarget("overview")}`}
-          data-demo-target="overview"
-        >
+      <main>
+        <div className="page-heading">
           <div>
             <div className="eyebrow">
               <span />
-              LIVE PROCESS INTELLIGENCE
+              OBSERVED FROM SLACK
             </div>
             <h1>{activeProject?.label ?? "Process workspace"}</h1>
             <p>
-              D1-backed graph, evidence, curation, conformance, and simulator
-              data from the process API.
+              Graph, evidence, curation and conformance mined from messages in
+              this workspace's connected channels.
             </p>
           </div>
           <div className="heading-actions">
@@ -798,30 +592,20 @@ export default function App() {
               Export snapshot
             </button>
             <button
-              className={`button primary ${isDemoTarget("run")}`}
-              data-demo-target="run"
-              disabled={simulating}
-              onClick={runSimulation}
+              className="button primary"
+              disabled={state.loading.requestId !== null}
+              onClick={() => setReloadToken((value) => value + 1)}
               type="button"
             >
-              {simulating ? (
-                <LoaderCircle className="spin" size={16} />
+              {state.loading.requestId === null ? (
+                <RefreshCw size={16} />
               ) : (
-                <Play fill="currentColor" size={14} />
+                <LoaderCircle className="spin" size={16} />
               )}
-              {simulating ? "Running..." : "Run demo mode"}
+              Refresh
             </button>
           </div>
         </div>
-        <DemoWalkthrough
-          advanceDemoStep={advanceDemoStep}
-          goToDemoStep={goToDemoStep}
-          mode={demoMode}
-          restartDemo={restartDemo}
-          stepIndex={demoStepIndex}
-          stopDemo={stopDemo}
-          toggleDemo={toggleDemo}
-        />
         {state.connection.error ? (
           <div className="banner error" role="alert">
             {state.connection.error}
@@ -847,17 +631,27 @@ export default function App() {
           </div>
         ) : null}
         <LiveStats
-          focusClass={isDemoTarget("overview")}
           graph={graph}
           messages={messages}
           sessions={sessions}
           state={state}
         />
-        {state.loading.requestId && !graph ? (
+        {state.loading.requestId && !graph && shellView !== "setup" ? (
           <div className="loading-state">
             <LoaderCircle className="spin" />
             <p>Loading process snapshot...</p>
           </div>
+        ) : null}
+        {shellView === "setup" ? (
+          <SetupView
+            onReady={() => {
+              // Setup just became complete: reload settings so the scope picks
+              // up the newly bound channel, then show the graph.
+              setSettingsRefresh((value) => value + 1);
+              setReloadToken((value) => value + 1);
+              setShellView("graph");
+            }}
+          />
         ) : null}
         {shellView === "settings" ? (
           <SettingsPanel
@@ -871,7 +665,8 @@ export default function App() {
             settingsLoading={settingsLoading}
             state={state}
           />
-        ) : (
+        ) : null}
+        {shellView === "settings" || shellView === "setup" ? null : (
           <section className="explorer live-explorer">
             <div className="explorer-header">
               <div className="process-title">
@@ -898,7 +693,6 @@ export default function App() {
                   <MapPanel
                     addNodeLabel={addNodeLabel}
                     canEdit={!modelEditing}
-                    focusClass={isDemoTarget("graph")}
                     graph={graph}
                     modelEditing={modelEditing}
                     onAddNodeLabelChange={setAddNodeLabel}
@@ -932,7 +726,6 @@ export default function App() {
                 {shellView === "chat" ? (
                   <AgentChatPanel
                     ask={askAgent}
-                    className={isDemoTarget("conversation")}
                     disabled={state.loading.requestId !== null}
                     onInspectEvidence={() => setShellView("activity")}
                     scopeLabel={activeProject?.label ?? "Current process"}
@@ -940,7 +733,6 @@ export default function App() {
                 ) : null}
                 {shellView === "activity" ? (
                   <ActivityPanel
-                    focusClass={isDemoTarget("conversation")}
                     messages={messages}
                     onSearchMessage={(message) =>
                       select({
@@ -963,10 +755,7 @@ export default function App() {
                   />
                 ) : null}
               </div>
-              <div
-                className={isDemoTarget("inspector")}
-                data-demo-target="inspector"
-              >
+              <div>
                 <ProcessInspector
                   details={inspectorDetails}
                   onClearSelection={clearSelection}
@@ -978,13 +767,9 @@ export default function App() {
             </div>
           </section>
         )}
-        {shellView === "settings" ? null : (
+        {shellView === "settings" || shellView === "setup" ? null : (
           <div className="bottom-grid">
-            <RecentEvidence
-              focusClass={isDemoTarget("conversation")}
-              messages={messages}
-              onSelect={select}
-            />
+            <RecentEvidence messages={messages} onSelect={select} />
             {shellView === "chat" ? null : (
               <AssistantPanel
                 answer={answer}
@@ -994,10 +779,7 @@ export default function App() {
                 setQuestion={setQuestion}
               />
             )}
-            <VariantSummary
-              focusClass={isDemoTarget("variants")}
-              graph={graph}
-            />
+            <VariantSummary graph={graph} />
           </div>
         )}
         <footer>
@@ -1014,140 +796,23 @@ export default function App() {
   );
 }
 
-function DemoWalkthrough({
-  advanceDemoStep,
-  goToDemoStep,
-  mode,
-  restartDemo,
-  stepIndex,
-  stopDemo,
-  toggleDemo,
-}: {
-  advanceDemoStep: (direction: -1 | 1) => void;
-  goToDemoStep: (index: number) => void;
-  mode: DemoPlaybackState;
-  restartDemo: () => void;
-  stepIndex: number;
-  stopDemo: () => void;
-  toggleDemo: () => void;
-}) {
-  const step = demoWalkthroughSteps[stepIndex] ?? firstDemoWalkthroughStep;
-  let toggleLabel = "Resume";
-  if (mode === "idle") {
-    toggleLabel = "Start";
-  } else if (mode === "playing") {
-    toggleLabel = "Pause";
-  }
-  return (
-    <section
-      aria-label="Demo auto-play walkthrough"
-      className={`demo-walkthrough ${mode === "idle" ? "collapsed" : ""} ${
-        mode !== "idle" && step.target === "run" ? "is-demo-focus" : ""
-      }`}
-      data-demo-target="run"
-    >
-      <div className="demo-walkthrough__control">
-        <span className="demo-walkthrough__icon">
-          <MonitorPlay size={18} />
-        </span>
-        <div>
-          <span className="section-kicker">GUIDED DEMO</span>
-          <h2>Auto-play walkthrough</h2>
-        </div>
-        <button
-          aria-label={`${toggleLabel} walkthrough`}
-          className="button primary"
-          onClick={toggleDemo}
-          type="button"
-        >
-          {mode === "playing" ? <Pause size={14} /> : <Play size={14} />}
-          {toggleLabel} walkthrough
-        </button>
-        <button
-          aria-label="Restart walkthrough"
-          className="button secondary"
-          onClick={restartDemo}
-          type="button"
-        >
-          <RotateCcw size={14} />
-          Restart
-        </button>
-        <button
-          aria-label="Stop walkthrough"
-          className="button secondary"
-          disabled={mode === "idle"}
-          onClick={stopDemo}
-          type="button"
-        >
-          <Square size={14} />
-          Stop
-        </button>
-      </div>
-      {mode === "idle" ? null : (
-        <div aria-live="polite" className="demo-walkthrough__stage">
-          <div className="demo-walkthrough__annotation">
-            <span>{demoStepLabel(stepIndex)}</span>
-            <div>
-              <strong>{step.title}</strong>
-              <p>{step.detail}</p>
-            </div>
-          </div>
-          <div className="demo-walkthrough__nav">
-            <button
-              aria-label="Previous walkthrough step"
-              disabled={stepIndex === 0}
-              onClick={() => advanceDemoStep(-1)}
-              type="button"
-            >
-              <ChevronLeft size={15} />
-            </button>
-            <div className="demo-beats">
-              {demoWalkthroughSteps.map((item, index) => (
-                <button
-                  aria-label={`Jump to ${item.label}`}
-                  aria-pressed={index === stepIndex}
-                  key={item.id}
-                  onClick={() => goToDemoStep(index)}
-                  type="button"
-                >
-                  {demoStepLabel(index)}
-                </button>
-              ))}
-            </div>
-            <button
-              aria-label="Next walkthrough step"
-              disabled={stepIndex === demoWalkthroughSteps.length - 1}
-              onClick={() => advanceDemoStep(1)}
-              type="button"
-            >
-              <ChevronRight size={15} />
-            </button>
-          </div>
-        </div>
-      )}
-    </section>
-  );
-}
-
 function VariantSummary({
-  focusClass,
   graph,
 }: {
-  focusClass?: string;
   graph: ReturnType<typeof selectCurrentGraph>;
 }) {
   const nodeLabel = new Map(
     (graph?.nodes ?? []).map((node) => [node.id, node.activity.label])
   );
+  // A variant is a path work actually took. A designed edge nobody has walked
+  // is not a way the process unfolds, so zero-support edges are excluded rather
+  // than presented as observed behaviour.
   const variants = (graph?.edges ?? [])
-    .slice()
+    .filter((edge) => edge.observed_support > 0)
     .sort((a, b) => b.observed_support - a.observed_support)
     .slice(0, 4);
   return (
-    <section
-      className={`variants-panel ${focusClass ?? ""}`}
-      data-demo-target="variants"
-    >
+    <section className="variants-panel">
       <div className="card-heading">
         <h2>
           <GitBranch size={17} />
@@ -1172,7 +837,10 @@ function VariantSummary({
             );
           })
         ) : (
-          <div className="empty">Run demo mode to discover variants.</div>
+          <div className="empty">
+            No variants observed yet. Variants appear once messages in a
+            connected channel describe work.
+          </div>
         )}
       </div>
     </section>
@@ -1182,7 +850,6 @@ function VariantSummary({
 function MapPanel({
   addNodeLabel,
   canEdit,
-  focusClass,
   graph,
   modelEditing,
   onAddNodeLabelChange,
@@ -1195,7 +862,6 @@ function MapPanel({
 }: {
   addNodeLabel: string;
   canEdit: boolean;
-  focusClass?: string;
   graph: ReturnType<typeof selectCurrentGraph>;
   modelEditing: boolean;
   onAddNodeLabelChange: (value: string) => void;
@@ -1218,10 +884,7 @@ function MapPanel({
   }
   return (
     <>
-      <div
-        className={`graph-hint ${focusClass ?? ""}`}
-        data-demo-target="graph"
-      >
+      <div className="graph-hint">
         <span className="tiny-dot" />
         Live overlay from /api/snapshot
         <span>Click a node or edge to inspect evidence and conformance.</span>
@@ -1233,7 +896,7 @@ function MapPanel({
         onAddNodeLabelChange={onAddNodeLabelChange}
         onSubmitAddNode={onSubmitAddNode}
       />
-      <div className={focusClass ?? ""} data-demo-target="graph">
+      <div>
         <WorkflowCanvas
           canEdit={canEdit}
           graph={graph}
@@ -1371,13 +1034,11 @@ function slugifyGraphLabel(value: string) {
 }
 
 function LiveStats({
-  focusClass,
   graph,
   messages,
   sessions,
   state,
 }: {
-  focusClass?: string;
   graph: ReturnType<typeof selectCurrentGraph>;
   messages: Message[];
   sessions: ProcessSession[];
@@ -1385,10 +1046,7 @@ function LiveStats({
 }) {
   const conformance = graph?.conformance;
   return (
-    <div
-      className={`stats-row ${focusClass ?? ""}`}
-      data-demo-target="overview"
-    >
+    <div className="stats-row">
       <Stat
         icon={<Layers3 size={17} />}
         label="Graph activities"
@@ -1422,14 +1080,12 @@ function LiveStats({
 }
 
 function ActivityPanel({
-  focusClass,
   messages,
   onSearchMessage,
   selectedSession,
   sessions,
   setSelectedSession,
 }: {
-  focusClass?: string;
   messages: Message[];
   onSearchMessage: (message: Message) => void;
   selectedSession: ProcessSession | undefined;
@@ -1445,10 +1101,7 @@ function ActivityPanel({
     return matchesSession && haystack.includes(search.toLowerCase());
   });
   return (
-    <div
-      className={`events-panel ${focusClass ?? ""}`}
-      data-demo-target="conversation"
-    >
+    <div className="events-panel">
       <div className="event-controls">
         <label>
           <Search size={16} />
@@ -1507,19 +1160,14 @@ function ActivityPanel({
 }
 
 function RecentEvidence({
-  focusClass,
   messages,
   onSelect,
 }: {
-  focusClass?: string;
   messages: Message[];
   onSelect: (selection: AppSelection) => void;
 }) {
   return (
-    <section
-      className={`recent-card ${focusClass ?? ""}`}
-      data-demo-target="conversation"
-    >
+    <section className="recent-card">
       <div className="card-heading">
         <h2>
           <Activity size={17} />
@@ -1552,7 +1200,10 @@ function RecentEvidence({
           </div>
         ))}
         {messages.length ? null : (
-          <div className="empty">Run demo mode to add D1-backed evidence.</div>
+          <div className="empty">
+            No evidence yet. Messages from a connected Slack channel appear here
+            once they are extracted into steps.
+          </div>
         )}
       </div>
     </section>
@@ -1692,8 +1343,14 @@ function SettingsPanel({
       <div className="settings-grid">
         <article>
           <span>Workspace</span>
-          <strong>{settings?.slack.workspaceId ?? "unconfigured"}</strong>
-          <small>{settings?.slack.channel ?? "No channel scope"}</small>
+          <strong>{settings?.slack.workspaceName ?? "Not connected"}</strong>
+          <small>
+            {settings?.slack.channels.length
+              ? settings.slack.channels
+                  .map((channel) => `#${channel.name}`)
+                  .join(", ")
+              : "No channel connected"}
+          </small>
         </article>
         <article>
           <span>Project</span>
@@ -1706,9 +1363,15 @@ function SettingsPanel({
           <small>{adapter.buildStreamUrl(state.scope)}</small>
         </article>
         <article>
-          <span>Coordinator</span>
-          <strong>{settings?.channelCoordinator ?? "checking"}</strong>
-          <small>Durable Object stream and journal replay</small>
+          <span>Extraction</span>
+          <strong>
+            {settings?.extraction.configured ? "configured" : "missing key"}
+          </strong>
+          <small>
+            {settings?.extraction.configured
+              ? "Steps are extracted from new Slack messages"
+              : "Set OPENROUTER_API_KEY to extract steps"}
+          </small>
         </article>
         <article>
           <span>Release</span>
@@ -1726,27 +1389,13 @@ function SettingsPanel({
             <Cloud size={18} />
           </span>
           <div>
-            <h3>Deployment configuration</h3>
+            <h3>Deployment</h3>
             <p>
               GitHub Actions deploys staging and production to separate
-              Cloudflare Workers and D1 databases.
+              Cloudflare Workers and D1 databases. This runtime is{" "}
+              {settings?.deployment.activeTarget ?? "local"}.
             </p>
           </div>
-        </div>
-        <div className="deployment-targets">
-          {(settings?.deployment.targets ?? []).map((target) => (
-            <article
-              className={target.selected ? "selected" : ""}
-              key={target.environment}
-            >
-              <span>{target.environment}</span>
-              <strong>{target.domain}</strong>
-              <small>
-                Worker {target.worker} · D1 {target.database}
-              </small>
-              {target.selected ? <em>Active runtime</em> : null}
-            </article>
-          ))}
         </div>
       </div>
       <div className="settings-actions">
@@ -1812,8 +1461,11 @@ function Stat({
 }
 
 function connectionLabel(state: AppState, settings: WorkspaceSettings | null) {
-  if (settings?.slack.status === "unconfigured") {
-    return "Channel unconfigured";
+  if (settings?.slack.status === "not_installed") {
+    return "Slack not connected";
+  }
+  if (settings && settings.slack.channels.length === 0) {
+    return "No channel connected";
   }
   return `${state.connection.status} · ${settings?.environment ?? "local"}`;
 }

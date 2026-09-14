@@ -9,12 +9,11 @@ import type {
   Step,
   WorkflowId,
 } from "../../../shared/contracts.ts";
-import { type AuthoredKb, activityId, loadKb } from "../../kb.ts";
+
 import { extract } from "../../mining/extract.ts";
 import type {
   ExtractedStep,
   ActivityId as ExtractionActivityId,
-  ArtifactId as ExtractionArtifactId,
   ExtractionContext,
   PersonId as ExtractionPersonId,
   RoleId as ExtractionRoleId,
@@ -30,14 +29,14 @@ import {
   readEvidenceMessages,
   readMessages,
   readScopedData,
-  resolveScope,
   type ScopedData,
-} from "../../routes/process.ts";
+} from "../../process-data.ts";
 import {
   type ChannelCoordinatorEnv,
-  configuredChannelScope,
   coordinatorFetch,
 } from "../../runtime/channel.ts";
+import { listEnabledChannels } from "../../tenant/installs.ts";
+import { activityId, readTenantKb, type TenantKb } from "../../tenant/kb.ts";
 
 export interface AgentToolEnv extends ChannelCoordinatorEnv, ModelEnv {
   AGENT_ENABLED?: string;
@@ -50,6 +49,8 @@ export interface AgentToolRequestContext {
   env: AgentToolEnv;
   model?: ModelAdapter;
   now?: () => string;
+  /** Slack workspace the agent is acting for. Required: there is no default. */
+  workspaceId: string;
 }
 
 interface ToolContext {
@@ -57,7 +58,6 @@ interface ToolContext {
   requestContext?: unknown;
 }
 
-const DEFAULT_PROJECT_ID = "proj_helios";
 const ACTIVITY_ID_PREFIX_PATTERN = /^act_/;
 const JSON_OBJECT_SCHEMA = z.record(z.string(), z.unknown());
 const GRAPH_VIEW_SCHEMA = z
@@ -204,8 +204,8 @@ export async function queryProcessGraph(
   requestContext: AgentToolRequestContext
 ) {
   const input = queryProcessGraphInputSchema.parse(rawInput);
-  const { projectId, scope, workflowId } = resolveToolScope(
-    requestContext.env,
+  const { kb, projectId, scope, workflowId } = await resolveToolScope(
+    requestContext,
     input
   );
   const data = await readScopedData(requestContext.env.DB, scope, projectId, {
@@ -214,6 +214,7 @@ export async function queryProcessGraph(
   const graph = await graphOrThrow(
     buildGraphView({
       data,
+      kb,
       kind: input.view ?? "overlay",
       minSupport: input.min_support ?? 1,
       projectId,
@@ -239,8 +240,8 @@ export async function getEvidence(
   requestContext: AgentToolRequestContext
 ) {
   const input = getEvidenceInputSchema.parse(rawInput);
-  const { projectId, scope, workflowId } = resolveToolScope(
-    requestContext.env,
+  const { kb, projectId, scope, workflowId } = await resolveToolScope(
+    requestContext,
     input
   );
 
@@ -265,7 +266,7 @@ export async function getEvidence(
     input.node_id === undefined
       ? evidenceForEdge(
           data.steps,
-          await edgeForId(data, projectId, workflowId, input)
+          await edgeForId(data, projectId, workflowId, input, kb)
         )
       : evidenceForNode(data.steps, input.node_id);
   const messages = uniqueStrings(evidenceTs)
@@ -280,21 +281,21 @@ export async function searchWorkspace(
   requestContext: AgentToolRequestContext
 ) {
   const input = searchWorkspaceInputSchema.parse(rawInput);
-  const { projectId, scope } = resolveToolScope(requestContext.env, input);
+  const { kb, projectId, scope } = await resolveToolScope(
+    requestContext,
+    input
+  );
   const limit = input.limit ?? 8;
   const query = normalizedQuery(input.query);
-  const kb = loadKb();
   const data = await readScopedData(requestContext.env.DB, scope, projectId);
   const people = kb.people
     .filter((person) =>
       searchable([person.id, person.name, person.role], query)
     )
     .slice(0, limit);
-  const artifacts = kb.artifacts
-    .filter((artifact) =>
-      searchable([artifact.id, artifact.name, artifact.type], query)
-    )
-    .slice(0, limit);
+  // Artifacts require a tracker or document connector, so there is nothing to
+  // search until one exists.
+  const artifacts: never[] = [];
   const activities = kb.workflows
     .flatMap((workflow) =>
       workflow.activities.map((activity) => ({
@@ -335,16 +336,15 @@ interface KbMatch {
 
 type KbLookupKind = NonNullable<LookupKnowledgeBaseInput["kinds"]>[number];
 
-export function lookupKnowledgeBase(
+export async function lookupKnowledgeBase(
   rawInput: LookupKnowledgeBaseInput,
   requestContext: AgentToolRequestContext
 ) {
   const input = lookupKnowledgeBaseInputSchema.parse(rawInput);
-  resolveToolScope(requestContext.env, input);
+  const { kb } = await resolveToolScope(requestContext, input);
   const query = normalizedQuery(input.query);
   const limit = input.limit ?? 10;
   const kinds = new Set(input.kinds ?? []);
-  const kb = loadKb();
   const include = (kind: KbLookupKind) => kinds.size === 0 || kinds.has(kind);
   const matches: KbMatch[] = [];
 
@@ -354,19 +354,6 @@ export function lookupKnowledgeBase(
     label: person.name,
     record: person,
   }));
-  addKbMatches(
-    matches,
-    "artifact",
-    include,
-    kb.artifacts,
-    query,
-    (artifact) => ({
-      fields: [artifact.id, artifact.name, artifact.type],
-      id: artifact.id,
-      label: artifact.name,
-      record: artifact,
-    })
-  );
   addKbMatches(matches, "policy", include, kb.policies, query, (policy) => ({
     fields: [policy.id, policy.text, policy.kind],
     id: policy.id,
@@ -431,8 +418,8 @@ export async function triggerExtraction(
       warnings: ["agent.disabled"],
     };
   }
-  const { projectId, scope, workflowId } = resolveToolScope(
-    requestContext.env,
+  const { kb, projectId, scope, workflowId } = await resolveToolScope(
+    requestContext,
     input,
     { requireWorkflow: true }
   );
@@ -453,7 +440,7 @@ export async function triggerExtraction(
   const result = await extract(
     window,
     data.steps.map(toExtractedStep),
-    extractionContextFor(workflowId, loadKb()),
+    extractionContextFor(workflowId, kb),
     withAbortSignal(model, undefined)
   );
   return { ...result, status: result.degraded ? "degraded" : "ok" };
@@ -464,8 +451,8 @@ export async function proposeEdit(
   requestContext: AgentToolRequestContext
 ) {
   const input = proposeEditInputSchema.parse(rawInput);
-  const { projectId, scope, workflowId } = resolveToolScope(
-    requestContext.env,
+  const { projectId, scope, workflowId } = await resolveToolScope(
+    requestContext,
     input,
     { requireWorkflow: true }
   );
@@ -525,8 +512,8 @@ export async function recordAgentEvent(
   if (existing) {
     return existing;
   }
-  const { projectId, scope, workflowId } = resolveToolScope(
-    requestContext.env,
+  const { projectId, scope, workflowId } = await resolveToolScope(
+    requestContext,
     input
   );
   const now = requestContext.now?.() ?? new Date().toISOString();
@@ -583,8 +570,8 @@ export async function postToSlack(
   if (!isAgentEnabled(requestContext.env)) {
     return { status: "disabled" as const };
   }
-  const { projectId, scope, workflowId } = resolveToolScope(
-    requestContext.env,
+  const { projectId, scope, workflowId } = await resolveToolScope(
+    requestContext,
     input
   );
   const now = requestContext.now?.() ?? new Date().toISOString();
@@ -650,7 +637,7 @@ export async function pauseRun(
   requestContext: AgentToolRequestContext
 ) {
   const input = pauseRunInputSchema.parse(rawInput);
-  const { scope } = resolveToolScope(requestContext.env, input);
+  const { scope } = await resolveToolScope(requestContext, input);
   const response = await coordinatorFetch(requestContext.env, scope, "/pause", {
     body: JSON.stringify({
       reason: input.reason,
@@ -680,7 +667,7 @@ export async function resumeRun(
   requestContext: AgentToolRequestContext
 ) {
   const input = resumeRunInputSchema.parse(rawInput);
-  const { scope } = resolveToolScope(requestContext.env, input);
+  const { scope } = await resolveToolScope(requestContext, input);
   const response = await coordinatorFetch(
     requestContext.env,
     scope,
@@ -805,8 +792,14 @@ function toolRequestContext(context: ToolContext | undefined) {
   return value as unknown as AgentToolRequestContext;
 }
 
-function resolveToolScope(
-  env: AgentToolEnv,
+/**
+ * Resolves the workspace, observed channel and authored project for a tool call.
+ *
+ * The channel comes from the workspace's enabled channels, so a tool cannot read
+ * or post into a channel the workspace has not opted in to observing.
+ */
+async function resolveToolScope(
+  requestContext: AgentToolRequestContext,
   input: {
     channel?: string | undefined;
     project_id?: string | undefined;
@@ -815,39 +808,63 @@ function resolveToolScope(
   },
   options: { requireWorkflow?: boolean } = {}
 ) {
-  const scope = configuredChannelScope(env);
-  if (!scope) {
+  const { workspaceId } = requestContext;
+  if (!workspaceId) {
     throw new AgentToolError(
-      "Channel coordination is not configured.",
-      "channel_unconfigured",
-      503
+      "The agent has no Slack workspace to act for.",
+      "workspace_unresolved",
+      401
     );
   }
-  if (
-    (input.workspace_id && input.workspace_id !== scope.workspaceId) ||
-    (input.channel && input.channel !== scope.channel)
-  ) {
+  if (input.workspace_id && input.workspace_id !== workspaceId) {
     throw new AgentToolError(
-      "Requested workspace or channel is not authorized.",
+      "Requested workspace is not authorized.",
       "forbidden_scope",
       403
     );
   }
-  const resolved = resolveScope(
-    {
-      project_id: input.project_id ?? DEFAULT_PROJECT_ID,
-      workflow_id: input.workflow_id,
-    },
-    loadKb(),
-    options
+  const channels = (await listEnabledChannels(requestContext.env.DB)).filter(
+    (observed) => observed.workspace_id === workspaceId
   );
-  if ("response" in resolved) {
-    throw responseError(resolved.response);
+  const channel = input.channel
+    ? channels.find((item) => item.channel_id === input.channel)
+    : channels[0];
+  if (!channel?.project_id) {
+    throw new AgentToolError(
+      input.channel
+        ? "Requested channel is not observed by this workspace."
+        : "No Slack channel is being observed yet.",
+      input.channel ? "forbidden_scope" : "channel_unconfigured",
+      input.channel ? 403 : 409
+    );
+  }
+  const kb = await readTenantKb(requestContext.env.DB, workspaceId);
+  const projectId = input.project_id ?? channel.project_id;
+  const project = kb.projects.find((item) => item.id === projectId);
+  if (!project) {
+    throw new AgentToolError("Unknown project_id.", "unknown_project", 400);
+  }
+  const workflowId = input.workflow_id ?? project.workflow_id;
+  const workflow = kb.workflows.find((item) => item.id === workflowId);
+  if (options.requireWorkflow && !workflow) {
+    throw new AgentToolError(
+      "This workspace has not authored that workflow.",
+      "unknown_workflow",
+      400
+    );
+  }
+  if (workflow?.project_id && workflow.project_id !== project.id) {
+    throw new AgentToolError(
+      "workflow_id does not belong to project_id.",
+      "scope_mismatch",
+      400
+    );
   }
   return {
-    projectId: resolved.projectId,
-    scope,
-    workflowId: resolved.workflowId,
+    kb,
+    projectId: project.id as ProjectId,
+    scope: { channel: channel.channel_id, workspaceId },
+    workflowId: workflow ? (workflow.id as WorkflowId) : undefined,
   };
 }
 
@@ -858,14 +875,6 @@ async function graphOrThrow(
     return result;
   }
   throw await responseErrorAsync(result.response);
-}
-
-function responseError(response: Response) {
-  return new AgentToolError(
-    `Process API rejected tool input with HTTP ${response.status}.`,
-    "process_scope_error",
-    response.status
-  );
 }
 
 async function responseErrorAsync(response: Response) {
@@ -901,7 +910,8 @@ async function edgeForId(
   data: ScopedData,
   projectId: ProjectId,
   workflowId: WorkflowId | undefined,
-  input: GetEvidenceInput
+  input: GetEvidenceInput,
+  kb: TenantKb
 ) {
   if (!input.edge_id) {
     return null;
@@ -909,6 +919,7 @@ async function edgeForId(
   const graph = await graphOrThrow(
     buildGraphView({
       data,
+      kb,
       kind: "overlay",
       minSupport: 1,
       projectId,
@@ -999,12 +1010,11 @@ function toExtractedStep(step: Step): ExtractedStep {
 
 function extractionContextFor(
   workflowId: WorkflowId | undefined,
-  kb: AuthoredKb
+  kb: TenantKb
 ): ExtractionContext {
   const workflow = kb.workflows.find(
     (candidate) => candidate.id === workflowId
   );
-  const projectId = workflow?.project_id ?? null;
   return {
     activities:
       workflow?.activities.map((activity) => ({
@@ -1014,12 +1024,8 @@ function extractionContextFor(
         role_expected: activity.role as ExtractionRoleId,
         slug: activity.slug,
       })) ?? [],
-    artifacts: kb.artifacts
-      .filter((artifact) => !projectId || artifact.project_id === projectId)
-      .map((artifact) => ({
-        id: artifact.id as ExtractionArtifactId,
-        name: artifact.name,
-      })),
+    // Artifacts need a connector beyond Slack; the agent must not invent them.
+    artifacts: [],
     people: kb.people.map((person) => ({
       id: person.id as ExtractionPersonId,
       name: person.name,

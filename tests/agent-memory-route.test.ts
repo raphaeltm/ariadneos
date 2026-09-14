@@ -1,55 +1,26 @@
-import { readFileSync } from "node:fs";
-import type { SQLInputValue } from "node:sqlite";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../server/index.ts";
+import {
+  createTestDatabase,
+  type SqliteD1,
+  seedTenant,
+  TEST_WORKSPACE,
+} from "./helpers/tenant.ts";
 
 vi.mock("../server/auth.ts", () => ({
   authConfigured: () => true,
   createAuth: () => ({
     api: { getSession: async () => ({ user: { id: "test-user" } }) },
   }),
+  sessionIdentity: async () => ({
+    slackTeamId: TEST_WORKSPACE,
+    slackUserId: "U0USER",
+    userId: "test-user",
+  }),
 }));
 
-interface BoundStatement {
-  all: <T>() => Promise<{ results: T[] }>;
-  first: <T>() => Promise<T | null>;
-  run: () => Promise<unknown>;
-}
-
-class SqliteD1 {
-  private readonly db: DatabaseSync;
-
-  constructor(db: DatabaseSync) {
-    this.db = db;
-  }
-
-  prepare(sql: string) {
-    const create = (values: unknown[]): BoundStatement => ({
-      all: async <T>() => ({
-        results: this.db
-          .prepare(sql)
-          .all(...(values as SQLInputValue[])) as T[],
-      }),
-      first: async <T>() =>
-        (this.db.prepare(sql).get(...(values as SQLInputValue[])) as
-          | T
-          | undefined) ?? null,
-      run: async () => this.db.prepare(sql).run(...(values as SQLInputValue[])),
-    });
-    return {
-      all: create([]).all,
-      bind: (...values: unknown[]) => create(values),
-      first: create([]).first,
-      run: create([]).run,
-    };
-  }
-
-  async batch(statements: BoundStatement[]) {
-    return await Promise.all(statements.map((statement) => statement.run()));
-  }
-}
-
+let d1: SqliteD1;
 let sqlite: DatabaseSync;
 let env: Parameters<typeof worker.fetch>[1];
 
@@ -57,16 +28,13 @@ const context = {} as ExecutionContext;
 const origin = "https://demo.example";
 
 beforeEach(() => {
-  sqlite = new DatabaseSync(":memory:");
-  sqlite.exec(readFileSync("migrations/0001_initial.sql", "utf8"));
-  sqlite.exec(readFileSync("migrations/0002_seed.sql", "utf8"));
-  sqlite.exec(readFileSync("migrations/0008_agent_memory.sql", "utf8"));
-  sqlite.exec(readFileSync("migrations/0009_graph_canvas_edits.sql", "utf8"));
+  ({ d1, sqlite } = createTestDatabase());
+  seedTenant(sqlite);
   env = {
     AI: {
       run: vi.fn(() => Promise.reject(new Error("remote model unavailable"))),
     },
-    DB: new SqliteD1(sqlite) as unknown as D1Database,
+    DB: d1,
   } as Parameters<typeof worker.fetch>[1];
 });
 
@@ -81,7 +49,6 @@ describe("agent memory route integration", () => {
         body: JSON.stringify({
           question: "What should I know from last time?",
           thread_id: "demo-thread",
-          workflow: "vendor",
         }),
         headers: { "Content-Type": "application/json", Origin: origin },
         method: "POST",

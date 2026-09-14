@@ -1,6 +1,4 @@
-import { readFileSync } from "node:fs";
-import type { SQLInputValue } from "node:sqlite";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../server/index.ts";
 import {
@@ -14,6 +12,16 @@ import {
   createInitialState,
   selectCurrentGraph,
 } from "../src/store.ts";
+import {
+  createTestDatabase,
+  type SqliteD1,
+  seedTenant,
+  TEST_CHANNEL,
+  TEST_PROJECT,
+  TEST_WORKFLOW,
+  TEST_WORKSPACE,
+  type TenantActivity,
+} from "./helpers/tenant.ts";
 
 const authState = vi.hoisted(() => ({
   session: { user: { id: "user-a" } } as { user: { id: string } } | null,
@@ -24,13 +32,28 @@ vi.mock("../server/auth.ts", () => ({
   createAuth: () => ({
     api: { getSession: async () => authState.session },
   }),
+  sessionIdentity: () => {
+    if (!authState.session) {
+      return null;
+    }
+    return {
+      slackTeamId: TEST_WORKSPACE,
+      slackUserId: "U0USER",
+      userId: authState.session.user.id,
+    };
+  },
 }));
 
-interface BoundStatement {
-  all: <T>() => Promise<{ results: T[] }>;
-  first: <T>() => Promise<T | null>;
-  run: () => Promise<unknown>;
-}
+// Mirrors the designed workflow in process-routes.test.ts: enough activities that
+// "improvise_hotfix" (observed but never authored) is unambiguously discovered-only
+// until a model edit promotes it.
+const CUSTOM_ACTIVITIES: TenantActivity[] = [
+  { label: "Detect incident", role: "support", slug: "detect_incident" },
+  { label: "Triage incident", role: "support", slug: "triage_incident" },
+  { label: "Security review", role: "security", slug: "security_review" },
+  { label: "Deploy fix", role: "engineering", slug: "deploy_fix" },
+  { label: "Notify customer", role: "support", slug: "notify_customer" },
+];
 
 interface JournalRow {
   channel: string;
@@ -43,68 +66,29 @@ interface JournalRow {
   workspace_id: string;
 }
 
-class SqliteD1 {
-  private readonly db: DatabaseSync;
-
-  constructor(db: DatabaseSync) {
-    this.db = db;
-  }
-
-  prepare(sql: string) {
-    const create = (values: unknown[]): BoundStatement => ({
-      all: async <T>() => ({
-        results: this.db
-          .prepare(sql)
-          .all(...(values as SQLInputValue[])) as T[],
-      }),
-      first: async <T>() =>
-        (this.db.prepare(sql).get(...(values as SQLInputValue[])) as
-          | T
-          | undefined) ?? null,
-      run: async () => this.db.prepare(sql).run(...(values as SQLInputValue[])),
-    });
-    return {
-      all: create([]).all,
-      bind: (...values: unknown[]) => create(values),
-      first: create([]).first,
-      run: create([]).run,
-    };
-  }
-
-  async batch(statements: BoundStatement[]) {
-    return await Promise.all(statements.map((statement) => statement.run()));
-  }
-}
-
+let d1: SqliteD1;
 let sqlite: DatabaseSync;
 let env: Parameters<typeof worker.fetch>[1];
 
 const context = {} as ExecutionContext;
 const origin = "https://demo.example";
 const scope: ConnectionScope = {
-  channel: "C1",
+  channel: TEST_CHANNEL,
   min_support: 1,
-  project_id: "proj_helios",
+  project_id: TEST_PROJECT,
   view: "overlay",
-  workflow_id: "wf_p1_incident",
-  workspace_id: "T1",
+  workflow_id: TEST_WORKFLOW,
+  workspace_id: TEST_WORKSPACE,
 };
 
 beforeEach(() => {
   authState.session = { user: { id: "user-a" } };
-  sqlite = new DatabaseSync(":memory:");
-  sqlite.exec(readFileSync("migrations/0005_pm_foundation.sql", "utf8"));
-  sqlite.exec(
-    readFileSync("migrations/0006_channel_coordinator_runtime.sql", "utf8")
-  );
-  sqlite.exec(readFileSync("migrations/0007_graph_kb_persistence.sql", "utf8"));
-  sqlite.exec(readFileSync("migrations/0008_graph_edit_revisions.sql", "utf8"));
+  ({ d1, sqlite } = createTestDatabase());
+  seedTenant(sqlite, { activities: CUSTOM_ACTIVITIES });
   seedProcessRows(sqlite);
   env = {
     CHANNEL_COORDINATOR: fakeDurableObjectNamespace(),
-    DB: new SqliteD1(sqlite) as unknown as D1Database,
-    SLACK_ALLOWED_CHANNEL_ID: "C1",
-    SLACK_ALLOWED_TEAM_ID: "T1",
+    DB: d1,
   } as Parameters<typeof worker.fetch>[1];
 });
 
@@ -318,9 +302,9 @@ function seedProcessRows(db: DatabaseSync) {
   db.prepare(
     `INSERT INTO pm_session
      (id, workspace_id, channel, project_id, workflow_id, status, source, started_ts, ended_ts)
-     VALUES ('ses_helios_1', 'T1', 'C1', 'proj_helios', 'wf_p1_incident',
-             'closed', 'human', '2026-09-12T12:00:00.000Z', '2026-09-12T12:09:00.000Z')`
-  ).run();
+     VALUES ('ses_case_1', ?, ?, ?, ?,
+             'closed', 'human', '2026-09-14T12:00:00.000Z', '2026-09-14T12:09:00.000Z')`
+  ).run(TEST_WORKSPACE, TEST_CHANNEL, TEST_PROJECT, TEST_WORKFLOW);
   seedMessage(
     db,
     "1726152000.000100",
@@ -328,21 +312,44 @@ function seedProcessRows(db: DatabaseSync) {
   );
   seedMessage(db, "1726152001.000100", "I triaged severity.");
   seedMessage(db, "1726152002.000100", "I improvised the mitigation hotfix.");
-  seedStep(db, "stp_detect", 1, "act_detect_incident", "detect incident");
-  seedStep(db, "stp_triage", 2, "act_triage_incident", "triage incident");
-  seedStep(db, "stp_hotfix", 3, "act_improvise_hotfix", "improvise hotfix");
+  seedStep(
+    db,
+    "stp_detect",
+    1,
+    "act_detect_incident",
+    "detect incident",
+    "1726152000.000100"
+  );
+  seedStep(
+    db,
+    "stp_triage",
+    2,
+    "act_triage_incident",
+    "triage incident",
+    "1726152001.000100"
+  );
+  seedStep(
+    db,
+    "stp_hotfix",
+    3,
+    "act_improvise_hotfix",
+    "improvise hotfix",
+    "1726152002.000100"
+  );
 }
 
 function seedMessage(db: DatabaseSync, ts: string, text: string) {
   db.prepare(
     `INSERT INTO pm_message
      (workspace_id, channel, ts, id, session_id, author_label, text, permalink, received_at)
-     VALUES ('T1', 'C1', ?, ?, 'ses_helios_1', 'Nia', ?, ?, '2026-09-12T12:00:01.000Z')`
+     VALUES (?, ?, ?, ?, 'ses_case_1', 'Nia', ?, ?, '2026-09-14T12:00:01.000Z')`
   ).run(
+    TEST_WORKSPACE,
+    TEST_CHANNEL,
     ts,
-    `T1:C1:${ts}`,
+    `${TEST_WORKSPACE}:${TEST_CHANNEL}:${ts}`,
     text,
-    `https://slack.example/archives/C1/p${ts.replace(".", "")}`
+    `https://testworkspace.slack.com/archives/${TEST_CHANNEL}/p${ts.replace(".", "")}`
   );
 }
 
@@ -351,20 +358,21 @@ function seedStep(
   id: string,
   seq: number,
   activityId: string,
-  intent: string
+  intent: string,
+  ts: string
 ) {
   db.prepare(
     `INSERT INTO pm_step
      (id, session_id, seq, activity_id, actor_person_id, intent, type,
       modality, lifecycle_state, curation_status, confidence, ts_start)
-     VALUES (?, 'ses_helios_1', ?, ?, 'per_nia', ?, 'action', 'reported',
+     VALUES (?, 'ses_case_1', ?, ?, 'per_nia', ?, 'action', 'reported',
              'done', 'confirmed', 0.92, ?)`
-  ).run(id, seq, activityId, intent, `2026-09-12T12:0${seq}:00.000Z`);
+  ).run(id, seq, activityId, intent, ts);
   db.prepare(
     `INSERT INTO pm_step_evidence
      (step_id, workspace_id, channel, message_ts, message_revision)
-     VALUES (?, 'T1', 'C1', ?, 1)`
-  ).run(id, `172615200${seq - 1}.000100`);
+     VALUES (?, ?, ?, ?, 1)`
+  ).run(id, TEST_WORKSPACE, TEST_CHANNEL, ts);
 }
 
 function fakeDurableObjectNamespace() {

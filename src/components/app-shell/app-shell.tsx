@@ -6,6 +6,7 @@ import {
   CircleHelp,
   GitBranch,
   MessageCircle,
+  Plug,
   Settings,
   Waypoints,
 } from "lucide-react";
@@ -16,7 +17,8 @@ export type AppShellView =
   | "chat"
   | "graph"
   | "inspector"
-  | "settings";
+  | "settings"
+  | "setup";
 
 export interface AppShellOption {
   detail?: string;
@@ -53,6 +55,7 @@ const navigationItems: NavigationItem[] = [
   { icon: Activity, id: "inspector", label: "Inspector" },
   { icon: GitBranch, id: "activity", label: "Activity" },
   { icon: MessageCircle, id: "chat", label: "Agent chat" },
+  { icon: Plug, id: "setup", label: "Setup" },
   { icon: Settings, id: "settings", label: "Settings" },
 ];
 
@@ -150,7 +153,7 @@ export default function AppShell({
         <div className="sidebar-bottom">
           <button className="help-link" onClick={onAbout} type="button">
             <CircleHelp size={17} />
-            About this demo
+            About Ariadne
             <ArrowUpRight size={14} />
           </button>
           {sidebarAction}
@@ -160,7 +163,7 @@ export default function AppShell({
         <header className="topbar">
           <div className="topbar-scope">
             <div className="breadcrumbs">
-              Workspace <span>{activeWorkspace?.label ?? "Demo"}</span>
+              Workspace <span>{activeWorkspace?.label ?? "Not connected"}</span>
             </div>
             <label className="project-switcher">
               <GitBranch size={15} />

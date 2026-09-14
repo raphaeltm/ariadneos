@@ -1,3 +1,8 @@
+> **Superseded in part.** The demo-workspace and simulation portions of this
+> scope no longer describe the application. See
+> [decisions/2026-09-14-no-simulated-data.md](decisions/2026-09-14-no-simulated-data.md).
+> The Slack-observation goals below still hold.
+
 # ARIADNE — Slack process-mining scope
 
 Adapted 2026-09-12 by explicit user direction: keep the deployed TypeScript/Cloudflare architecture

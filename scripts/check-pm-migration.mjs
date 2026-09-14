@@ -197,7 +197,12 @@ function smokeFresh() {
     assertProvenanceColumn(configPath, directory);
     // A new deployment starts with no process data at all. Anything here would
     // be data no Slack workspace produced.
-    for (const table of ["pm_session", "pm_message", "pm_step", "tenant_project"]) {
+    for (const table of [
+      "pm_session",
+      "pm_message",
+      "pm_step",
+      "tenant_project",
+    ]) {
       if (countRows(configPath, directory, table) !== 0) {
         throw new Error(`Fresh database should have no rows in ${table}`);
       }

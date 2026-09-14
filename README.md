@@ -8,13 +8,22 @@ AriadneOS observes **actors, actions, artifacts, and interactions**, then applie
 
 The longer-term idea is **process mining as context engineering for agents**. Rather than giving an agent a giant static prompt describing the company, AriadneOS can provide the relevant slice of organizational context for the task at hand — and eventually allow an agent to execute or reproduce workflows that it has observed.
 
-## Working preview
+## Running application
 
-**[Homepage](https://ariadneos.com) · [Open the live demo](https://ariadneos.com/app)**
+**[Homepage](https://ariadneos.com) · [Open the app](https://ariadneos.com/app)**
 
-A basic implementation is now included: interactive process maps, variants, event evidence, persistent simulations, JSON agent context, and Workers AI explanations. The homepage at `/` markets the Slack-focused product; the interactive application lives at `/app`. The demo uses a synthetic organization; live Slack ingestion is not connected yet.
+The app observes real Slack channels. It has no demo mode and no simulated data:
+every activity, transition and piece of evidence in a graph comes from a message
+someone actually posted in a channel the workspace connected.
 
-See [complete Slack and GitHub setup](docs/slack-setup.md), [demo setup and verification](docs/demo.md), and [automatic staging/production deployment](docs/deployment.md).
+The loop is: install the Slack app into your workspace, enable one channel and
+bind it to a project, name the steps that process is meant to follow, and Ariadne
+maps what the team actually did against them — with each step linked to its source
+message. The homepage at `/` markets the product; the application lives at `/app`.
+
+See [operating the app](docs/operations.md) for the setup walkthrough and the
+configuration it requires, [Slack and GitHub setup](docs/slack-setup.md), and
+[automatic staging/production deployment](docs/deployment.md).
 
 ```sh
 npm ci
@@ -74,7 +83,9 @@ The hackathon is focused entirely on Slack integration. The goal is to prove tha
 
 ### 1. Observable environment
 
-Use Slack as the only integration environment for the hackathon and create a small simulated organization with employees or agents working through a few realistic workflows. There should be enough repeated activity to make process discovery meaningful.
+Slack is the only integration environment. The app reads the channels a workspace
+explicitly connects, so process discovery needs a channel where the work actually
+gets discussed and enough repeated activity to be meaningful.
 
 ### 2. Normalized event model
 
@@ -97,7 +108,8 @@ This becomes the substrate for everything else.
 
 Process mining needs to understand which events belong to the same process instance. A single project, customer request, hiring candidate, incident, or similar unit becomes a **case**.
 
-This is likely one of the genuinely difficult pieces once AriadneOS moves beyond a controlled demo.
+This is one of the genuinely difficult pieces, and it is unavoidable now that the
+app reads real channels rather than a controlled scenario.
 
 ### 4. Process-mining engine
 
@@ -116,24 +128,29 @@ Visualize the discovered workflow as a graph derived from actual observations ra
 
 Clicking a node or path should ideally reveal the underlying events that caused AriadneOS to infer it.
 
-### 6. Simulation harness
+### 6. Evaluating the discovery
 
-Create a synthetic mini-organization and have humans or agents perform known workflows. Because the canonical workflow is known, AriadneOS can be evaluated against a simple question:
+Because the workspace authors the process it *intends* to follow, the app always
+has a reference to score against:
 
-> Did it rediscover the process correctly?
+> Does the observed process match the designed one, and where does it diverge?
 
-That creates a clean evaluation mechanism for the hackathon.
+That comparison is the conformance overlay: green where observed work matches the
+designed workflow, gold for undocumented work nobody designed, grey for designed
+steps nobody performed.
 
 ### 7. Agent-facing context
 
 Expose the discovered process model to an AI agent and allow it to answer questions such as:
 
-- What normally happens after a customer requests a refund?
+- What normally happens after this kind of request arrives?
 - Who typically approves this?
 - What is the expected next step?
 - Which path is unusual compared with previous cases?
 
-A more ambitious demo would ask the agent to **reproduce an observed workflow** inside the simulation.
+Answers are grounded in the workspace's own observed graph and cite the sessions
+they came from; when the model is unavailable the app returns a labelled
+statistical summary rather than a guess.
 
 ## Closed loop
 
@@ -145,16 +162,14 @@ observe → infer → explain → execute → observe again
 
 That is what makes AriadneOS potentially more useful than a traditional process-mining dashboard: it can become a runtime representation of **how an organization operates**, continuously reconstructed from behaviour and usable as machine-readable context by agents.
 
-## One-day demo target
+## End-to-end path
 
-A realistic hackathon demo would be:
-
-1. Simulate one organization with 2–3 workflows.
-2. Collect normalized activity events.
-3. Reconstruct the workflows from those events.
-4. Visualize the inferred process graph.
-5. Give an agent access to the discovered model.
-6. Have the agent explain or reproduce one workflow.
+1. Install the Slack app into a workspace and connect one channel to a project.
+2. Name the steps that process is meant to follow.
+3. Signed Slack events arrive; messages are segmented into cases and queued.
+4. Extraction turns each case's messages into steps with message citations.
+5. The graph overlays the observed process on the designed one.
+6. The agent answers questions from that graph, citing its evidence.
 
 ## Development workflow
 

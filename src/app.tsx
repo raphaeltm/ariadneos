@@ -41,6 +41,7 @@ import {
 import { ProcessInspector } from "./components/inspector/process-inspector.tsx";
 import type { GraphEditHandler } from "./components/process-canvas/types.ts";
 import { WorkflowCanvas } from "./components/process-canvas/workflow-canvas.tsx";
+import SetupView from "./components/setup/setup-view.tsx";
 import { createSseClient } from "./sse.ts";
 import {
   type AppSelection,
@@ -543,9 +544,7 @@ export default function App() {
           <strong>Observed channels</strong>
           {observedChannels.length ? (
             <p>
-              {observedChannels
-                .map((channel) => `#${channel.name}`)
-                .join(", ")}
+              {observedChannels.map((channel) => `#${channel.name}`).join(", ")}
             </p>
           ) : (
             <p>No Slack channel is connected yet.</p>
@@ -633,11 +632,22 @@ export default function App() {
           sessions={sessions}
           state={state}
         />
-        {state.loading.requestId && !graph ? (
+        {state.loading.requestId && !graph && shellView !== "setup" ? (
           <div className="loading-state">
             <LoaderCircle className="spin" />
             <p>Loading process snapshot...</p>
           </div>
+        ) : null}
+        {shellView === "setup" ? (
+          <SetupView
+            onReady={() => {
+              // Setup just became complete: reload settings so the scope picks
+              // up the newly bound channel, then show the graph.
+              setSettingsRefresh((value) => value + 1);
+              setReloadToken((value) => value + 1);
+              setShellView("graph");
+            }}
+          />
         ) : null}
         {shellView === "settings" ? (
           <SettingsPanel
@@ -651,7 +661,8 @@ export default function App() {
             settingsLoading={settingsLoading}
             state={state}
           />
-        ) : (
+        ) : null}
+        {shellView === "settings" || shellView === "setup" ? null : (
           <section className="explorer live-explorer">
             <div className="explorer-header">
               <div className="process-title">
@@ -740,8 +751,7 @@ export default function App() {
                   />
                 ) : null}
               </div>
-              <div
-              >
+              <div>
                 <ProcessInspector
                   details={inspectorDetails}
                   onClearSelection={clearSelection}
@@ -753,12 +763,9 @@ export default function App() {
             </div>
           </section>
         )}
-        {shellView === "settings" ? null : (
+        {shellView === "settings" || shellView === "setup" ? null : (
           <div className="bottom-grid">
-            <RecentEvidence
-              messages={messages}
-              onSelect={select}
-            />
+            <RecentEvidence messages={messages} onSelect={select} />
             {shellView === "chat" ? null : (
               <AssistantPanel
                 answer={answer}
@@ -768,9 +775,7 @@ export default function App() {
                 setQuestion={setQuestion}
               />
             )}
-            <VariantSummary
-              graph={graph}
-            />
+            <VariantSummary graph={graph} />
           </div>
         )}
         <footer>
@@ -800,9 +805,7 @@ function VariantSummary({
     .sort((a, b) => b.observed_support - a.observed_support)
     .slice(0, 4);
   return (
-    <section
-      className="variants-panel"
-    >
+    <section className="variants-panel">
       <div className="card-heading">
         <h2>
           <GitBranch size={17} />
@@ -874,9 +877,7 @@ function MapPanel({
   }
   return (
     <>
-      <div
-        className="graph-hint"
-      >
+      <div className="graph-hint">
         <span className="tiny-dot" />
         Live overlay from /api/snapshot
         <span>Click a node or edge to inspect evidence and conformance.</span>
@@ -1038,9 +1039,7 @@ function LiveStats({
 }) {
   const conformance = graph?.conformance;
   return (
-    <div
-      className="stats-row"
-    >
+    <div className="stats-row">
       <Stat
         icon={<Layers3 size={17} />}
         label="Graph activities"
@@ -1095,9 +1094,7 @@ function ActivityPanel({
     return matchesSession && haystack.includes(search.toLowerCase());
   });
   return (
-    <div
-      className="events-panel"
-    >
+    <div className="events-panel">
       <div className="event-controls">
         <label>
           <Search size={16} />
@@ -1163,9 +1160,7 @@ function RecentEvidence({
   onSelect: (selection: AppSelection) => void;
 }) {
   return (
-    <section
-      className="recent-card"
-    >
+    <section className="recent-card">
       <div className="card-heading">
         <h2>
           <Activity size={17} />
@@ -1199,9 +1194,9 @@ function RecentEvidence({
         ))}
         {messages.length ? null : (
           <div className="empty">
-          No evidence yet. Messages from a connected Slack channel appear here
-          once they are extracted into steps.
-        </div>
+            No evidence yet. Messages from a connected Slack channel appear here
+            once they are extracted into steps.
+          </div>
         )}
       </div>
     </section>

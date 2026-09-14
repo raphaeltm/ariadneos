@@ -5,7 +5,19 @@
 | Staging | https://staging.ariadneos.com | `ariadneos-staging` | `ariadneos-staging` |
 | Production | https://ariadneos.com | `ariadneos-demo` | `ariadneos-demo` |
 
-Production keeps the existing database and domain. Staging has separate sessions, events, migrations, quotas, and cleanup. Workers AI is available in both environments and uses the same Cloudflare account billing. Both contain synthetic data only.
+Production keeps the existing database and domain. Staging has separate installs, observations, migrations, quotas and cleanup. Workers AI is available in both environments and uses the same Cloudflare account billing.
+
+Both databases now hold real Slack message content for any workspace that installs
+the app. Treat them as customer data: message text, author names and permalinks are
+stored for every observed channel. Install the app into a workspace you are
+authorized to observe.
+
+The production Worker and D1 database are still named `ariadneos-demo`. That name
+is historical and is the last remaining "demo" string in the deployment. Renaming a
+Cloudflare Worker creates a new Worker, which would orphan the channel Durable
+Object namespace and require reattaching the custom domains, so it is deliberately
+left as a separate, manually sequenced change rather than bundled with a code
+deploy.
 
 ## Automatic deployment
 
@@ -23,7 +35,7 @@ The workflow becomes available for main pushes and manual dispatch once merged. 
 
 Validation runs npm ci, available lint checks, tests, TypeScript checking, and the production build. It also runs the shared quality script if it has been merged from the repository-quality PR. The validated frontend artifact is used for both staging and production; the Worker source comes from the same workflow commit.
 
-Each deployment applies that environment's D1 migrations before publishing. Readiness checks require a valid HTTPS response, the expected environment and commit from `/api/health`, a working frontend bundle, and all three seeded process graphs. Staging additionally runs the simulation/persistence/isolation smoke suite in its own temporary session. Production verification is read-only and does not create simulations or consume AI inference.
+Each deployment applies that environment's D1 migrations before publishing. Readiness checks require a valid HTTPS response, the expected environment and commit from `/api/health`, and a working frontend bundle. There is no seeded process data to check: a deployment starts empty until a workspace connects a channel. Staging additionally verifies that anonymous access is refused. Production verification is read-only and does not consume AI inference.
 
 A failed staging build, migration, deployment, or smoke check prevents production. A failure after production deploy is reported in Actions but does not automatically roll back.
 
@@ -72,4 +84,4 @@ Inspect the failed job in Actions and the target environment's Worker logs. Retr
 
 For application rollback, select a previous version of the appropriate Worker in Cloudflare or use `npx wrangler rollback VERSION_ID --env staging` (or `--env production`). Verify the environment and app again. Worker rollback does not revert D1 data or schema; plan database recovery separately. A safer code rollback is a revert merged to main, which follows the same tested pipeline.
 
-The cleanup cron removes temporary simulation data; repeated CI smoke tests do not permanently grow the baseline. Readiness retries allow time for DNS and revision propagation. If the shared demo quota has been exhausted, staging's mutation smoke check can fail and intentionally hold production.
+The daily cron closes cases in channels that went quiet, prunes expired quota buckets and OAuth state, and nudges each observed channel's coordinator so a channel whose alarm was lost resumes mining. Readiness retries allow time for DNS and revision propagation.

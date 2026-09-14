@@ -50,10 +50,7 @@ export type ArtifactType =
   | "incident"
   | "repo"
   | "ticket";
-export type CommandKind =
-  | "confirm_step"
-  | "rebuild_graph"
-  | "reject_step";
+export type CommandKind = "confirm_step" | "rebuild_graph" | "reject_step";
 export type CurationStatus = "confirmed" | "proposed" | "rejected";
 export type EvidenceAvailability = "available" | "deleted" | "redacted";
 export type FollowKind =
@@ -461,9 +458,6 @@ export interface CommandBase extends ScopedRef {
   kind: CommandKind;
   request_id: string;
 }
-
-
-
 
 export interface ConfirmStepCommand extends CommandBase {
   kind: "confirm_step";

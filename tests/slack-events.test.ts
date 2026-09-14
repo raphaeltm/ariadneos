@@ -86,9 +86,11 @@ function request(
       method: "POST",
     }),
     (options.bindings ?? env) as never,
-    { passThroughOnException: () => undefined, waitUntil: () => undefined } as
-      | ExecutionContext
-      | never
+    {
+      passThroughOnException: () => undefined,
+      props: {},
+      waitUntil: () => undefined,
+    } as unknown as ExecutionContext
   );
 }
 
@@ -314,7 +316,9 @@ describe("Slack Events HTTP receiver and storage", () => {
   it("re-queues a revised message for extraction", async () => {
     await request(event());
     sqlite
-      .prepare("UPDATE pm_processing SET status = 'done' WHERE observation_id = ?")
+      .prepare(
+        "UPDATE pm_processing SET status = 'done' WHERE observation_id = ?"
+      )
       .run("Ev1");
     await request(
       event("Ev2", TEST_WORKSPACE, {
@@ -368,9 +372,7 @@ describe("Slack Events HTTP receiver and storage", () => {
     expect(response.status).toBe(200);
     expect(
       sqlite
-        .prepare(
-          "SELECT revoked_at FROM slack_install WHERE workspace_id = ?"
-        )
+        .prepare("SELECT revoked_at FROM slack_install WHERE workspace_id = ?")
         .get(TEST_WORKSPACE)
     ).not.toMatchObject({ revoked_at: null });
     await request(event());
@@ -443,8 +445,11 @@ describe("Slack Events HTTP receiver and storage", () => {
 
   it("accepts messages larger than the browser API's body limit", async () => {
     expect(
-      (await request(event("Ev1", TEST_WORKSPACE, { text: "x".repeat(70_000) })))
-        .status
+      (
+        await request(
+          event("Ev1", TEST_WORKSPACE, { text: "x".repeat(70_000) })
+        )
+      ).status
     ).toBe(200);
     expect(rawEvents()).toHaveLength(1);
   });

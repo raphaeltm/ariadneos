@@ -31,13 +31,13 @@ Husky runs read-only lint-staged checks before commits and `npm run check` befor
 - `noJsxPropsBind`: globally memoizing every event callback adds complexity without measured benefit. React hook correctness remains enabled; optimize identity-sensitive props when profiling warrants it.
 - `noDescendingSpecificity`, only in the existing stylesheet: selectors target different component subtrees and responsive overrides intentionally come later. Reordering the cascade solely to satisfy the heuristic can change visuals.
 - `noMisplacedAssertion` and `noAwaitInLoops`, only in the standalone smoke and deployment-readiness scripts: Node assertions intentionally run outside Vitest, and sequential requests verify session persistence and quota exhaustion.
-- Two inline bitwise exceptions preserve the simulator's deterministic unsigned 32-bit PRNG. A documented effect-dependency exception preserves the explicit refresh trigger after simulation.
+- Inline exceptions are narrow and carry their reason in the suppression comment: sequential awaits where ordering is load-bearing (session segmentation, Slack rate limits, journal cursor monotonicity) and one bitwise exception for stable request hashing.
 
 Build output, coverage, browser artifacts, and the generated npm lockfile are excluded from Biome. Application code is included; there is no baseline file that hides existing lint failures. New suppressions need a specific reason and work-item evidence.
 
 ## Behavioral gates and limits
 
-Shared mining/simulation code has thresholds of 90% statements/lines, 100% functions, and 80% branches. These cover the pure core, not the entire app. Server coverage is reported separately; API integration tests execute the real Worker and D1 but are not folded into Vitest coverage. Browser tests verify initial data, graph evidence, simulation persistence/refresh, workflow switching, and native dialog focus/Escape behavior. Focused tests and empty test runs fail. Tests have no automatic retry allowance.
+Shared mining code has thresholds of 90% statements/lines, 100% functions, and 80% branches. These cover the pure core, not the entire app. Server coverage is reported separately; API integration tests execute the real Worker against the real migrations on in-memory SQLite. Browser tests verify the marketing pages and that the app refuses anonymous access. Focused tests and empty test runs fail. Tests have no automatic retry allowance.
 
 The integration harness parses Wrangler JSONC, uses a temporary local database, and removes named remote environments, the remote AI binding, and Cloudflare credential environment variables. It never deploys or migrates remote state. Live AI success is not covered; invalid requests and the existing computed fallback need to remain distinct from verified remote model output. Browser screenshots/traces are retained locally on failure in `test-results/`.
 

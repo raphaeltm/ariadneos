@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  createClientFixtures,
-  createFixtureApiAdapter,
-  type JournalEvent,
-} from "../src/api.ts";
+import type { ApiAdapter, JournalEvent, Snapshot } from "../src/api.ts";
 import {
   backoffDelay,
   createSseClient,
@@ -18,20 +14,50 @@ import {
   selectMessagesForSession,
   selectProject,
 } from "../src/store.ts";
+import { observedClientFixtures } from "./helpers/tenant.ts";
+
+/**
+ * Minimal adapter over the observed fixtures. The store and SSE client only need
+ * a snapshot source and a stream URL, so this stands in for the network without
+ * re-asserting the production adapter's request shaping.
+ */
+function createFixtureApiAdapter(
+  fixtures: ReturnType<typeof observedClientFixtures>
+): ApiAdapter {
+  return {
+    applyModelEdit: () => Promise.reject(new Error("not used by these tests")),
+    ask: () => Promise.reject(new Error("not used by these tests")),
+    buildStreamUrl: (scope, after) => {
+      const params = new URLSearchParams({
+        project_id: scope.project_id,
+        view: scope.view,
+      });
+      if (after !== undefined) {
+        params.set("after", String(after));
+      }
+      return `/api/stream?${params.toString()}`;
+    },
+    fetchSnapshot: () =>
+      Promise.resolve(fixtures.finalSnapshot as unknown as Snapshot),
+    updateStepStatus: () => Promise.resolve(),
+  };
+}
+
+const createClientFixtures = observedClientFixtures;
 
 describe("typed snapshot store", () => {
   it("converges to the same state from fresh snapshot or disconnect replay", () => {
     const fixtures = createClientFixtures();
     const fresh = applySnapshot(
       createInitialState(fixtures.scope),
-      fixtures.finalSnapshot,
+      fixtures.finalSnapshot as never,
       fixtures.scope
     );
     const replayed = fixtures.replay.reduce(
       (state, event) => applyJournalEvent(state, event).state,
       applySnapshot(
         createInitialState(fixtures.scope),
-        fixtures.baseSnapshot,
+        fixtures.baseSnapshot as never,
         fixtures.scope
       )
     );
@@ -44,7 +70,7 @@ describe("typed snapshot store", () => {
       (state, event) => applyJournalEvent(state, event).state,
       applySnapshot(
         createInitialState(fixtures.scope),
-        fixtures.baseSnapshot,
+        fixtures.baseSnapshot as never,
         fixtures.scope
       )
     );
@@ -60,39 +86,28 @@ describe("typed snapshot store", () => {
     );
   });
 
-  it("removes rejected discovered nodes and updates designed activities back to ghosts", () => {
+  it("adds newly extracted work and keeps unobserved designed activities as ghosts", () => {
     const fixtures = createClientFixtures();
     const replayed = fixtures.replay.reduce(
       (state, event) => applyJournalEvent(state, event).state,
       applySnapshot(
         createInitialState(fixtures.scope),
-        fixtures.baseSnapshot,
+        fixtures.baseSnapshot as never,
         fixtures.scope
       )
     );
     const graph = selectCurrentGraph(replayed);
+    // The replayed step introduces undocumented work.
     expect(
-      graph?.nodes.find((node) => node.id === "act_hold_customer_call")
-    ).toBeUndefined();
-    expect(graph?.edges.some((edge) => edge.id === "ged_hotfix_call")).toBe(
-      false
-    );
+      graph?.nodes.find((node) => node.id === "act_escalate_to_ceo")?.activity
+    ).toMatchObject({ plane: "discovered" });
+    // security_review is designed but never observed, so it stays a zero-support ghost.
     expect(
       graph?.nodes.find((node) => node.id === "act_security_review")?.activity
-    ).toMatchObject({
-      plane: "designed",
-      support: 0,
-    });
-    expect(
-      graph?.edges.some(
-        (edge) =>
-          edge.from === "act_hold_customer_call" ||
-          edge.to === "act_hold_customer_call"
-      )
-    ).toBe(false);
+    ).toMatchObject({ plane: "designed", support: 0 });
   });
 
-  it("ignores stale snapshot completions and stale project events", () => {
+  it("ignores a snapshot that completes after a newer request started", () => {
     const fixtures = createClientFixtures();
     const requestState = beginSnapshotLoad(
       createInitialState(fixtures.scope),
@@ -101,39 +116,51 @@ describe("typed snapshot store", () => {
     );
     const staleComplete = applySnapshot(
       requestState,
-      fixtures.finalSnapshot,
+      fixtures.finalSnapshot as never,
       fixtures.scope,
       "request-old"
     );
     expect(selectCurrentGraph(staleComplete)).toBeNull();
+  });
+
+  it("does not apply another project's events after switching project", () => {
+    const fixtures = createClientFixtures();
+    const otherScope = {
+      ...fixtures.scope,
+      project_id: "proj_billing" as typeof fixtures.scope.project_id,
+      workflow_id: "wf_billing" as typeof fixtures.scope.workflow_id,
+    };
     const switched = applySnapshot(
       createInitialState(
-        selectProject(requestState, "proj_atlas", "wf_feature_intake").scope
+        selectProject(
+          createInitialState(fixtures.scope),
+          "proj_billing",
+          "wf_billing"
+        ).scope
       ),
-      fixtures.atlasSnapshot,
       {
-        ...fixtures.scope,
-        project_id: "proj_atlas",
-        workflow_id: "wf_feature_intake",
-      }
+        ...fixtures.baseSnapshot,
+        messages: [],
+        sessions: [],
+        steps: [],
+      } as never,
+      otherScope
     );
     const ignored = applyJournalEvent(
       switched,
       fixtures.replay[0] as JournalEvent
     );
     expect(ignored.state.connection.lastEventId).toBe(
-      fixtures.atlasSnapshot.cursor
+      fixtures.baseSnapshot.cursor
     );
-    expect(
-      selectMessagesForSession(ignored.state, "ses_helios_skip_review")
-    ).toEqual([]);
+    expect(selectMessagesForSession(ignored.state, "ses_alpha")).toEqual([]);
   });
 
   it("requests a fresh snapshot on graph revision mismatch", () => {
     const fixtures = createClientFixtures();
     const state = applySnapshot(
       createInitialState(fixtures.scope),
-      fixtures.baseSnapshot,
+      fixtures.baseSnapshot as never,
       fixtures.scope
     );
     const result = applyJournalEvent(state, fixtures.revisionMismatch);
@@ -147,16 +174,11 @@ describe("typed snapshot store", () => {
 });
 
 describe("api and SSE adapters", () => {
-  it("keeps fixture and production API adapters behind the same contract", async () => {
+  it("passes the resume cursor through to the stream URL", () => {
     const fixtures = createClientFixtures();
     const adapter = createFixtureApiAdapter(fixtures);
-    await expect(
-      adapter.fetchSnapshot({ scope: fixtures.scope })
-    ).resolves.toMatchObject({
-      cursor: 103,
-      graph: { revision: 8 },
-    });
     expect(adapter.buildStreamUrl(fixtures.scope, 103)).toContain("after=103");
+    expect(adapter.buildStreamUrl(fixtures.scope)).not.toContain("after=");
   });
 
   it("uses explicit after cursors, ignores duplicate messages, and cleans up hidden streams", () => {

@@ -242,7 +242,6 @@ export function buildContractInspectorDetails({
   };
 }
 
-
 function stepNodeId(step: Step): ActivityId | StepId {
   return step.activity_id ?? step.id;
 }
@@ -495,10 +494,6 @@ function curationItemsForSteps(steps: Step[]): InspectorCurationItem[] {
     }));
 }
 
-
-
-
-
 function groupStepsBySession(steps: Step[]) {
   const grouped = new Map<string, Step[]>();
   for (const step of steps) {
@@ -513,7 +508,6 @@ function groupStepsBySession(steps: Step[]) {
   return grouped;
 }
 
-
 function selectedCaseCount(steps: Step[]) {
   return new Set(steps.map((step) => step.session_id)).size;
 }
@@ -525,7 +519,6 @@ function groundingMetric(steps: Step[]) {
   const grounded = steps.filter((step) => step.evidence.length > 0).length;
   return `${grounded}/${steps.length}`;
 }
-
 
 function activityLabel(
   id: GraphEdge["from"] | GraphEdge["to"],

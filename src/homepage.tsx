@@ -65,20 +65,21 @@ export default function Homepage() {
               <em>bigger picture.</em>
             </h1>
             <p>
-              Work happens in Slack. AriadneOS is being built to turn its
-              requests, decisions, and handoffs into a living map of how your
-              team gets things done.
+              Work happens in Slack. AriadneOS turns its requests, decisions and
+              handoffs into a living map of how your team actually gets things
+              done, with every step linked back to the message that proves it.
             </p>
             <div className="marketing-actions">
               <a className="marketing-button" href="/app">
-                Explore the demo <ArrowRight size={18} />
+                Connect your Slack <ArrowRight size={18} />
               </a>
               <a className="marketing-text-link" href="/how-it-works">
                 See how it works <span>↗</span>
               </a>
             </div>
-            <span className="marketing-demo-note">
-              Interactive demo · Simulated data · No setup needed
+            <span className="marketing-setup-note">
+              Sign in with Slack · Add the bot to one channel · Name your
+              process
             </span>
           </div>
           <figure
@@ -218,15 +219,15 @@ export default function Homepage() {
             <span className="marketing-kicker">
               A LITTLE WORK. A BIGGER PICTURE.
             </span>
-            <h2>See a process come to life.</h2>
+            <h2>See your process come to life.</h2>
             <p>
-              Explore process maps, inspect the evidence, and ask questions in
-              our working demo. It uses simulated workflows; live Slack
-              ingestion is still to come.
+              Connect one Slack channel and name the steps your process is meant
+              to follow. Ariadne maps what your team actually did, shows where
+              it diverged, and links every step to its source message.
             </p>
           </div>
           <a className="marketing-button" href="/app">
-            Try the interactive demo <ArrowRight size={18} />
+            Connect your Slack <ArrowRight size={18} />
           </a>
         </section>
       </main>

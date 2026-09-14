@@ -2776,3 +2776,83 @@ footer .online-dot {
     display: none;
   }
 }
+
+/* Setup surface. Layout only: the panels, buttons, banners and list rows reuse
+   the shared settings and curation styles so setup looks like the rest of the app. */
+.setup-view {
+  display: grid;
+  gap: 18px;
+}
+.setup-notices {
+  display: grid;
+  gap: 10px;
+}
+.setup-steps {
+  display: grid;
+  gap: 16px;
+}
+.setup-step {
+  display: grid;
+  gap: 14px;
+}
+.setup-step > header {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.setup-form {
+  display: grid;
+  gap: 12px;
+}
+.setup-form > footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.setup-field {
+  display: grid;
+  gap: 6px;
+}
+.setup-field > label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6f7b64;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.setup-field input,
+.setup-field select,
+.setup-field textarea {
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 13px;
+  color: inherit;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.setup-field input:focus-visible,
+.setup-field select:focus-visible,
+.setup-field textarea:focus-visible {
+  outline: 2px solid #5a7d4f;
+  outline-offset: 1px;
+}
+/* Activity rows read as an ordered list, with the reorder controls beside each. */
+.setup-step .curation-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.setup-step .curation-item .setup-field {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+@media (max-width: 720px) {
+  .setup-step > header {
+    flex-direction: column;
+    gap: 10px;
+  }
+}

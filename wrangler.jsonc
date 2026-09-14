@@ -55,7 +55,7 @@
   },
   "vars": {
     "AGENT_DAILY_OPENROUTER_LIMIT": "5",
-    "AGENT_ENABLED": "false",
+    "AGENT_ENABLED": "true",
     "AGENT_TIMEOUT_MS": "12000",
     "APP_ENV": "production",
     "BETTER_AUTH_URL": "https://ariadneos.com",
@@ -152,7 +152,7 @@
       },
       "vars": {
         "AGENT_DAILY_OPENROUTER_LIMIT": "5",
-        "AGENT_ENABLED": "false",
+        "AGENT_ENABLED": "true",
         "AGENT_TIMEOUT_MS": "12000",
         "APP_ENV": "production",
         "BETTER_AUTH_URL": "https://ariadneos.com",

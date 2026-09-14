@@ -54,7 +54,11 @@ to a project, a workflow with activities, and an extraction key configured.
 | `OPENROUTER_API_KEY` | secret | **Extraction.** Without it messages are stored and queued but no steps are produced, and the app reports the gap on Setup and Settings |
 
 Optional tuning: `EXTRACTION_WINDOW_SIZE`, `EXTRACTION_MAX_SESSIONS_PER_RUN`,
-`EXTRACTION_MAX_MODEL_CALLS`, `OUTBOX_MAX_PER_RUN`.
+`EXTRACTION_MAX_MODEL_CALLS`, `OUTBOX_MAX_PER_RUN`, `MENTION_MAX_PER_RUN`.
+
+`AGENT_ENABLED` controls whether Ariadne replies in Slack. It is `true` in both
+environments. Ariadne only posts when someone @-mentions it, and only into a
+channel the workspace enabled, but set it to `false` to stop it posting at all.
 
 Point the Slack app's Event Subscriptions request URL at
 `https://YOUR-HOST/api/slack/events` and its OAuth redirect URL at
@@ -78,6 +82,10 @@ Point the Slack app's Event Subscriptions request URL at
    `pm_step_evidence`.
 6. The rebuilt graph and conformance are committed to the journal, so connected
    browsers see them over SSE without polling.
+7. If a message @-mentions the bot, the coordinator's beat answers it from that
+   workspace's graph and queues the reply in the thread it was asked in. Computing
+   the answer and delivering it are separate steps, so a Slack outage retries the
+   post without recomputing, and a model outage does not lose the mention.
 
 A channel that is not enabled, or a workspace with no install, stores the raw
 event and derives nothing. That is deliberate: a bot present in extra channels

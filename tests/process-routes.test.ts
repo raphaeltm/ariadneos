@@ -1,8 +1,16 @@
-import { readFileSync } from "node:fs";
-import type { SQLInputValue } from "node:sqlite";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../server/index.ts";
+import {
+  createTestDatabase,
+  type SqliteD1,
+  seedTenant,
+  TEST_CHANNEL,
+  TEST_PROJECT,
+  TEST_WORKFLOW,
+  TEST_WORKSPACE,
+  type TenantActivity,
+} from "./helpers/tenant.ts";
 
 const authState = vi.hoisted(() => ({
   session: { user: { id: "test-user" } } as { user: { id: string } } | null,
@@ -13,49 +21,52 @@ vi.mock("../server/auth.ts", () => ({
   createAuth: () => ({
     api: { getSession: async () => authState.session },
   }),
+  sessionIdentity: () => {
+    if (!authState.session) {
+      return null;
+    }
+    return {
+      slackTeamId: TEST_WORKSPACE,
+      slackUserId: "U0USER",
+      userId: authState.session.user.id,
+    };
+  },
 }));
 
-const HELIOS_SKIP_REVIEW_SESSION = /^ses_helios_p1_v2_skip_review_/;
+// A richer activity set than the shared helper default, so edge, merge and
+// governed-removal edits each have distinct designed nodes to act on, mirroring
+// a real incident-response workflow.
+const CUSTOM_ACTIVITIES: TenantActivity[] = [
+  { label: "Detect incident", role: "support", slug: "detect_incident" },
+  { label: "Triage incident", role: "support", slug: "triage_incident" },
+  {
+    label: "Open incident ticket",
+    role: "support",
+    slug: "open_incident_ticket",
+  },
+  { label: "Assign owner", role: "support", slug: "assign_owner" },
+  { label: "Reproduce issue", role: "engineering", slug: "reproduce_issue" },
+  {
+    label: "Root cause analysis",
+    role: "engineering",
+    slug: "root_cause_analysis",
+  },
+  { label: "Security review", role: "security", slug: "security_review" },
+  { label: "Deploy fix", role: "engineering", slug: "deploy_fix" },
+  {
+    label: "Verify resolution",
+    role: "engineering",
+    slug: "verify_resolution",
+  },
+  { label: "Notify customer", role: "support", slug: "notify_customer" },
+  { label: "Write postmortem", role: "support", slug: "write_postmortem" },
+];
 
-interface BoundStatement {
-  all: <T>() => Promise<{ results: T[] }>;
-  first: <T>() => Promise<T | null>;
-  run: () => Promise<unknown>;
-}
+const SESSION_ID = "ses_case_1";
+const STEP_ID = "stp_triage";
+const TRIAGE_TS = "1726152000.000100";
 
-class SqliteD1 {
-  private readonly db: DatabaseSync;
-
-  constructor(db: DatabaseSync) {
-    this.db = db;
-  }
-
-  prepare(sql: string) {
-    const create = (values: unknown[]): BoundStatement => ({
-      all: async <T>() => ({
-        results: this.db
-          .prepare(sql)
-          .all(...(values as SQLInputValue[])) as T[],
-      }),
-      first: async <T>() =>
-        (this.db.prepare(sql).get(...(values as SQLInputValue[])) as
-          | T
-          | undefined) ?? null,
-      run: async () => this.db.prepare(sql).run(...(values as SQLInputValue[])),
-    });
-    return {
-      all: create([]).all,
-      bind: (...values: unknown[]) => create(values),
-      first: create([]).first,
-      run: create([]).run,
-    };
-  }
-
-  async batch(statements: BoundStatement[]) {
-    return await Promise.all(statements.map((statement) => statement.run()));
-  }
-}
-
+let d1: SqliteD1;
 let sqlite: DatabaseSync;
 let env: Parameters<typeof worker.fetch>[1];
 
@@ -64,19 +75,13 @@ const origin = "https://demo.example";
 
 beforeEach(() => {
   authState.session = { user: { id: "test-user" } };
-  sqlite = new DatabaseSync(":memory:");
-  sqlite.exec(readFileSync("migrations/0005_pm_foundation.sql", "utf8"));
-  sqlite.exec(
-    readFileSync("migrations/0006_channel_coordinator_runtime.sql", "utf8")
-  );
-  sqlite.exec(readFileSync("migrations/0007_graph_kb_persistence.sql", "utf8"));
-  sqlite.exec(readFileSync("migrations/0008_graph_edit_revisions.sql", "utf8"));
+  ({ d1, sqlite } = createTestDatabase());
+  seedTenant(sqlite, { activities: CUSTOM_ACTIVITIES });
+  seedGovernancePolicy(sqlite);
   seedProcessRows(sqlite);
   env = {
     CHANNEL_COORDINATOR: fakeDurableObjectNamespace(),
-    DB: new SqliteD1(sqlite) as unknown as D1Database,
-    SLACK_ALLOWED_CHANNEL_ID: "C1",
-    SLACK_ALLOWED_TEAM_ID: "T1",
+    DB: d1,
   } as Parameters<typeof worker.fetch>[1];
 });
 
@@ -94,20 +99,20 @@ describe("process API routes", () => {
     expect(response.status).toBe(401);
   });
 
-  it("rejects foreign workspace scope with a structured error", async () => {
-    const response = await get("/api/snapshot?workspace_id=T2");
-    expect(response.status).toBe(403);
+  it("rejects a foreign project_id with a structured error", async () => {
+    const response = await get("/api/snapshot?project_id=proj_other_tenant");
+    expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
       error: {
-        code: "forbidden_scope",
-        message: "Requested workspace or channel is not authorized.",
+        code: "unknown_project",
+        message: "Unknown project_id.",
       },
     });
   });
 
   it("returns an authenticated snapshot from D1 with a journal cursor", async () => {
     const response = await get(
-      "/api/snapshot?project_id=proj_helios&workflow_id=wf_p1_incident"
+      `/api/snapshot?project_id=${TEST_PROJECT}&workflow_id=${TEST_WORKFLOW}`
     );
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
@@ -139,7 +144,7 @@ describe("process API routes", () => {
   });
 
   it("commits curation updates and journal entries in scope", async () => {
-    const response = await post("/api/steps/stp_triage/status", {
+    const response = await post(`/api/steps/${STEP_ID}/status`, {
       request_id: "req-1",
       status: "rejected",
     });
@@ -154,11 +159,11 @@ describe("process API routes", () => {
     expect(payload.step.status).toBe("rejected");
     expect(payload.conformance.session).toMatchObject({
       fitness: 0,
-      session_id: "ses_helios_1",
+      session_id: SESSION_ID,
     });
     expect(payload.conformance.workflow).toMatchObject({
       fitness: 0,
-      workflow_id: "wf_p1_incident",
+      workflow_id: TEST_WORKFLOW,
     });
     expect(
       sqlite
@@ -175,69 +180,26 @@ describe("process API routes", () => {
     expect(
       sqlite
         .prepare(
-          "SELECT fitness, missing_json FROM pm_session WHERE id = 'ses_helios_1'"
+          `SELECT fitness, missing_json FROM pm_session WHERE id = '${SESSION_ID}'`
         )
         .get()
     ).toEqual({
       fitness: 0,
-      missing_json: JSON.stringify([
-        "detect_incident",
-        "triage_incident",
-        "open_incident_ticket",
-        "assign_owner",
-        "reproduce_issue",
-        "root_cause_analysis",
-        "security_review",
-        "deploy_fix",
-        "verify_resolution",
-        "notify_customer",
-        "write_postmortem",
-      ]),
+      missing_json: JSON.stringify(
+        CUSTOM_ACTIVITIES.map((activity) => activity.slug)
+      ),
     });
   });
 
-  it("runs the demo simulator through D1-backed process records", async () => {
-    const response = await post("/api/sim/run", {
-      project_id: "proj_helios",
-      request_id: "demo-run-1",
-      scenario_id: "helios_p1",
-      variant: "v2_skip_review",
-      workflow_id: "wf_p1_incident",
-    });
-    expect(response.status).toBe(200);
-    const payload = (await response.json()) as {
-      graph: { edges: unknown[]; nodes: unknown[] };
-      report: { metrics: { messages: number } };
-      session_id: string;
-    };
-    expect(payload.session_id).toMatch(HELIOS_SKIP_REVIEW_SESSION);
-    expect(payload.report.metrics.messages).toBeGreaterThan(0);
-    expect(payload.graph.nodes.length).toBeGreaterThan(0);
-    expect(payload.graph.edges.length).toBeGreaterThan(0);
+  it("reflects newly observed sessions in the snapshot and graph after a rebuild", async () => {
+    insertObservedCase(sqlite);
 
-    expect(
-      sqlite
-        .prepare(
-          "SELECT COUNT(*) AS count FROM pm_session WHERE source = 'simulation'"
-        )
-        .get()
-    ).toEqual({ count: 1 });
-    expect(
-      (
-        sqlite.prepare("SELECT COUNT(*) AS count FROM pm_message").get() as {
-          count: number;
-        }
-      ).count
-    ).toBeGreaterThan(1);
-    expect(
-      (
-        sqlite
-          .prepare("SELECT COUNT(*) AS count FROM pm_step_evidence")
-          .get() as {
-          count: number;
-        }
-      ).count
-    ).toBeGreaterThan(0);
+    const rebuild = await post("/api/graph/rebuild", {
+      project_id: TEST_PROJECT,
+      request_id: "rebuild-1",
+      workflow_id: TEST_WORKFLOW,
+    });
+    expect(rebuild.status).toBe(200);
     expect(
       sqlite
         .prepare(
@@ -247,7 +209,7 @@ describe("process API routes", () => {
     ).toEqual({ count: 1 });
 
     const snapshot = await get(
-      "/api/snapshot?project_id=proj_helios&workflow_id=wf_p1_incident"
+      `/api/snapshot?project_id=${TEST_PROJECT}&workflow_id=${TEST_WORKFLOW}`
     );
     expect(snapshot.status).toBe(200);
     const snapshotPayload = (await snapshot.json()) as {
@@ -272,7 +234,7 @@ describe("process API routes", () => {
         slug: "draft_status_update",
       },
       request_id: "edit-add-node",
-      workflow_id: "wf_p1_incident",
+      workflow_id: TEST_WORKFLOW,
     });
 
     expect(response.status).toBe(200);
@@ -298,7 +260,7 @@ describe("process API routes", () => {
         slug: "draft_status_update",
       },
       request_id: "edit-add-node",
-      workflow_id: "wf_p1_incident",
+      workflow_id: TEST_WORKFLOW,
     });
     expect(retry.status).toBe(200);
     expect(
@@ -307,7 +269,7 @@ describe("process API routes", () => {
         .get()
     ).toEqual({ count: 1 });
 
-    const history = await get("/api/model/edits?workflow_id=wf_p1_incident");
+    const history = await get(`/api/model/edits?workflow_id=${TEST_WORKFLOW}`);
     expect(history.status).toBe(200);
     await expect(history.json()).resolves.toMatchObject({
       edits: [
@@ -318,7 +280,7 @@ describe("process API routes", () => {
         },
       ],
       revision: 1,
-      workflow_id: "wf_p1_incident",
+      workflow_id: TEST_WORKFLOW,
     });
   });
 
@@ -330,7 +292,7 @@ describe("process API routes", () => {
           base_revision: 0,
           payload: { slug: "draft_status_update" },
           request_id: "edit-first",
-          workflow_id: "wf_p1_incident",
+          workflow_id: TEST_WORKFLOW,
         })
       ).status
     ).toBe(200);
@@ -340,7 +302,7 @@ describe("process API routes", () => {
       base_revision: 0,
       payload: { slug: "publish_status_update" },
       request_id: "edit-stale",
-      workflow_id: "wf_p1_incident",
+      workflow_id: TEST_WORKFLOW,
     });
 
     expect(stale.status).toBe(409);
@@ -361,13 +323,13 @@ describe("process API routes", () => {
       base_revision: 0,
       payload: { slug: "draft_status_update" },
       request_id: "edit-add",
-      workflow_id: "wf_p1_incident",
+      workflow_id: TEST_WORKFLOW,
     });
 
     const undo = await post("/api/model/edit/undo", {
       base_revision: 1,
       request_id: "undo-add",
-      workflow_id: "wf_p1_incident",
+      workflow_id: TEST_WORKFLOW,
     });
 
     expect(undo.status).toBe(200);
@@ -399,7 +361,7 @@ describe("process API routes", () => {
       action: "remove_node",
       payload: { slug: "security_review" },
       request_id: "remove-governed-without-ack",
-      workflow_id: "wf_p1_incident",
+      workflow_id: TEST_WORKFLOW,
     });
     expect(missingAck.status).toBe(400);
     await expect(missingAck.json()).resolves.toMatchObject({
@@ -416,7 +378,7 @@ describe("process API routes", () => {
         to_slug: "security_review",
       },
       request_id: "add-designed-edge",
-      workflow_id: "wf_p1_incident",
+      workflow_id: TEST_WORKFLOW,
     });
     expect(edge.status).toBe(200);
     await expect(edge.json()).resolves.toMatchObject({ revision: 1 });
@@ -429,7 +391,7 @@ describe("process API routes", () => {
         target_slug: "assign_owner",
       },
       request_id: "merge-designed-nodes",
-      workflow_id: "wf_p1_incident",
+      workflow_id: TEST_WORKFLOW,
     });
     expect(merge.status).toBe(200);
     const merged = (await merge.json()) as {
@@ -460,7 +422,7 @@ describe("process API routes", () => {
         slug: "security_review",
       },
       request_id: "remove-governed-with-ack",
-      workflow_id: "wf_p1_incident",
+      workflow_id: TEST_WORKFLOW,
     });
     expect(remove.status).toBe(200);
     const removed = (await remove.json()) as {
@@ -475,10 +437,9 @@ describe("process API routes", () => {
 
   it("forwards stream cursor and configured scope to the coordinator", async () => {
     const response = await worker.fetch(
-      new Request(
-        `${origin}/api/stream?project_id=proj_helios&after=1&workspace_id=T1&channel=C1`,
-        { headers: { "Last-Event-ID": "7" } }
-      ),
+      new Request(`${origin}/api/stream?project_id=${TEST_PROJECT}&after=1`, {
+        headers: { "Last-Event-ID": "7" },
+      }),
       env,
       context
     );
@@ -506,32 +467,104 @@ function post(path: string, body: unknown) {
   );
 }
 
+function seedGovernancePolicy(db: DatabaseSync) {
+  db.prepare(
+    `INSERT INTO tenant_policy
+     (workspace_id, id, project_id, workflow_id, kind, activity_slug, text,
+      params_json, created_at)
+     VALUES (?, 'pol_sec_review', ?, ?, 'mandatory', 'security_review',
+      'A security reviewer must sign off before deploy.', '{}', '2026-09-14T00:00:00.000Z')`
+  ).run(TEST_WORKSPACE, TEST_PROJECT, TEST_WORKFLOW);
+}
+
 function seedProcessRows(db: DatabaseSync) {
   db.prepare(
     `INSERT INTO pm_session
      (id, workspace_id, channel, project_id, workflow_id, status, source, started_ts)
-     VALUES ('ses_helios_1', 'T1', 'C1', 'proj_helios', 'wf_p1_incident', 'closed', 'human', '2026-09-12T12:00:00.000Z')`
-  ).run();
+     VALUES (?, ?, ?, ?, ?, 'closed', 'human', '2026-09-14T12:00:00.000Z')`
+  ).run(SESSION_ID, TEST_WORKSPACE, TEST_CHANNEL, TEST_PROJECT, TEST_WORKFLOW);
   db.prepare(
     `INSERT INTO pm_message
      (workspace_id, channel, ts, id, session_id, author_label, text, permalink, received_at)
-     VALUES ('T1', 'C1', '1726152000.000100', 'T1:C1:1726152000.000100', 'ses_helios_1', 'Nia', 'I triaged the incident.', 'https://slack.example/archives/C1/p1726152000000100', '2026-09-12T12:00:01.000Z')`
-  ).run();
+     VALUES (?, ?, ?, ?, ?, 'Nia', 'I triaged the incident.', ?, '2026-09-14T12:00:01.000Z')`
+  ).run(
+    TEST_WORKSPACE,
+    TEST_CHANNEL,
+    TRIAGE_TS,
+    `${TEST_WORKSPACE}:${TEST_CHANNEL}:${TRIAGE_TS}`,
+    SESSION_ID,
+    `https://testworkspace.slack.com/archives/${TEST_CHANNEL}/p1726152000000100`
+  );
   db.prepare(
     `INSERT INTO pm_step
      (id, session_id, seq, activity_id, actor_person_id, intent, type, modality, lifecycle_state, curation_status, confidence, ts_start)
-     VALUES ('stp_triage', 'ses_helios_1', 1, 'act_triage_incident', 'per_nia', 'triage incident', 'action', 'reported', 'done', 'confirmed', 0.92, '2026-09-12T12:00:01.000Z')`
-  ).run();
+     VALUES (?, ?, 1, 'act_triage_incident', 'per_nia', 'triage incident', 'action', 'reported', 'done', 'confirmed', 0.92, '2026-09-14T12:00:01.000Z')`
+  ).run(STEP_ID, SESSION_ID);
   db.prepare(
     `INSERT INTO pm_step_evidence
      (step_id, workspace_id, channel, message_ts, message_revision)
-     VALUES ('stp_triage', 'T1', 'C1', '1726152000.000100', 1)`
-  ).run();
+     VALUES (?, ?, ?, ?, 1)`
+  ).run(STEP_ID, TEST_WORKSPACE, TEST_CHANNEL, TRIAGE_TS);
   db.prepare(
     `INSERT INTO pm_journal
      (workspace_id, channel, project_id, kind, ts, payload_json, operation_key)
-     VALUES ('T1', 'C1', 'proj_helios', 'message', '2026-09-12T12:00:01.000Z', '{}', 'seed:1')`
-  ).run();
+     VALUES (?, ?, ?, 'message', '2026-09-14T12:00:01.000Z', '{}', 'seed:1')`
+  ).run(TEST_WORKSPACE, TEST_CHANNEL, TEST_PROJECT);
+}
+
+/**
+ * Inserts a second, independent observed case directly, standing in for the
+ * removed `/api/sim/run` simulator. The invariant under test is that data
+ * observed straight from Slack messages becomes visible through the normal
+ * read path once a session row exists.
+ */
+function insertObservedCase(db: DatabaseSync) {
+  const sessionId = "ses_case_2";
+  const detectTs = "1726160000.000100";
+  const triageTs = "1726160001.000100";
+  db.prepare(
+    `INSERT INTO pm_session
+     (id, workspace_id, channel, project_id, workflow_id, status, source, started_ts)
+     VALUES (?, ?, ?, ?, ?, 'closed', 'human', '2026-09-14T14:00:00.000Z')`
+  ).run(sessionId, TEST_WORKSPACE, TEST_CHANNEL, TEST_PROJECT, TEST_WORKFLOW);
+  for (const [ts, text] of [
+    [detectTs, "Another checkout incident just started."],
+    [triageTs, "Triaged: same root cause as before."],
+  ] as const) {
+    db.prepare(
+      `INSERT INTO pm_message
+       (workspace_id, channel, ts, id, session_id, author_label, text, permalink, received_at)
+       VALUES (?, ?, ?, ?, ?, 'Nia', ?, ?, '2026-09-14T14:00:01.000Z')`
+    ).run(
+      TEST_WORKSPACE,
+      TEST_CHANNEL,
+      ts,
+      `${TEST_WORKSPACE}:${TEST_CHANNEL}:${ts}`,
+      sessionId,
+      text,
+      `https://testworkspace.slack.com/archives/${TEST_CHANNEL}/p${ts.replace(".", "")}`
+    );
+  }
+  db.prepare(
+    `INSERT INTO pm_step
+     (id, session_id, seq, activity_id, actor_person_id, intent, type, modality, lifecycle_state, curation_status, confidence, ts_start)
+     VALUES ('stp_case2_detect', ?, 1, 'act_detect_incident', 'per_nia', 'detect incident', 'action', 'reported', 'done', 'confirmed', 0.9, '2026-09-14T14:00:01.000Z')`
+  ).run(sessionId);
+  db.prepare(
+    `INSERT INTO pm_step_evidence
+     (step_id, workspace_id, channel, message_ts, message_revision)
+     VALUES ('stp_case2_detect', ?, ?, ?, 1)`
+  ).run(TEST_WORKSPACE, TEST_CHANNEL, detectTs);
+  db.prepare(
+    `INSERT INTO pm_step
+     (id, session_id, seq, activity_id, actor_person_id, intent, type, modality, lifecycle_state, curation_status, confidence, ts_start)
+     VALUES ('stp_case2_triage', ?, 2, 'act_triage_incident', 'per_nia', 'triage incident', 'action', 'reported', 'done', 'confirmed', 0.9, '2026-09-14T14:00:02.000Z')`
+  ).run(sessionId);
+  db.prepare(
+    `INSERT INTO pm_step_evidence
+     (step_id, workspace_id, channel, message_ts, message_revision)
+     VALUES ('stp_case2_triage', ?, ?, ?, 1)`
+  ).run(TEST_WORKSPACE, TEST_CHANNEL, triageTs);
 }
 
 function fakeDurableObjectNamespace() {

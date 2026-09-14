@@ -16,6 +16,7 @@ import {
 import type { ModelAdapter, ModelJsonCall } from "../server/models.ts";
 import {
   createTestDatabase,
+  type SqliteD1,
   seedPerson,
   seedTenant,
   TEST_CHANNEL,
@@ -54,12 +55,12 @@ class FakeModel implements ModelAdapter {
   }
 }
 
+let d1: SqliteD1;
 let sqlite: DatabaseSync;
 let requestContext: AgentToolRequestContext;
 
 beforeEach(() => {
-  const created = createTestDatabase();
-  sqlite = created.sqlite;
+  ({ d1, sqlite } = createTestDatabase());
   seedTenant(sqlite);
   const personId = seedPerson(sqlite, {
     name: "Nia",
@@ -71,7 +72,7 @@ beforeEach(() => {
     actorId: "agent:test",
     env: {
       AGENT_ENABLED: "true",
-      DB: created.d1 as unknown as D1Database,
+      DB: d1 as unknown as D1Database,
     },
     now: () => "2026-09-14T12:00:10.000Z",
     workspaceId: TEST_WORKSPACE,

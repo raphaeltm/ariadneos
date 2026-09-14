@@ -1,6 +1,6 @@
 # Remove all demo data and operate on real Slack data
 
-Status: in-review
+Status: done
 Owner: Claude agent (Opus 5) for Raphaël Titsworth-Morin
 Source: SAM task 01M2G63M344A7561TBGK02DX26. The requester asked to remove every
 piece of demo data and make the app production ready on real Slack data only, and
@@ -146,10 +146,18 @@ Bugs found and fixed while removing the demo layer:
   floors were verified to bite by raising one past actual coverage and confirming
   the run fails. Current: extraction 96.9%, slack client 89.2%, authoring 89.8%,
   sessions 97.6%, setup routes 59.8%.
+- Deployed and verified on staging and production (2026-09-14). Both report
+  `source: "slack"` from `/api/health`. Migration 0010 applied cleanly to both real
+  D1 databases, which was the riskiest part of the change. Every process route
+  refuses anonymous access, unsigned Slack webhooks are rejected, the removed
+  simulation routes are gone, and no page carries a demo claim. Both Workers have
+  `OPENROUTER_API_KEY`, so extraction is configured.
 - Not verified: end-to-end behaviour against a real Slack workspace. That needs a
-  Slack app install against a deployed host and is the main outstanding risk. The
-  claim "works on real Slack data" currently rests on code and tests, not on an
-  observation of a real workspace.
+  Slack app install, which requires a human OAuth consent. The claim "works on real
+  Slack data" rests on code, tests and a verified deployment, but not yet on an
+  observation of real messages being mined. This is also the only check on
+  extraction quality against arbitrary human text rather than structured test
+  stubs.
 
 ## Risks and rollback
 

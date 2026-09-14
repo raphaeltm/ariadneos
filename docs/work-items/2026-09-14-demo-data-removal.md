@@ -1,6 +1,6 @@
 # Remove all demo data and operate on real Slack data
 
-Status: in-progress
+Status: in-review
 Owner: Claude agent (Opus 5) for Raphaël Titsworth-Morin
 Source: SAM task 01M2G63M344A7561TBGK02DX26. The requester asked to remove every
 piece of demo data and make the app production ready on real Slack data only, and
@@ -96,12 +96,28 @@ Removed (~6,500 lines): `shared/fixtures.ts`, `shared/fixture-validation.ts`,
 seed/simulator/fixture scripts, the legacy simulation API in `server/index.ts`,
 `/api/sim/*`, and the demo walkthrough and run controls in the client.
 
+Also added: Slack mention answering (`server/pipeline/answer.ts`). The outbox
+drainer otherwise had no producer, which is the same half-wiring the audit
+flagged. A mention is answered from the workspace's own observed graph, in the
+thread it was asked in; computing and delivering are separate steps so a Slack
+outage retries the post without recomputing.
+
 Bugs found and fixed while removing the demo layer:
 - The canvas emitted a `reject` graph edit action the server did not accept, so
   "Reject node" returned `invalid_action`. It now maps to `remove_node`.
 - `scripts/generate-auth-schema.ts` rewrote an applied migration (above).
 - `pm_message` had no provenance column, so simulated and real messages were
   indistinguishable once written. Added `source`.
+- The process router's scope middleware was attached to `"*"`, so an unknown
+  `/api` path ran tenant lookups before the 404 handler and a typo'd path
+  returned 409 `no_observed_channel`.
+- `/api/settings` reported each observed channel's project but not its workflow,
+  while the client's snapshot effect required both. The app therefore never
+  requested a snapshot and rendered an empty shell forever. Found by the browser
+  suite, which is the only place the real first-run state is exercised.
+- The variants panel listed designed edges with zero support as "the ways this
+  process unfolds". A designed edge nobody has walked is not an observed
+  variant; a fresh workspace was shown four fabricated paths.
 
 ## Validation
 
@@ -119,11 +135,21 @@ Bugs found and fixed while removing the demo layer:
   the real miner rather than a hand-written fixture.
 - `npx vitest run tests/auth.test.ts` — 21 pass, including that a session without a
   Slack workspace is refused rather than falling back to a shared scope.
-- `npx vitest run tests/client-state.test.ts tests/inspector.test.ts` — 13 pass.
-- Not yet run at the time of writing: the full `npm run check:repo`, the browser
-  suite, and staging verification. Four test files were still being migrated.
+- `npm run check:repo` — passes end to end: Python unit tests, work-item context,
+  ruff lint and format, lint, typecheck, auth-schema validation, 274 unit tests
+  with coverage thresholds, guardrail probes, migration smoke on fresh and
+  upgraded databases, dependency audit (0 vulnerabilities), and the browser suite
+  (17 tests) including the authenticated HTTP smoke checks.
+- Coverage floors added for `server/mining`, `server/pipeline`, `server/slack` and
+  `server/tenant`. Previously only `shared/` had thresholds, which is how the
+  extraction pipeline shipped at 5% statements while `npm run check` passed. The
+  floors were verified to bite by raising one past actual coverage and confirming
+  the run fails. Current: extraction 96.9%, slack client 89.2%, authoring 89.8%,
+  sessions 97.6%, setup routes 59.8%.
 - Not verified: end-to-end behaviour against a real Slack workspace. That needs a
-  Slack app install against a deployed host and is the main outstanding risk.
+  Slack app install against a deployed host and is the main outstanding risk. The
+  claim "works on real Slack data" currently rests on code and tests, not on an
+  observation of a real workspace.
 
 ## Risks and rollback
 
@@ -140,13 +166,24 @@ Bugs found and fixed while removing the demo layer:
 
 ## Next steps
 
-- Finish migrating `tests/agent-tools.test.ts`, `tests/agent-memory-route.test.ts`,
-  `tests/process-routes.test.ts`, `tests/model-edit-consistency.test.ts` and the
-  browser suite, then run `npm run check:repo`.
-- Style the `setup-` class hooks in `src/components/setup/setup-view.tsx`; the
-  markup reuses existing classes but the new wrappers are unstyled.
 - Install the Slack app into a real workspace against staging and verify the loop
-  end to end. Until that happens, "works on real Slack data" is an argument from
-  code and tests, not an observation.
-- Decide whether to rename the `ariadneos-demo` Worker and database, which requires
-  a manual Cloudflare sequence.
+  end to end: install, enable a channel, author a process, post messages, and
+  confirm steps and evidence appear. Until that happens, "works on real Slack
+  data" is an argument from code and tests, not an observation. This is the single
+  most valuable remaining check.
+- Set `OPENROUTER_API_KEY` on both Workers. Without it messages are stored and
+  queued but no steps are produced; the app reports the gap rather than failing
+  silently, but nothing is mined.
+- Point the Slack app's OAuth redirect at `/api/setup/slack/callback` and subscribe
+  its Event Subscriptions to `message.channels`, `message.groups`,
+  `channel_rename`, `app_uninstalled` and `tokens_revoked`.
+- `server/agent/tools/index.ts` is real and tested but reachable from no route.
+  Either expose it or remove it; leaving it is the half-wiring the audit warned
+  about, in smaller form.
+- Raise `server/routes/setup.ts` coverage (59.8%). The install callback, channel
+  sync and backfill routes are the untested paths.
+- Decide whether to rename the `ariadneos-demo` Worker and database. Renaming a
+  Cloudflare Worker creates a new one, orphaning the channel Durable Object
+  namespace and requiring the custom domains to be reattached, so it needs a
+  manually sequenced change that cannot be verified from this environment. It is
+  the last remaining "demo" string in the deployment.

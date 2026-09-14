@@ -46,11 +46,14 @@ const SIMULATOR = /simulator/i;
 
 test("opens settings from the shell help action", async ({ page }) => {
   await page.goto("/app");
-  await page.getByRole("button", { name: "About Ariadne" }).click();
+  await page.getByRole("button", { name: "About Ariadne" }).first().click();
   await expect(
     page.getByRole("heading", { name: "Workspace configuration" })
   ).toBeVisible();
-  await page.getByRole("button", { exact: true, name: "Graph canvas" }).click();
+  await page
+    .getByRole("button", { exact: true, name: "Graph canvas" })
+    .first()
+    .click();
   await expect(page.getByText("Live overlay from /api/snapshot")).toBeVisible();
 });
 
@@ -58,15 +61,22 @@ test("reports the connected workspace and extraction status in settings", async 
   page,
 }) => {
   await page.goto("/app");
-  await page.getByRole("button", { exact: true, name: "Settings" }).click();
+  await page
+    .getByRole("button", { exact: true, name: "Settings" })
+    .first()
+    .click();
   await expect(
     page.getByRole("heading", { name: "Workspace configuration" })
   ).toBeVisible();
-  await expect(page.getByText("Local Test Workspace")).toBeVisible();
-  await expect(page.getByText("#local-smoke")).toBeVisible();
+  await expect(
+    page.locator(".settings-grid").getByText("Local Test Workspace")
+  ).toBeVisible();
+  await expect(
+    page.locator(".settings-grid").getByText("#local-smoke")
+  ).toBeVisible();
   // The smoke Worker runs without an OpenRouter key, so the app must say
   // extraction is not configured rather than appearing healthy.
-  await expect(page.getByText("missing key")).toBeVisible();
+  await expect(page.getByText("missing key").first()).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Refresh runtime" })
   ).toBeVisible();
@@ -76,13 +86,17 @@ test("shows the setup surface with its progress steps", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/app");
-  await page.getByRole("button", { exact: true, name: "Setup" }).click();
-  await expect(page.getByText(CONNECT_SLACK).first()).toBeVisible();
+  await page
+    .getByRole("button", { exact: true, name: "Setup" })
+    .first()
+    .click();
+  const setup = page.locator(".setup-view");
+  await expect(setup.getByText(CONNECT_SLACK).first()).toBeVisible();
   // The provisioned workspace already has an install and a channel, so setup
   // must reflect that rather than asking for them again.
-  await expect(page.getByText("Local Test Workspace").first()).toBeVisible();
-  await expect(page.getByText("local-smoke").first()).toBeVisible();
-  await expect(page.getByText("Local smoke workflow").first()).toBeVisible();
+  await expect(setup.getByText("Local Test Workspace").first()).toBeVisible();
+  await expect(setup.getByText("local-smoke").first()).toBeVisible();
+  await expect(setup.getByText("Local smoke workflow").first()).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -181,14 +195,16 @@ test("exposes shell navigation and mobile layout", async ({ page }) => {
       "Setup",
       "Settings",
     ].map((name) =>
-      expect(page.getByRole("button", { exact: true, name })).toBeVisible()
+      expect(
+        page.getByRole("button", { exact: true, name }).first()
+      ).toBeVisible()
     )
   );
 
   await page.setViewportSize({ height: 800, width: 390 });
   await page.goto("/app");
   await expect(
-    page.getByRole("button", { exact: true, name: "Graph canvas" })
+    page.getByRole("button", { exact: true, name: "Graph canvas" }).first()
   ).toBeVisible();
   expect(
     await page.evaluate(
@@ -226,7 +242,10 @@ test("opens agent chat, streams an answer, and preserves message history", async
   });
 
   await page.goto("/app");
-  await page.getByRole("button", { exact: true, name: "Agent chat" }).click();
+  await page
+    .getByRole("button", { exact: true, name: "Agent chat" })
+    .first()
+    .click();
   await expect(
     page.getByRole("heading", { name: "Ask Ariadne" })
   ).toBeVisible();
@@ -258,7 +277,10 @@ test("signs out and rejects the previous session", async ({
     (cookie) => cookie.name === "better-auth.session_token"
   );
   expect(session).toBeDefined();
-  await page.getByRole("button", { exact: true, name: "Sign out" }).click();
+  await page
+    .getByRole("button", { exact: true, name: "Sign out" })
+    .first()
+    .click();
   await expect(
     page.getByRole("button", { name: "Sign in with Slack" })
   ).toBeVisible();

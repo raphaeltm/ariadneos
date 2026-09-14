@@ -188,6 +188,12 @@ app.get("/api/settings", async (c) => {
   const channels = (await listEnabledChannels(c.env.DB)).filter(
     (channel) => channel.workspace_id === workspaceId
   );
+  // The client needs a complete scope to request a snapshot, and the workflow
+  // lives on the project rather than the channel.
+  const kb = await readTenantKb(c.env.DB, workspaceId);
+  const workflowFor = (projectId: string | null) =>
+    kb.projects.find((project) => project.id === projectId)?.workflow_id ??
+    null;
   return c.json({
     auth: {
       provider: "Slack",
@@ -215,6 +221,7 @@ app.get("/api/settings", async (c) => {
         id: channel.channel_id,
         name: channel.channel_name,
         project_id: channel.project_id,
+        workflow_id: workflowFor(channel.project_id),
       })),
       status: install ? "installed" : "not_installed",
       workspaceId: install?.workspace_id ?? null,

@@ -60,6 +60,7 @@ interface ObservedChannel {
   id: string;
   name: string;
   project_id: string | null;
+  workflow_id: string | null;
 }
 
 interface WorkspaceSettings {
@@ -169,6 +170,9 @@ export default function App() {
           project_id: (stateRef.current.scope.project_id ||
             firstChannel?.project_id ||
             "") as ProjectId,
+          workflow_id: (stateRef.current.scope.workflow_id ||
+            firstChannel?.workflow_id ||
+            undefined) as ConnectionScope["workflow_id"],
           workspace_id: payload.slack.workspaceId ?? "",
         };
         setSettings(payload);
@@ -200,7 +204,7 @@ export default function App() {
 
   useEffect(() => {
     const scope = snapshotScope;
-    if (!(scope.project_id && scope.workflow_id)) {
+    if (!scope.project_id) {
       return;
     }
     const controller = new AbortController();
@@ -800,8 +804,11 @@ function VariantSummary({
   const nodeLabel = new Map(
     (graph?.nodes ?? []).map((node) => [node.id, node.activity.label])
   );
+  // A variant is a path work actually took. A designed edge nobody has walked
+  // is not a way the process unfolds, so zero-support edges are excluded rather
+  // than presented as observed behaviour.
   const variants = (graph?.edges ?? [])
-    .slice()
+    .filter((edge) => edge.observed_support > 0)
     .sort((a, b) => b.observed_support - a.observed_support)
     .slice(0, 4);
   return (

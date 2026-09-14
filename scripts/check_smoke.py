@@ -19,7 +19,6 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-
 SMOKE_WORKSPACE = "T0LOCALSMOKE"
 SMOKE_CHANNEL = "C0LOCALSMOKE"
 SMOKE_PROJECT = "proj_local_smoke"
@@ -174,7 +173,7 @@ def main():
                 # request. A user without one is refused by design.
                 database.execute(
                     "INSERT INTO auth_user(id,name,email,emailVerified,createdAt,updatedAt,"
-                    'slackTeamId,slackTeamName,slackUserId) VALUES (?,?,?,?,?,?,?,?,?)',
+                    "slackTeamId,slackTeamName,slackUserId) VALUES (?,?,?,?,?,?,?,?,?)",
                     (
                         identity,
                         "Test User",

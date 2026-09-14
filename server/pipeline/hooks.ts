@@ -11,12 +11,17 @@ import type {
   ChannelHookContext,
   ChannelHooks,
 } from "../runtime/channel.ts";
-import { clientForWorkspace, readChannel } from "../tenant/installs.ts";
+import {
+  clientForWorkspace,
+  readChannel,
+  readInstall,
+} from "../tenant/installs.ts";
 import { closeIdleSessions } from "../tenant/sessions.ts";
+import { type AnswerEnv, answerMentions } from "./answer.ts";
 import { type ExtractionEnv, runExtraction } from "./extraction.ts";
 import { type OutboxEnv, pendingOutboxCount, runOutbox } from "./outbox.ts";
 
-export interface PipelineEnv extends ExtractionEnv, OutboxEnv {
+export interface PipelineEnv extends AnswerEnv, ExtractionEnv, OutboxEnv {
   DB: D1Database;
 }
 
@@ -129,6 +134,12 @@ export function beatHook(env: PipelineEnv): ChannelHook {
     if (!(channel?.enabled && channel.project_id)) {
       return { rescheduleAt: context.now + BEAT_MS };
     }
+    // Answer outstanding mentions first, then drain: a mention asked since the
+    // last beat is answered in the same pass rather than a minute later.
+    const install = await readInstall(env.DB, context.scope.workspaceId);
+    const answers = install
+      ? await answerMentions(env, channel, install.bot_user_id)
+      : { answered: 0, skipped: 0, warnings: ["answer.no_install"] };
     const client = await clientForWorkspace(env.DB, context.scope.workspaceId);
     const delivery = await runOutbox(env, context.scope, { client });
     for (const sessionId of await closeIdleSessions(
@@ -147,6 +158,7 @@ export function beatHook(env: PipelineEnv): ChannelHook {
     }
     return {
       checkpoint: {
+        mentions_answered: String(answers.answered),
         outbox_delivered: String(delivery.delivered),
         outbox_pending: String(await pendingOutboxCount(env.DB, context.scope)),
       },

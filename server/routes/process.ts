@@ -116,7 +116,25 @@ export const processRoutes = new Hono<{
   Variables: Variables;
 }>();
 
-processRoutes.use("*", async (c, next) => {
+// Scope resolution reads the database, so it is attached to the paths this router
+// actually serves rather than to "*". A request for an unknown /api path must fall
+// through to the 404 handler instead of doing tenant lookups first.
+const SCOPED_PATHS = [
+  "/kb",
+  "/snapshot",
+  "/messages",
+  "/sessions",
+  "/sessions/*",
+  "/steps/*",
+  "/graph/*",
+  "/model/*",
+  "/stream",
+] as const;
+
+const resolveScopeMiddleware = async (
+  c: Context<{ Bindings: ProcessEnv; Variables: Variables }>,
+  next: () => Promise<void>
+) => {
   const workspaceId = c.get("workspaceId");
   if (!workspaceId) {
     return apiError(
@@ -135,7 +153,11 @@ processRoutes.use("*", async (c, next) => {
   }
   c.set("processContext", context);
   return await next();
-});
+};
+
+for (const path of SCOPED_PATHS) {
+  processRoutes.use(path, resolveScopeMiddleware);
+}
 
 /**
  * Resolves the channel and project a request reads.

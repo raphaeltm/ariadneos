@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+// scripts/check_smoke.py provisions the local Worker with a workspace the way a
+// completed setup leaves it: an install, an enabled channel bound to a project,
+// and an authored workflow. It seeds no observations, because observations may
+// only come from Slack. These tests therefore assert the app's real empty state
+// and the surfaces that do not depend on observed work.
+
 test.beforeEach(async ({ context, baseURL }, testInfo) => {
   const cookies: string[] = JSON.parse(
     process.env.ARIADNE_BROWSER_COOKIES ?? "[]"
@@ -29,17 +35,18 @@ test.beforeEach(async ({ context, baseURL }, testInfo) => {
   ]);
 });
 
-const HELIOS = /Helios Payments/;
-const ATLAS = /Atlas Self-Serve Billing/;
-const UPDATED = /Demo simulation persisted as/;
-const EVIDENCE = /Evidence messages/;
-const INSPECT_SOURCES = /Inspect .* source events?/;
 const DESIGNED_OR_BOTH = /designed|both/;
+const CONNECT_SLACK = /Connect Slack/i;
+const SMOKE_PROJECT_HEADING = /Local smoke project/;
+const EVIDENCE_STAT = /Evidence messages/;
+const NO_VARIANTS = /No variants observed yet/;
+const NO_EVIDENCE = /No evidence yet/;
+const RUN_DEMO = /Run demo/i;
+const SIMULATOR = /simulator/i;
 
 test("opens settings from the shell help action", async ({ page }) => {
   await page.goto("/app");
-  const opener = page.getByRole("button", { name: "About this demo" });
-  await opener.click();
+  await page.getByRole("button", { name: "About Ariadne" }).click();
   await expect(
     page.getByRole("heading", { name: "Workspace configuration" })
   ).toBeVisible();
@@ -47,170 +54,139 @@ test("opens settings from the shell help action", async ({ page }) => {
   await expect(page.getByText("Live overlay from /api/snapshot")).toBeVisible();
 });
 
-test("refreshes persisted simulation results and exposes evidence", async ({
-  page,
-}) => {
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto("/app");
-  await expect(page.getByRole("heading", { name: HELIOS })).toBeVisible();
-  const cases = page
-    .locator(".stat")
-    .filter({ hasText: EVIDENCE })
-    .locator(".stat-value");
-  await expect(cases).toHaveText("0");
-  await page
-    .getByRole("button", { exact: true, name: "Run demo mode" })
-    .click();
-  await expect(page.getByText(UPDATED)).toBeVisible();
-  await expect(cases).not.toHaveText("0");
-  await page.reload();
-  await expect(cases).not.toHaveText("0");
-  await page
-    .locator(".react-flow__node")
-    .filter({ hasText: "Root cause analysis" })
-    .click();
-  await expect(page.getByText("SELECTION INSPECTOR").first()).toBeVisible();
-  await page.getByRole("button", { exact: true, name: "Activity" }).click();
-  await expect(page.locator(".events-panel .event-row").first()).toBeVisible();
-  await page
-    .getByRole("button", { exact: true, name: "Atlas Self-Serve Billing" })
-    .click();
-  await expect(page.getByRole("heading", { name: ATLAS })).toBeVisible();
-  expect(errors).toEqual([]);
-});
-
-test("auto-plays the guided demo walkthrough and supports beat jumps", async ({
+test("reports the connected workspace and extraction status in settings", async ({
   page,
 }) => {
   await page.goto("/app");
-  const cases = page
-    .locator(".stat")
-    .filter({ hasText: EVIDENCE })
-    .locator(".stat-value");
-  await expect(cases).not.toHaveText("");
-  await page
-    .getByRole("button", { exact: true, name: "Start walkthrough" })
-    .click();
-  await expect(
-    page.getByText("Open on the process that people think they run")
-  ).toBeVisible();
-  await page.keyboard.press("2");
-  await expect(
-    page.getByText("Let the Slack-shaped workflow unfold")
-  ).toBeVisible();
-  await expect
-    .poll(async () => Number(await cases.textContent()), { timeout: 15_000 })
-    .toBeGreaterThan(0);
-  await page.keyboard.press("5");
-  await expect(
-    page.getByText("Claims stay attached to evidence")
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: INSPECT_SOURCES }).first()
-  ).toBeVisible();
-  await page.keyboard.press("6");
-  await expect(
-    page.getByText("The same workflow now has visible paths")
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "The ways this process unfolds" })
-  ).toBeVisible();
-  await page.keyboard.press("Space");
-  await expect(
-    page.getByRole("button", { exact: true, name: "Resume walkthrough" })
-  ).toBeVisible();
-});
-
-test("edits graph labels inline and renders designed edges", async ({
-  page,
-}) => {
-  await page.goto("/app");
-  const firstNode = page
-    .locator(".react-flow__node")
-    .filter({
-      hasText: "Root cause analysis",
-    })
-    .first();
-  await firstNode.click();
-  await page.getByRole("button", { name: "Rename node" }).click();
-  const nodeLabelInput = page.locator(
-    '.node-rename-form input[aria-label="Node label"]'
-  );
-  await nodeLabelInput.fill("Root cause reviewed");
-  await nodeLabelInput.press("Enter");
-  await expect(
-    page.locator(".react-flow__node").filter({ hasText: "Root cause reviewed" })
-  ).toBeVisible();
-  await page.reload();
-  await expect(
-    page.locator(".react-flow__node").filter({ hasText: "Root cause reviewed" })
-  ).toBeVisible();
-  const snapshotResponse = await page.request.get(
-    "/api/snapshot?project_id=proj_helios&workflow_id=wf_p1_incident"
-  );
-  expect(snapshotResponse.ok()).toBe(true);
-  const snapshot = await snapshotResponse.json();
-  expect(snapshot.graph.nodes).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        activity: expect.objectContaining({ label: "Root cause reviewed" }),
-      }),
-    ])
-  );
-  expect(snapshot.graph.edges).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        from: "act_root_cause_analysis",
-        plane: expect.stringMatching(DESIGNED_OR_BOTH),
-        to: "act_security_review",
-      }),
-    ])
-  );
-});
-
-test("exposes shell navigation, project switching, and mobile layout", async ({
-  page,
-}) => {
-  await page.goto("/app");
-  await expect(
-    page.getByRole("navigation", { name: "App navigation" })
-  ).toBeVisible();
   await page.getByRole("button", { exact: true, name: "Settings" }).click();
   await expect(
     page.getByRole("heading", { name: "Workspace configuration" })
   ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Deployment configuration" })
-  ).toBeVisible();
-  await expect(page.getByText("staging.ariadneos.com")).toBeVisible();
+  await expect(page.getByText("Local Test Workspace")).toBeVisible();
+  await expect(page.getByText("#local-smoke")).toBeVisible();
+  // The smoke Worker runs without an OpenRouter key, so the app must say
+  // extraction is not configured rather than appearing healthy.
+  await expect(page.getByText("missing key")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Refresh runtime" })
   ).toBeVisible();
+});
+
+test("shows the setup surface with its progress steps", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto("/app");
+  await page.getByRole("button", { exact: true, name: "Setup" }).click();
+  await expect(page.getByText(CONNECT_SLACK).first()).toBeVisible();
+  // The provisioned workspace already has an install and a channel, so setup
+  // must reflect that rather than asking for them again.
+  await expect(page.getByText("Local Test Workspace").first()).toBeVisible();
+  await expect(page.getByText("local-smoke").first()).toBeVisible();
+  await expect(page.getByText("Local smoke workflow").first()).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("shows an honest empty state before any Slack work is observed", async ({
+  page,
+}) => {
+  await page.goto("/app");
   await expect(
-    page.getByRole("button", { name: "Deploy workflow" })
+    page.getByRole("heading", { name: SMOKE_PROJECT_HEADING })
   ).toBeVisible();
-  await page.getByLabel("Switch project").selectOption("proj_atlas");
+  // No observations exist, so the evidence count is zero and the panels say so
+  // instead of inviting the user to generate fake data.
+  const evidence = page
+    .locator(".stat")
+    .filter({ hasText: EVIDENCE_STAT })
+    .locator(".stat-value");
+  await expect(evidence).toHaveText("0");
+  await expect(page.getByText(NO_VARIANTS)).toBeVisible();
+  await expect(page.getByText(NO_EVIDENCE)).toBeVisible();
+  // Nothing anywhere should offer to run a simulation.
+  await expect(page.getByRole("button", { name: RUN_DEMO })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: SIMULATOR })).toHaveCount(0);
+});
+
+test("renders the designed plane authored during setup", async ({ page }) => {
+  await page.goto("/app");
+  // Designed activities appear as ghosts even with zero observations, which is
+  // what makes the overlay readable on day one.
   await expect(
-    page.getByRole("heading", { name: "Atlas Self-Serve Billing" })
+    page.locator(".react-flow__node").filter({ hasText: "Security review" })
   ).toBeVisible();
+  const snapshot = await page.request.get("/api/snapshot");
+  expect(snapshot.ok()).toBe(true);
+  const payload = await snapshot.json();
+  expect(payload.graph.nodes).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        activity: expect.objectContaining({
+          plane: expect.stringMatching(DESIGNED_OR_BOTH),
+          slug: "security_review",
+          support: 0,
+        }),
+      }),
+    ])
+  );
+  // Every node must be designed: nothing was observed, so nothing may claim to be.
+  for (const node of payload.graph.nodes) {
+    expect(node.activity.occurrences).toBe(0);
+  }
+  expect(payload.messages).toEqual([]);
+  expect(payload.steps).toEqual([]);
+});
+
+test("edits graph labels inline and persists them", async ({ page }) => {
+  await page.goto("/app");
+  const node = page
+    .locator(".react-flow__node")
+    .filter({ hasText: "Security review" })
+    .first();
+  await node.click();
+  await page.getByRole("button", { name: "Rename node" }).click();
+  const input = page.locator(
+    '.node-rename-form input[aria-label="Node label"]'
+  );
+  await input.fill("Security checklist");
+  await input.press("Enter");
+  await expect(
+    page.locator(".react-flow__node").filter({ hasText: "Security checklist" })
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.locator(".react-flow__node").filter({ hasText: "Security checklist" })
+  ).toBeVisible();
+  const snapshot = await page.request.get("/api/snapshot");
+  expect(snapshot.ok()).toBe(true);
+  expect((await snapshot.json()).graph.nodes).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        activity: expect.objectContaining({ label: "Security checklist" }),
+      }),
+    ])
+  );
+});
+
+test("exposes shell navigation and mobile layout", async ({ page }) => {
+  await page.goto("/app");
+  await expect(
+    page.getByRole("navigation", { name: "App navigation" })
+  ).toBeVisible();
+  for (const name of [
+    "Graph canvas",
+    "Inspector",
+    "Activity",
+    "Agent chat",
+    "Setup",
+    "Settings",
+  ]) {
+    await expect(page.getByRole("button", { exact: true, name })).toBeVisible();
+  }
 
   await page.setViewportSize({ height: 800, width: 390 });
   await page.goto("/app");
   await expect(
     page.getByRole("button", { exact: true, name: "Graph canvas" })
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { exact: true, name: "Inspector" })
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { exact: true, name: "Activity" })
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { exact: true, name: "Agent chat" })
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { exact: true, name: "Settings" })
   ).toBeVisible();
   expect(
     await page.evaluate(
@@ -238,15 +214,11 @@ test("opens agent chat, streams an answer, and preserves message history", async
 }) => {
   let requestBody: unknown;
   const response =
-    "The observed handoff from intake to approval is the best place to inspect. It appears across multiple completed cases, and the supporting event log carries the source observations for review.";
+    "No work has been extracted from this channel yet. Once messages describing work arrive, the graph will show the steps and their evidence.";
   await page.route("**/api/ask", async (route) => {
     requestBody = route.request().postDataJSON();
     await route.fulfill({
-      body: JSON.stringify({
-        answer: response,
-        evidence: ["VEN-104", "VEN-119"],
-        mode: "summary",
-      }),
+      body: JSON.stringify({ answer: response, evidence: [], mode: "summary" }),
       contentType: "application/json",
     });
   });
@@ -256,21 +228,19 @@ test("opens agent chat, streams an answer, and preserves message history", async
   await expect(
     page.getByRole("heading", { name: "Ask Ariadne" })
   ).toBeVisible();
-  await page.getByLabel("Message Ariadne").fill("Which handoff slows down?");
+  await page.getByLabel("Message Ariadne").fill("What has happened so far?");
   await page.getByRole("button", { name: "Send message" }).click();
 
-  await expect(page.getByText("Which handoff slows down?")).toBeVisible();
+  await expect(page.getByText("What has happened so far?")).toBeVisible();
   await expect(page.locator(".stream-cursor")).toBeVisible();
   await expect(page.getByText(response)).toBeVisible();
+  // The request carries the project, and no workflow alias: the legacy
+  // vendor/refund/access mapping is gone.
   expect(requestBody).toMatchObject({
-    project_id: "proj_helios",
-    question: "Which handoff slows down?",
-    workflow: "vendor",
-    workflow_id: "wf_p1_incident",
+    project_id: "proj_local_smoke",
+    question: "What has happened so far?",
   });
-
-  await page.getByRole("button", { name: "Inspect evidence" }).click();
-  await expect(page.locator(".events-panel .event-row").first()).toBeVisible();
+  expect(requestBody).not.toHaveProperty("workflow");
 });
 
 test("signs out and rejects the previous session", async ({
@@ -278,7 +248,9 @@ test("signs out and rejects the previous session", async ({
   context,
 }) => {
   await page.goto("/app");
-  await expect(page.getByRole("heading", { name: HELIOS })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: SMOKE_PROJECT_HEADING })
+  ).toBeVisible();
   const before = await context.cookies();
   const session = before.find(
     (cookie) => cookie.name === "better-auth.session_token"

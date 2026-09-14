@@ -179,7 +179,7 @@ export default function App() {
         }));
         // Nothing to render until a channel is bound to a project, so land the
         // user on setup instead of an empty canvas.
-        if (!(firstChannel && firstChannel.project_id)) {
+        if (!firstChannel?.project_id) {
           setShellView("setup");
         }
       })

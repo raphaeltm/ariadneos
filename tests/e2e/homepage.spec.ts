@@ -21,7 +21,8 @@ test("markets Slack without fetching app data and opens the explorer", async ({
     page.getByRole("link", { name: "Skip to content" })
   ).toBeFocused();
   await page
-    .getByRole("link", { exact: true, name: "Explore the demo" })
+    .getByRole("link", { exact: true, name: "Connect your Slack" })
+    .first()
     .click();
   await expect(page).toHaveURL(APP_URL);
   await expect(

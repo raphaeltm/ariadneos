@@ -127,31 +127,9 @@ app.all("/api/auth/*", async (c) => {
 });
 app.get("/api/agent/status", (c) => c.json(agentRuntimeStatus(c.env)));
 
-// The Slack OAuth callback is a browser redirect from slack.com, so it runs
-// before the session middleware and authenticates on its own signed state.
-app.get(
-  "/api/setup/slack/callback",
-  async (c) =>
-    await setupRoutes.fetch(
-      new Request(rewriteSetupUrl(c.req.url), c.req.raw),
-      c.env,
-      c.executionCtx
-    )
-);
-
-app.use("/api/*", async (c, next) => {
-  if (!authConfigured(c.env)) {
-    return c.json({ error: "Slack login is not configured yet." }, 503);
-  }
-  const identity = await sessionIdentity(c.env, c.req.raw.headers);
-  if (!identity) {
-    return c.json({ error: "Sign in with Slack to continue." }, 401);
-  }
-  c.set("userId", identity.userId);
-  c.set("workspaceId", identity.slackTeamId);
-  return await next();
-});
-
+// Deployment readiness calls this on the deployed revision to prove the
+// configured model is reachable, so it runs before the session middleware.
+// It takes no user input and is capped by the shared daily OpenRouter quota.
 app.post("/api/agent/smoke", async (c) => {
   const status = agentRuntimeStatus(c.env);
   if (
@@ -177,6 +155,31 @@ app.post("/api/agent/smoke", async (c) => {
     return c.json(response);
   }
   return c.json(response, result.status === "missing_key" ? 503 : 502);
+});
+
+// The Slack OAuth callback is a browser redirect from slack.com, so it runs
+// before the session middleware and authenticates on its own signed state.
+app.get(
+  "/api/setup/slack/callback",
+  async (c) =>
+    await setupRoutes.fetch(
+      new Request(rewriteSetupUrl(c.req.url), c.req.raw),
+      c.env,
+      c.executionCtx
+    )
+);
+
+app.use("/api/*", async (c, next) => {
+  if (!authConfigured(c.env)) {
+    return c.json({ error: "Slack login is not configured yet." }, 503);
+  }
+  const identity = await sessionIdentity(c.env, c.req.raw.headers);
+  if (!identity) {
+    return c.json({ error: "Sign in with Slack to continue." }, 401);
+  }
+  c.set("userId", identity.userId);
+  c.set("workspaceId", identity.slackTeamId);
+  return await next();
 });
 
 app.get("/api/settings", async (c) => {

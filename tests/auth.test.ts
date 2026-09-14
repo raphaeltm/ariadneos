@@ -84,6 +84,30 @@ describe("Slack authentication boundary", () => {
     expect(getSession).not.toHaveBeenCalled();
   });
 
+  it.each(["/api/agent/status", "/api/agent/smoke"])(
+    "keeps %s reachable without a session for deployment readiness",
+    async (path) => {
+      // The deploy workflow calls these on the deployed revision to prove the
+      // configured model is reachable. Putting either behind the session
+      // middleware breaks the staging gate, which is how it broke once already.
+      const response = await request(
+        path,
+        path.endsWith("smoke")
+          ? {
+              body: "{}",
+              headers: {
+                "Content-Type": "application/json",
+                Origin: "https://ariadneos.com",
+              },
+              method: "POST",
+            }
+          : undefined
+      );
+      expect(response.status).not.toBe(401);
+      expect(getSession).not.toHaveBeenCalled();
+    }
+  );
+
   it.each(AUTHENTICATED_ROUTES)(
     "rejects anonymous access to $method $path before reading data",
     async ({ method, path }) => {

@@ -74,6 +74,18 @@ for (const path of ["/api/ask", "/api/setup/projects", "/api/graph/rebuild"]) {
   );
 }
 
+// Deployment readiness calls these anonymously to prove the configured model is
+// reachable on the deployed revision. Putting either behind the session
+// middleware breaks the staging gate.
+for (const path of ["/api/health", "/api/agent/status"]) {
+  const response = await request(path, { session: false });
+  assert.notEqual(
+    response.status,
+    401,
+    `${path} must stay reachable without a session`
+  );
+}
+
 // The Slack receiver authenticates with HMAC, not a session, and must fail
 // closed on an unsigned request rather than accepting it.
 const unsignedEvent = await request("/api/slack/events", {

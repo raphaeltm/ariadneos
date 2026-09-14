@@ -58,8 +58,8 @@ export default function AuthGate({ children }: { children: ReactNode }) {
           {busy ? "Connecting…" : "Sign in with Slack"}
         </button>
         <p className="login-detail">
-          Uses your Slack profile to sign you in. Process data in this demo is
-          simulated.
+          Uses your Slack profile to sign you in, and to identify which Slack
+          workspace's work to observe.
         </p>
         {(error ||
           sessionError ||

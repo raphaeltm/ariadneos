@@ -6,11 +6,11 @@ import type {
   GraphView,
   StepId,
 } from "../../../shared/contracts.ts";
-import type { GraphEditAction } from "../../../shared/process.ts";
+import type { ModelEditAction } from "../../api.ts";
 import type { AppSelection } from "../../store.ts";
 
 export type GraphEditHandler = (
-  action: GraphEditAction,
+  action: ModelEditAction,
   payload: Record<string, string>
 ) => Promise<void> | void;
 

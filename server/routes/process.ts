@@ -92,12 +92,17 @@ const ID_PATTERN = /^[a-z][a-z0-9_:-]*$/;
 const SLUG_PATTERN = /^[a-z][a-z0-9_]*$/;
 const NON_NEGATIVE_INTEGER_PATTERN = /^\d+$/;
 const CURATION_STATUSES = new Set<CurationStatus>(["confirmed", "rejected"]);
+// Canvas-facing aliases plus the underlying designed-graph actions. "reject" and
+// "retire" both remove a node: rejecting discards a discovered activity the miner
+// proposed, retiring removes one the workspace had designed. The effect on the
+// designed plane is the same.
 const GRAPH_EDIT_ACTIONS = new Set([
   "add_edge",
   "add_node",
   "merge",
   "merge_nodes",
   "promote",
+  "reject",
   "remove_edge",
   "remove_node",
   "rename",
@@ -1235,6 +1240,8 @@ function normalizeEditAction(
       return "add_node";
     case "rename":
       return "rename_node";
+    case "reject":
+      return "remove_node";
     case "require":
       return "add_edge";
     case "retire":

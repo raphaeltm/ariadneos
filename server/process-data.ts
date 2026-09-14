@@ -67,7 +67,7 @@ interface SessionRow {
   missing_json: string;
   project_id: string;
   scenario_id: string | null;
-  source: "human" | "simulation";
+  source: "human";
   started_ts: string;
   status: "closed" | "open";
   suggested: number;

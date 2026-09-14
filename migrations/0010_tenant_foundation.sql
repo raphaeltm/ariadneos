@@ -211,23 +211,6 @@ DELETE FROM pm_promise_reconciliation;
 DELETE FROM pm_journal;
 DELETE FROM pm_processing;
 DELETE FROM pm_outbox;
-DELETE FROM pm_person;
-DELETE FROM pm_project;
-DELETE FROM pm_policy;
-DELETE FROM pm_artifact;
-DELETE FROM pm_activity_synonym;
-DELETE FROM pm_activity;
-DELETE FROM pm_workflow_activity;
-DELETE FROM pm_workflow;
-DELETE FROM pm_designed_edge;
-DELETE FROM pm_role_repertoire;
-DELETE FROM pm_role;
-DELETE FROM pm_artifact_lifecycle_transition;
-DELETE FROM pm_artifact_lifecycle;
-DELETE FROM pm_kb_nodes;
-DELETE FROM pm_kb_workflow_activities;
-DELETE FROM pm_kb_workflow_follows;
-DELETE FROM pm_kb_state;
 DELETE FROM pm_graph_revision;
 DELETE FROM pm_graph_view;
 DELETE FROM pm_graph_edit_revision;
@@ -236,7 +219,29 @@ DELETE FROM pm_agent_thread;
 DELETE FROM agent_edit_proposal;
 DELETE FROM agent_event;
 
+-- Legacy synthetic event store for the removed simulation API.
 DROP TABLE IF EXISTS events;
 DROP TABLE IF EXISTS edits;
 DROP TABLE IF EXISTS graph_canvas_edits;
 DROP TABLE IF EXISTS sessions;
+
+-- Authored-knowledge tables superseded by the workspace-scoped tenant_* tables
+-- above. These were never workspace-scoped, so they cannot hold a tenant's data
+-- safely, and nothing reads them any more.
+DROP TABLE IF EXISTS pm_kb_nodes;
+DROP TABLE IF EXISTS pm_kb_workflow_activities;
+DROP TABLE IF EXISTS pm_kb_workflow_follows;
+DROP TABLE IF EXISTS pm_kb_state;
+DROP TABLE IF EXISTS pm_person;
+DROP TABLE IF EXISTS pm_project;
+DROP TABLE IF EXISTS pm_policy;
+DROP TABLE IF EXISTS pm_artifact;
+DROP TABLE IF EXISTS pm_activity_synonym;
+DROP TABLE IF EXISTS pm_activity;
+DROP TABLE IF EXISTS pm_workflow_activity;
+DROP TABLE IF EXISTS pm_workflow;
+DROP TABLE IF EXISTS pm_designed_edge;
+DROP TABLE IF EXISTS pm_role_repertoire;
+DROP TABLE IF EXISTS pm_role;
+DROP TABLE IF EXISTS pm_artifact_lifecycle_transition;
+DROP TABLE IF EXISTS pm_artifact_lifecycle;

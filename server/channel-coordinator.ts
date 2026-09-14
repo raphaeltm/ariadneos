@@ -1,3 +1,4 @@
+import { type PipelineEnv, pipelineHooks } from "./pipeline/hooks.ts";
 import {
   CHANNEL_HEARTBEAT_MS,
   CHANNEL_MAX_BUFFERED_EVENTS,
@@ -45,9 +46,11 @@ interface Subscriber {
   write: (text: string) => Promise<void>;
 }
 
-export interface ChannelCoordinatorBindings {
-  DB: D1Database;
-}
+/**
+ * The coordinator needs the model and Slack configuration, not just the database:
+ * its extraction and delivery deadlines run the real pipeline.
+ */
+export type ChannelCoordinatorBindings = PipelineEnv;
 
 const DurableObjectBase =
   (
@@ -121,7 +124,13 @@ export class ChannelCoordinatorCore {
     }
     if (request.method === "POST" && url.pathname === "/wake") {
       await this.serialized(async () => {
-        this.writeDeadline("recovery", Date.now());
+        const now = Date.now();
+        this.writeDeadline("recovery", now);
+        this.writeDeadline("extraction", now);
+        this.writeDeadline("beat", now + CHANNEL_HEARTBEAT_MS);
+        if (this.getState().status === "prepared") {
+          this.putState({ status: "running" });
+        }
         await this.rescheduleAlarm();
       });
       return Response.json({ ok: true });
@@ -374,32 +383,7 @@ export class ChannelCoordinatorCore {
   }
 
   private defaultHook(kind: DeadlineKind): ChannelHook {
-    if (kind !== "recovery") {
-      return async () => undefined;
-    }
-    return async ({ now }) => {
-      await this.env.DB.prepare(
-        `UPDATE pm_processing
-         SET status = 'pending', updated_at = ?
-         WHERE workspace_id = ? AND channel = ? AND status = 'error'`
-      )
-        .bind(
-          new Date(now).toISOString(),
-          this.scope.workspaceId,
-          this.scope.channel
-        )
-        .run();
-      const pending = await this.env.DB.prepare(
-        `SELECT COUNT(*) AS count FROM pm_processing
-           WHERE workspace_id = ? AND channel = ?
-             AND status IN ('pending', 'error')`
-      )
-        .bind(this.scope.workspaceId, this.scope.channel)
-        .first<{ count: number }>();
-      return {
-        checkpoint: { pending_processing: String(pending?.count ?? 0) },
-      };
-    };
+    return pipelineHooks(this.env)[kind] ?? (async () => undefined);
   }
 
   private requestScope(url: URL): ChannelRequestScope {

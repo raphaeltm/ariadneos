@@ -7,6 +7,7 @@ import type { ObservedChannel } from "../server/tenant/installs.ts";
 import {
   createTestDatabase,
   observedScopedData,
+  type SqliteD1,
   seedTenant,
   TEST_CHANNEL,
   TEST_PROJECT,
@@ -162,9 +163,9 @@ const agentEvents = () =>
   sqlite.prepare("SELECT * FROM agent_event ORDER BY id").all();
 
 beforeEach(() => {
-  const created = createTestDatabase();
-  sqlite = created.sqlite;
-  db = created.d1 as unknown as D1Database;
+  let created: SqliteD1;
+  ({ d1: created, sqlite } = createTestDatabase());
+  db = created as unknown as D1Database;
   seedTenant(sqlite);
   channel = {
     backfilled_at: null,
@@ -300,15 +301,17 @@ describe("answering Slack mentions", () => {
       mention: { text: `<@${BOT_USER}> status?`, ts: "1700000010.000100" },
     });
     await answerMentions(envFor(), channel, BOT_USER);
-    const posted: Array<Record<string, string>> = [];
+    const posted: Record<string, string>[] = [];
     const client = new SlackClient("xoxb-test", {
-      fetcher: async (_input, init) => {
+      fetcher: (_input, init) => {
         posted.push(
           Object.fromEntries(new URLSearchParams(String(init?.body)))
         );
-        return new Response(
-          JSON.stringify({ channel: TEST_CHANNEL, ok: true, ts: "1700.1" }),
-          { headers: { "Content-Type": "application/json" }, status: 200 }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ channel: TEST_CHANNEL, ok: true, ts: "1700.1" }),
+            { headers: { "Content-Type": "application/json" }, status: 200 }
+          )
         );
       },
     });
@@ -336,13 +339,15 @@ describe("answering Slack mentions", () => {
     });
     await answerMentions(envFor(), channel, BOT_USER);
     const client = new SlackClient("xoxb-test", {
-      fetcher: async () =>
-        new Response(JSON.stringify({ error: "ratelimited", ok: false }), {
-          headers: { "Content-Type": "application/json", "retry-after": "1" },
-          status: 429,
-        }),
+      fetcher: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "ratelimited", ok: false }), {
+            headers: { "Content-Type": "application/json", "retry-after": "1" },
+            status: 429,
+          })
+        ),
       maxAttempts: 1,
-      sleep: async () => undefined,
+      sleep: () => Promise.resolve(),
     });
     const delivery = await runOutbox(
       { DB: db },
@@ -359,10 +364,12 @@ describe("answering Slack mentions", () => {
     });
     await answerMentions(envFor(), channel, BOT_USER);
     const client = new SlackClient("xoxb-test", {
-      fetcher: async () =>
-        new Response(
-          JSON.stringify({ error: "channel_not_found", ok: false }),
-          { headers: { "Content-Type": "application/json" }, status: 200 }
+      fetcher: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ error: "channel_not_found", ok: false }),
+            { headers: { "Content-Type": "application/json" }, status: 200 }
+          )
         ),
     });
     const delivery = await runOutbox(

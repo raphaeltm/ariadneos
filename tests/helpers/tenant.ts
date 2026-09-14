@@ -59,12 +59,14 @@ export class SqliteD1 {
         (this.db.prepare(sql).get(...(values as SQLInputValue[])) as
           | T
           | undefined) ?? null,
-      run: async () => {
+      run: () => {
         if (this.options.failWrites?.()) {
           throw new Error("Database unavailable");
         }
         const result = this.db.prepare(sql).run(...(values as SQLInputValue[]));
-        return { meta: { changes: Number(result.changes ?? 0) } };
+        return Promise.resolve({
+          meta: { changes: Number(result.changes ?? 0) },
+        });
       },
     });
     return {

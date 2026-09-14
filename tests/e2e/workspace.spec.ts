@@ -172,16 +172,18 @@ test("exposes shell navigation and mobile layout", async ({ page }) => {
   await expect(
     page.getByRole("navigation", { name: "App navigation" })
   ).toBeVisible();
-  for (const name of [
-    "Graph canvas",
-    "Inspector",
-    "Activity",
-    "Agent chat",
-    "Setup",
-    "Settings",
-  ]) {
-    await expect(page.getByRole("button", { exact: true, name })).toBeVisible();
-  }
+  await Promise.all(
+    [
+      "Graph canvas",
+      "Inspector",
+      "Activity",
+      "Agent chat",
+      "Setup",
+      "Settings",
+    ].map((name) =>
+      expect(page.getByRole("button", { exact: true, name })).toBeVisible()
+    )
+  );
 
   await page.setViewportSize({ height: 800, width: 390 });
   await page.goto("/app");

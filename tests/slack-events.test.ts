@@ -116,14 +116,16 @@ const journalRows = () =>
   sqlite.prepare("SELECT * FROM pm_journal ORDER BY id, operation_key").all();
 
 beforeEach(() => {
-  const created = createTestDatabase({ failWrites: () => failWrites });
-  sqlite = created.sqlite;
+  const { d1, sqlite: database } = createTestDatabase({
+    failWrites: () => failWrites,
+  });
+  sqlite = database;
   seedTenant(sqlite);
   failWrites = false;
   slackFetch.mockClear();
   vi.stubGlobal("fetch", slackFetch);
   env = {
-    DB: created.d1,
+    DB: d1,
     SLACK_SIGNING_SECRET: secret,
   };
 });

@@ -3,6 +3,8 @@ import { buildContractInspectorDetails } from "../src/components/inspector/inspe
 import { applySnapshot, createInitialState } from "../src/store.ts";
 import { observedClientFixtures, TEST_WORKFLOW } from "./helpers/tenant.ts";
 
+const SLACK_PERMALINK = /^https:\/\/[^/]+\/archives\//;
+
 function loadedState() {
   const fixtures = observedClientFixtures();
   const state = applySnapshot(
@@ -60,7 +62,7 @@ describe("process inspector data", () => {
     expect(details.evidence.length).toBeGreaterThan(0);
     for (const entry of details.evidence) {
       // Every evidence entry must point at a real Slack message.
-      expect(entry.permalink).toMatch(/^https:\/\/[^/]+\/archives\//);
+      expect(entry.permalink).toMatch(SLACK_PERMALINK);
       expect(entry.quote).not.toBe("");
     }
   });

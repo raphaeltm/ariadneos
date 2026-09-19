@@ -38,7 +38,7 @@
     "@mastra/core": "1.66.0",
     "@openrouter/ai-sdk-provider": "3.0.0",
     "@xyflow/react": "^12.11.6",
-    "ai": "7.0.99",
+    "ai": "7.0.102",
     "better-auth": "1.7.4",
     "hono": "^4.13.7",
     "lucide-react": "^1.45.0",

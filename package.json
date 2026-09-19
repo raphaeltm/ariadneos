@@ -40,7 +40,7 @@
     "@xyflow/react": "^12.11.6",
     "ai": "7.0.99",
     "better-auth": "1.7.4",
-    "hono": "^4.13.7",
+    "hono": "^4.13.8",
     "lucide-react": "^1.45.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
